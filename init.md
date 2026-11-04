@@ -99,7 +99,7 @@ Two parts; both must pass.
 1. Run a Bash call whose command is exactly `echo DELIVER_TICKET_SELFTEST` - it must be **blocked** by a hook.
 2. Write a file `~/.claude/.deliver-ticket-selftest` - it must be **blocked** (the guards protect `~/.claude/`).
 
-Both blocked -> pass. Not blocked right after install -> ask me to start a new session and re-run the test there. Still not blocked -> soft mode (as in step 3.4).
+Both blocked -> pass: then set `soft_mode: off`, the Hooks section lines (installed, self-test date) and the autonomy-table `stop_points` in `guard.json` - these follow from steps 3-4 even in a re-run where I named only other groups to change (a previous `soft_mode: on` is stale once hooks and self-test pass). Not blocked right after install -> ask me to start a new session and re-run the test there. Still not blocked -> soft mode (as in step 3.4).
 
 **B. Script** - `scripts/install-hooks.sh selftest` prints one line per check and exits 0 only if all pass: registration complete (every entry has `timeout` and `onFailure: block`); each hook given a synthetic payload from a repo **without** delivery state exits 0 fast; the same hook given malformed JSON in a repo **with** state blocks; `session-start.sh` for a known session returns the re-orientation text.
 

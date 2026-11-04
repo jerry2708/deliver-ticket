@@ -101,7 +101,7 @@ Chat with me in `chat_language` from config (default `en`). Files you write for 
 - `stages/` - one file per stage (section 4 above).
 - `adapters/` - `gitlab-glab.md`, `manual.md`; the core calls only check / create / update / comments.
 - `templates/` - ticket, question, plan-split, ac-evidence, reviewer-verify, review-round, mr-description, config.
-- `scripts/` - `classify.py` (tier floor), `setup-worktree.sh`, `env-keys.sh`, `install-hooks.sh`.
+- `scripts/` - `classify.py` (tier floor), `setup-worktree.sh`, `env-keys.sh`, `install-hooks.sh`, `validate-guard.py`, `setup-exclude.sh`.
 - `hooks/` - `guard.sh`, `verify-on-push.sh`, `worktree-guard.sh`, `worktree-create.sh`, `session-start.sh`; registered at user level by `install-hooks.sh`.
 - `CHANGELOG.md` - one generic line per applied lesson or rule change. Lessons are applied to this folder only in a separate session started here, never from a ticket session.
 
