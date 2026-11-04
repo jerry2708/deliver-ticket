@@ -37,8 +37,9 @@ Non-goals: auto-merge (never); replacing CI; sending messages to clients/leads/r
     cancel.md               # section 4
   adapters/  gitlab-glab.md  manual.md      # v0.1 – contract in section 8d; github-gh.md / gitlab-mcp.md when needed
   templates/ ticket.md  question.md  plan-split.md  ac-evidence.md  reviewer-verify.md  review-round.md  mr-description.md  config.md
-  scripts/   classify.py  setup-worktree.sh  env-keys.sh  install-hooks.sh
-             # tier floor; worktree setup (8c); prints .env key names only; the only writer of ~/.claude/settings.json (8b)
+  scripts/   classify.py  setup-worktree.sh  env-keys.sh  install-hooks.sh  validate-guard.py  setup-exclude.sh
+             # tier floor; worktree setup (8c); prints .env key names only; the only writer of ~/.claude/settings.json (8b); validate-guard.py = schema check of guard.json (init must never leave an invalid one – hooks block on an unreadable state); setup-exclude.sh = the only way init edits <git-common-dir>/info/exclude (Edit/Write refuse that path; guard.sh must allow this script)
+  tests/     guard-json/ fixtures + run-guard-json.sh; hook dry-run fixtures (phase 3)
   hooks/     guard.sh  verify-on-push.sh  worktree-guard.sh  worktree-create.sh  session-start.sh  lib.sh
              # section 8b; registered at user level by install-hooks.sh (session-start.sh = re-orientation after /compact; lib.sh = shared helpers: project key, state lookup, no-state no-op, fail-closed JSON parsing)
 
@@ -151,9 +152,9 @@ Init rules: everything detected (README, compose files, package scripts) is show
 
 **Init order:** (1) detect + confirm all groups above → (2) write the project state (`config*.md`, **`guard.json`**) → (3) only then `install-hooks.sh` (first project on this machine, my yes) → (4) self-test. The hooks are no-ops in a repo without state, so a self-test before step 2 would always fail and wrongly drop into soft mode. On later projects step 3 only detects the existing registration; steps 2 and 4 still run.
 
-**Hook self-test** (after install, at stage 0, on every resume): (1) a Bash call with a fixed marker (`echo DELIVER_TICKET_SELFTEST`) and (2) a Write of a marker file to a path `worktree-guard.sh` blocks – both must be blocked; plus (3) a **hook that exceeds its timeout** (a test hook sleeping past `timeout`, registered with the same `onFailure`) must block, and (4) in a **repo without delivery state** a Bash call and a Write must **pass, fast** (no-op check), and (5) a forced `/compact` must bring the `session-start.sh` context back (checked once at install, not on every resume). Not blocked right after install → ask me to start a new session; still not blocked → soft mode.
+**Hook self-test** (after install; part A also at stage 0 and on every resume) – implemented as **A: harness** (Claude runs it) and **B: script** (`install-hooks.sh selftest`). A: (1) a Bash call with a fixed marker (`echo DELIVER_TICKET_SELFTEST`) and (2) a Write of a marker file to a path `worktree-guard.sh` blocks – both must be blocked; **B (script, no live tool call):** (3) every registered entry carries a `timeout` and `"onFailure": "block"` (a live "slow hook" test would need a throw-away registration), (4) each hook given a synthetic payload from a **repo without delivery state** exits 0 fast, and given malformed JSON in a repo **with** state blocks, (5) `session-start.sh` for a known session returns the re-orientation text (a real forced `/compact` was verified once in phase 0). Not blocked right after install → ask me to start a new session; still not blocked → soft mode.
 
-**Soft mode** (I declined the settings write, or the self-test fails): warn that the hard stops are off (no hooks, no permission rules – they live in the same file); every tier's stop point capped at `local`; ask before every commit; hard rules repeated at the start of each stage; recorded in the ticket file and the Delivery log (if on).
+**Soft mode** (I declined the settings write, or the self-test fails): warn that the hard stops are off (no hooks, no permission rules – they live in the same file); every tier's stop point capped at `local` – recorded in `config.md` as `soft_mode: on → effective stop: local` (Autonomy table untouched, `guard.json` generated to match, the config-vs-`guard.json` drift check applies the override first); ask before every commit; hard rules repeated at the start of each stage; recorded in the ticket file and the Delivery log (if on).
 
 ## 6. Stage 1 – intake
 ### Normalise
