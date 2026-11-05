@@ -131,6 +131,15 @@ sed -i.bak '/^ticket=/d' "$DELIVER_TICKET_HOME/sessions/sess-9"
 out=$(jq -nc --arg cwd "$W" '{session_id:"sess-9",cwd:$cwd,hook_event_name:"SessionStart",source:"compact"}' | "$SK/hooks/session-start.sh")
 echo "$out" | jq -e '.hookSpecificOutput.additionalContext|test("ticket T1")' >/dev/null && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL session-start without ticket= line: $out"; }
 out=$(jq -nc --arg cwd "$W" '{session_id:"nope",cwd:$cwd,source:"compact"}' | "$SK/hooks/session-start.sh"); [ -z "$out" ] && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL session-start unknown session should be silent"; }
+# no session map at all (stages 0-1): inject the only intake ticket, list several, stay silent for none
+sc() { jq -nc --arg cwd "$W" '{session_id:"fresh",cwd:$cwd,hook_event_name:"SessionStart",source:"compact"}' | "$SK/hooks/session-start.sh"; }
+printf 'stage: 1\nnext: read stages/1-intake.md\nstate: waiting\nworktree: none\n' > "$DELIVER_TICKET_HOME/$key/tickets/I1.md"
+out=$(sc); echo "$out" | jq -e '.hookSpecificOutput.additionalContext|test("only ticket.*I1 \\(stage 1")' >/dev/null && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL intake single: $out"; }
+printf 'stage: 0\nnext: read stages/0-environment.md\nstate: active\nworktree: none\n' > "$DELIVER_TICKET_HOME/$key/tickets/I2.md"
+out=$(sc); echo "$out" | jq -e '.hookSpecificOutput.additionalContext|test("ask me which.*I1.*I2")' >/dev/null && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL intake several: $out"; }
+printf 'stage: 1\nstate: cancelled\nworktree: none\n' > "$DELIVER_TICKET_HOME/$key/tickets/I1.md"
+printf 'stage: 8\nstate: done\nworktree: none\n' > "$DELIVER_TICKET_HOME/$key/tickets/I2.md"
+out=$(sc); [ -z "$out" ] && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL intake none should be silent: $out"; }
 echo "# corrupt guard.json with state => block (except skill scripts)"
 echo '{broken' > "$DELIVER_TICKET_HOME/$key/guard.json"
 t 2 guard.sh "$W" 'ls'

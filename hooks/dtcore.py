@@ -799,36 +799,83 @@ def record_worktree(payload, g):
           "session map not updated" % wt_root, file=sys.stderr)
 
 
+def _field(txt, name):
+    m = re.search(r"^\s*%s:\s*(\S.*)$" % name, txt, re.M)
+    return m.group(1).strip() if m else None
+
+
+def _intake_tickets():
+    """Tickets of this project that have no worktree yet and are still open (stage 0-1)."""
+    out = []
+    tdir = os.path.join(STATE, "tickets")
+    try:
+        names = sorted(os.listdir(tdir))
+    except OSError:
+        return out
+    for n in names:
+        if not n.endswith(".md") or not re.fullmatch(r"[A-Za-z0-9._-]+", n[:-3]):
+            continue
+        try:
+            txt = open(os.path.join(tdir, n)).read()
+        except OSError:
+            continue
+        wt = (_field(txt, "worktree") or "").split()
+        wt = wt[0] if wt else ""
+        state = (_field(txt, "state") or "").split()
+        state = state[0] if state else ""
+        if wt == "none" and state not in ("done", "cancelled", "split"):
+            out.append((n[:-3], _field(txt, "stage") or "unknown", _field(txt, "next") or "unknown",
+                        os.path.join(tdir, n)))
+    return out
+
+
+def _emit(text):
+    print(json.dumps({"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": text}}))
+
+
 def mode_session(payload, g):
     sid = payload.get("session_id")
     if not (isinstance(sid, str) and re.fullmatch(r"[A-Za-z0-9._-]+", sid)):
         return
+    fields = {}
     try:
         fields = dict(l.split("=", 1) for l in open(os.path.join(DT_HOME, "sessions", sid)).read().splitlines()
                       if "=" in l)
     except OSError:
-        return
+        pass
     # the worktree is named after the ticket ID, so the ticket is known even if nobody wrote ticket=
     ticket = fields.get("ticket") or (os.path.basename(fields["worktree"].rstrip("/")) if fields.get("worktree") else None)
     proj = fields.get("project") or os.path.basename(STATE)
-    if not ticket or not re.fullmatch(r"[A-Za-z0-9._-]+", ticket) or not re.fullmatch(r"[A-Za-z0-9._-]+", proj):
+    if not ticket:
+        # no session map yet (stages 0-1, before the worktree): look for tickets still in intake
+        cands = _intake_tickets()
+        if not cands:
+            return
+        lines = "; ".join("%s (stage %s, next: %s, file %s)" % c for c in cands)
+        if len(cands) == 1:
+            who = "the only ticket of this project still in intake is %s" % lines
+        else:
+            who = "tickets of this project still in intake (this session may be on one of them - ask me which): %s" % lines
+        _emit("deliver-ticket: the conversation was compacted and no worktree session is recorded; %s. "
+              "If this session was running /deliver-ticket, read %s/SKILL.md section 2 (hard rules), the ticket file, "
+              "then the stage file it names (%s/stages/). Do not work from memory of the earlier conversation."
+              % (who, SKILL_DIR, SKILL_DIR))
+        return
+    if not re.fullmatch(r"[A-Za-z0-9._-]+", ticket) or not re.fullmatch(r"[A-Za-z0-9._-]+", proj):
         return
     tf = os.path.join(DT_HOME, proj, "tickets", ticket + ".md")
     stage = nxt = "unknown"
     try:
         txt = open(tf).read()
-        m = re.search(r"^\s*stage:\s*(\S.*)$", txt, re.M)
-        stage = m.group(1).strip() if m else stage
-        m = re.search(r"^\s*next:\s*(\S.*)$", txt, re.M)
-        nxt = m.group(1).strip() if m else nxt
+        stage = _field(txt, "stage") or stage
+        nxt = _field(txt, "next") or nxt
     except OSError:
         pass
-    text = ("deliver-ticket: this session works on ticket %s (project %s), stage %s; next: %s. "
-            "The conversation was compacted and the skill text is gone. Before doing anything: "
-            "read %s/SKILL.md section 2 (hard rules), read %s, then the stage file it names "
-            "(%s/stages/). Do not work from memory of the earlier conversation."
-            % (ticket, proj, stage, nxt, SKILL_DIR, tf, SKILL_DIR))
-    print(json.dumps({"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": text}}))
+    _emit("deliver-ticket: this session works on ticket %s (project %s), stage %s; next: %s. "
+          "The conversation was compacted and the skill text is gone. Before doing anything: "
+          "read %s/SKILL.md section 2 (hard rules), read %s, then the stage file it names "
+          "(%s/stages/). Do not work from memory of the earlier conversation."
+          % (ticket, proj, stage, nxt, SKILL_DIR, tf, SKILL_DIR))
 
 
 def main():
