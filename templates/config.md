@@ -83,16 +83,19 @@ Paths below are globs; they only raise the floor. A path with no match is not "n
 - infra config: <ASK>
 - per-user server API or store: <ASK>
 - AI agent action with side effects: <ASK>   <!-- "N/A" if no AI agent -->
+- excluded from every risk glob (a change to only these files never raises the tier): <ASK>   <!-- propose **/*.test.*, **/*.spec.* -->
 - tracker labels that force tier C: <ASK>
 - Sources merged in: CLAUDE.md, `.claude/rules/` <!-- conflicts reported; CLAUDE.md wins -->
 - Thresholds: S <=3 files, <=5 ACs, <=100 lines; M <=10 files, <=400 lines; L above M -> split into several MRs. Lines exclude lockfiles, generated code and tests.
 
 ## Autonomy
-| Tier | Gates with me | Local commit without asking | Final stop point |
+| Tier | Gates with me | Commits (`commit_gate`) | Final stop point |
 |---|---|---|---|
-| A (v0.1: runs as B) | ticket + tier, final review | yes | before-push |
-| B | ticket + tier, plan, final review | yes | before-push |
-| C | every stage | no | local |
+| A (v0.1: runs as B) | ticket + tier, final review, commit set (stage 7) | batched: none in stage 3, one gate in stage 7 (diff + all planned messages, one yes) | before-push |
+| B | ticket + tier, plan, final review, commit set (stage 7) | batched (as A) | before-push |
+| C | every stage | each: ask before every commit | local |
+
+CLAUDE.md conflict check: <record any CLAUDE.md rule on commits/pushes and how this table satisfies it; CLAUDE.md wins>
 
 ## Hooks and permissions
 - Hooks installed on this machine (`scripts/install-hooks.sh status`): <yes/no, date>

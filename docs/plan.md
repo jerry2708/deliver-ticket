@@ -40,7 +40,7 @@ Non-goals: auto-merge (never); replacing CI; sending messages to clients/leads/r
   profiles/  node.md        # ecosystem hints for init (section 5); one profile in v0.1; add a file to add an ecosystem
   scripts/   classify.py  setup-worktree.sh  env-keys.sh  install-hooks.sh  validate-guard.py  setup-exclude.sh  project-map-stale.sh  compare-failures.py  base-worktree.sh
              # tier floor; worktree setup (8c); prints .env key names only; the only writer of ~/.claude/settings.json (8b); validate-guard.py = schema check of guard.json (init must never leave an invalid one – hooks block on an unreadable state); setup-exclude.sh = the only way init edits <git-common-dir>/info/exclude (Edit/Write refuse that path; guard.sh must allow this script)
-  tests/     guard-json/ fixtures + run-guard-json.sh; run-hooks.sh (hook dry runs); run-worktree-create.sh (worktree-create, setup-worktree, env-keys, port lock); run-installer.sh (apply/uninstall round trip); run-project-map.sh; run-compare.sh; run-base-worktree.sh
+  tests/     guard-json/ fixtures + run-guard-json.sh; run-hooks.sh (hook dry runs); run-worktree-create.sh (worktree-create, setup-worktree, env-keys, port lock); run-installer.sh (apply/uninstall round trip); run-project-map.sh; run-compare.sh; run-base-worktree.sh; run-classify.sh
   evals/     sample-tiers.md (ground truth for the 14 sample tickets; classification evals, phase 6)
   docs/      plan.md (this file, the single live plan), phase5-checklist.md (steps for the user)
   hooks/     guard.sh  verify-on-push.sh  worktree-guard.sh  worktree-create.sh  session-start.sh  lib.sh  dtcore.py
@@ -147,7 +147,7 @@ Detects what it can, shows it, I confirm or edit. Never reads `.env*` values –
 | DB / shared resources *(only if detected)* | local DB? how it runs (Docker, shared, remote); safe to share across worktrees (seed data, migrations) or one DB per ticket | `docker-compose.yml`, `.env.example` key names (via `env-keys.sh`), migration folders, README → shown as findings, I confirm; nothing detected → one line "no local DB found", I confirm |
 | MR | adapter (glab / manual in v0.1); target branch; labels; note: glab sends a telemetry event (`usage_data/track_event`) to the GitLab host – how to turn it off is unverified | remote host, `auth status` |
 | Risk | risk paths (touching one → tier C); the section 6 risk categories mapped to this project's paths where possible, as globs → category in `config.md` (e.g. agent tool folders → "AI agent action with side effects", API route / server store folders → "per-user server API or store"); the project's personal-data fields; a category that doesn't apply (e.g. no AI agent) → `N/A`; classification thresholds. Init generates the mapping into `guard.json` (`risk`) – `classify.py` and the hooks read only that; `config.md` newer than `guard.json` → stage 0 warns and offers to regenerate. **A path with no match is not "no risk"**: the mapping only raises the floor, Claude still judges every category (section 6). Mapping drift: Claude judges a category "yes" on a file no glob matches → proposes a new glob (I approve); a glob matches but Claude judges "no" → the floor stays, only I lower it (with a reason); the same glob overridden repeatedly → lesson "glob too broad, propose narrowing"; re-running init re-proposes the mapping. Risk paths in CLAUDE.md / `.claude/rules/` are always in the mapping; conflicts are reported, CLAUDE.md wins | CLAUDE.md, `.claude/rules/`; default thresholds (section 6); mapping proposed from the code layout, I confirm |
-| Autonomy | per tier: local commit without asking? final stop point | defaults in section 7 |
+| Autonomy | per tier: commit model (`batched`: no commit in stage 3, one commit gate in stage 7 / `each`: ask before every commit); final stop point; CLAUDE.md commit/push rules checked first (it wins; conflict + resolution recorded) | defaults in section 7 |
 | **Hooks + permissions** | **once per machine** (idempotent – later inits only detect it): existing Claude Code hooks (user + project settings), git hooks (husky, lint-staged, pre-commit), formatter, CI; `install-hooks.sh` registers the skill's hooks and permission rules in `~/.claude/settings.json` (section 8b) after showing the exact diff; then a **self-test**; which verify commands run on push (build only if fast) | detect + show; **writing `~/.claude/settings.json` needs my yes**; declined → soft mode |
 | Language | `chat_language`, `docs_language` | `en` / `en` |
 | Time tracking | off / on (stage timestamps only) | off |
@@ -246,11 +246,13 @@ Hotfix → always tier C: a human reviews it, even though tier C is slower.
 Examples (this repo, from the agreed sample tiers in `deliver-ticket-sample-tiers.md`): retro #7 agent prompt fix → C (changes the arguments passed to a tool with side effects); retro #5 `purchase-plan-card` guard → B; WL-01 new per-user API + auth → C; WL-04 agent edits the wishlist → C; retro #8 → split (hook part C, skills B).
 
 ## 7. Tiers, commits and stop points
-| Tier | Gates with me | Local commit without asking (default) | Final stop point (default) |
+| Tier | Gates with me | Commits (default) | Final stop point (default) |
 |---|---|---|---|
-| A | ticket + tier, final review | yes | `before-push` |
-| B | ticket + tier, plan, final review | yes | `before-push` |
-| C | every stage | no | `local` |
+| A | ticket + tier, final review, commit set (stage 7) | `batched` | `before-push` |
+| B | ticket + tier, plan, final review, commit set (stage 7) | `batched` | `before-push` |
+| C | every stage | `each` | `local` |
+
+`batched` = no commit in stage 3; at the stage-7 commit gate the skill shows the diff and every planned commit (message, files, ACs) and **one yes covers the set**; `each` = ask before every commit. This satisfies CLAUDE.md "never commit without asking" in `copilot-kit-training` (the user approves, batched). If any pre-commit hook modifies files, the evidence refers to the post-hook commit and the checks re-run on it (generic rule). Soft mode: `each`.
 
 Stop points: `local` → `before-push` → `draft-mr` → `ready-mr`. Set per tier in init; CLAUDE.md wins on conflict; soft mode caps every tier at `local` and asks before every commit (section 5). **Merge is never automated.**
 
@@ -449,7 +451,7 @@ Decided:
 - [x] Personal first, team later (config split kept); design not tied to outsource – works for product teams too.
 - [x] Project facts from init, ticket facts from the ticket; unclear → ask and discuss, never fill in.
 - [x] Dev tests own work → stages "dev self-check" and "QA" merged into **Verify**; tier C adds a fresh-context AC check (subagent, section 9).
-- [x] Local commits and stop points set per tier in init (defaults in section 7).
+- [x] Commit model (`commit_gate`: `batched` / `each` per tier) and stop points set per tier in init (defaults in section 7); replaces the earlier "local commit without asking" flag (2026-11-05).
 - [x] Always confirm ticket + tier; script floor + Claude proposes + I confirm; stage-1 tier is provisional (Size estimated), confirmed at the gate, only goes up afterwards.
 - [x] Definition of Ready (5 items; 1, 2, 5 required to start; goal unclear → stop) and Definition of Done (ACs + common DoD).
 - [x] Clarity: questions on part of the ACs → B; core AC waiting (goal clear) → C. *(changed in v6: "goal unclear → C" conflicted with the DoR)*
@@ -507,6 +509,11 @@ Design additions A–F (2026-11-05, goal: a solid base to grow on – add a file
 - [x] D. `<state>/project.md` = facts with sources (map, commands, ports, env file names, risk-path findings, hooks, tool-config gaps, knowledge sources – linked, not copied); `config.md` = decisions; `lessons.md` = learned; stage 2 reads it first; never in the repo.
 - [x] E. Freshness with git as the clock (section 5): structural changes only; stage 0 advances/marks (narrow state-dir write), stage 2 rescans lazily, stage 8 updates touched sections and shows the diff, stages 2–4 trust the code over `project.md`; init re-run only for workspace-config / lockfile-type / new-app changes; clock = the base branch's local ref, no fetch; stage 8 does not advance `checked:`.
 - [x] F. v0.2 milestone "generic init" (below), nothing built.
+- [x] 2026-11-05: `guard.json` `risk.exclude` (default `**/*.test.*`, `**/*.spec.*`, confirmed at init): files matching it never count as a risk path in `classify.py`, so a test-only change does not raise the tier (needed by the user's rule "exclude tests from every risk glob"; schema check in `validate-guard.py`, tests in `tests/run-classify.sh` and `tests/guard-json/`). The `needs-human-review` MR label is set when the diff touches auth, payment, personal data or per-user server API/store (IDOR risk), not infra/dependency. Phase-6 note: if the project's globs push ground-truth B tickets (WL-03, WL-06) above 2/14 over-tier, narrow them then.
+- [x] 2026-11-05: **commit model** – tiers A/B `batched` (no commit in stage 3; one commit gate in stage 7: diff + all planned messages, one yes), tier C `each`; replaces `local_commit_without_asking` (`guard.json` key `commit_gate`); chosen because `copilot-kit-training` CLAUDE.md says "never commit or push without asking" (CLAUDE.md wins; conflict + resolution recorded in `config.md`). Pre-commit hook that modifies files → evidence refers to the post-hook commit, checks re-run on it.
+- [x] 2026-11-05: for this project the final stop point is `local` for A/B/C during the build ("raise after v0.1"); `soft_mode` stays off (hooks are active, so it would be untrue).
+- [x] 2026-11-05: `.worktreeinclude`, if the repo has it, is read by init as the list of files to bring into worktrees (shown for confirmation, not re-asked); the skill **symlinks** them. Verified on scratch repos (Claude Code 2.1.311, `claude -p`, `EnterWorktree`): with our user-level `WorktreeCreate` hook and no delivery state, Claude Code does **not** copy the `.worktreeinclude` file into the worktree (the hook replaces the default creation); with state, only our symlink exists, no copy/symlink clash. Consequence for repos without delivery state: the hook's "default behaviour" does not include the `.worktreeinclude` copy – see the open point.
+- [x] 2026-11-05: init language for `copilot-kit-training`: chat `vi`, docs `en`; time tracking off; second test identity left `<ASK>` until a ticket needs the IDOR real run (the user creates the user and adds `E2E_CLERK_USER2_USERNAME` / `E2E_CLERK_USER2_PASSWORD` himself).
 Open (unverified, user's phase-5 checklist): Grep/Glob tools vs `deny Read(**/.env*)`; stage-4 base run from inside a ticket session (`base-worktree.sh` + `cd` into `_base`); auto-compaction in a real long ticket; Desktop `WorktreeCreate` toggle; interactive `EnterWorktree` prompt; dev-server watchers; IDE extension.
 
 **Verified Nov 3–4** (Claude Code 2.1.311, `claude -p` with test settings in scratch dirs unless noted; glab 1.124.0 against a local mock server; docs = code.claude.com/docs/en/…, fetched Nov 3–4):

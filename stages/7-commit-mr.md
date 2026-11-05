@@ -1,9 +1,13 @@
 # Stage 7 - Commit + MR text
 
-Gate by tier (A/B: the final review; **C: me at this stage**). Nothing goes past the **stop point** (per tier from `guard.json`; soft mode: `local`; CLAUDE.md wins): `local` -> `before-push` -> `draft-mr` -> `ready-mr`. **Merge is never automated** and is not an option here.
+Gate by tier (**A/B: the commit gate below, one yes for the whole set; C: me before every commit**). Nothing goes past the **stop point** (per tier from `guard.json`; soft mode: `local`; CLAUDE.md wins): `local` -> `before-push` -> `draft-mr` -> `ready-mr`. **Merge is never automated** and is not an option here.
 
 ## Commit
-Conventional Commits unless config says otherwise; commits end with the attribution lines the session was given. Final `git status` clean; show `git log --oneline <base>..HEAD`. Tier C and soft mode: ask before each commit.
+Conventional Commits unless config says otherwise; commits end with the attribution lines the session was given.
+- **Tier A/B (`commit_gate: batched`) - commit gate:** nothing is committed yet. Group the changes into the planned commits (one per plan step or chunk; files shared by two steps go in one commit; no hunk splitting). Show me (1) the diff (`git diff <base>`, stat + the hunks), (2) every planned commit: message, files, the AC(s) it serves. **One yes covers the whole set**; any change request -> adjust and show again. Only then create the commits.
+- **Tier C and soft mode (`each`):** ask before every commit (message + staged diff).
+- **If any pre-commit hook modified files** (compare what you staged with `git show --stat HEAD` / `git status --short` after the commit; no such hook = nothing to do): the commit that counts is the post-hook one. Commit the hook's changes the way the project's hooks produce them (never bypass), record `verified at <sha>` of the post-hook commit in the AC -> evidence table, and **re-run the stage-4 automated checks on that commit**; a failure goes back to stage 3.
+- Final `git status` clean; show `git log --oneline <base>..HEAD`.
 
 ## MR text - `templates/mr-description.md`, written to `evidence/<ID>/mr.md` (state dir)
 - Every factual claim is checked against a diff hunk (**post-change** line numbers) before it goes in; claims you cannot check are removed. Known gaps are stated (unverified ACs, parked/waiting ACs, accepted gaps, tests changed with the reason).

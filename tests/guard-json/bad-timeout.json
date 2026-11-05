@@ -41,10 +41,10 @@
   "B": "before-push",
   "C": "local"
  },
- "local_commit_without_asking": {
-  "A": true,
-  "B": true,
-  "C": false
+ "commit_gate": {
+  "A": "batched",
+  "B": "batched",
+  "C": "each"
  },
  "max_parallel": {
   "tier_bc": 3,

@@ -103,10 +103,11 @@ def check(g):
         if isinstance(sp, dict):
             for t in TIERS:
                 need(f"{k}.{t}", sp.get(t) in allowed, f"one of {allowed}")
-    lc = get(g, "local_commit_without_asking", "$")
-    if isinstance(lc, dict):
+    cg = get(g, "commit_gate", "$")
+    if isinstance(cg, dict):
         for t in TIERS:
-            need(f"local_commit_without_asking.{t}", isinstance(lc.get(t), bool), "bool")
+            need(f"commit_gate.{t}", cg.get(t) in ("batched", "each"),
+                 "\"batched\" (no commit in stage 3, one commit gate in stage 7) or \"each\" (ask before every commit)")
 
     par = get(g, "max_parallel", "$")
     if isinstance(par, dict):
@@ -125,6 +126,8 @@ def check(g):
                 need(f"risk.categories.{c}", c in RISK_CATEGORIES, "unknown category")
         need("risk.labels", is_str_list(risk.get("labels")) or risk.get("labels") == [],
              "list of tracker labels that force tier C (may be empty)")
+        need("risk.exclude", "exclude" not in risk or is_str_list(risk.get("exclude")) or risk.get("exclude") == [],
+             "optional list of globs excluded from every category (test files)")
         need("risk.personal_data_fields",
              is_str_list(risk.get("personal_data_fields")) or risk.get("personal_data_fields") == [],
              "list of field names (may be empty)")

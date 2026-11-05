@@ -11,7 +11,7 @@ Gate: tier A and B auto (no gate until the final review); **C: me after the stag
 - **Diff discipline:** if the diff grows well beyond the plan (new files not in the plan, a risk path touched, a much larger size), **stop and escalate**: say what changed, re-judge the 9 categories, tier only goes up, I confirm.
 - A check that fails twice -> stop and tell me what you tried; do not loop.
 - A requirement turns out ambiguous -> stop and ask; park the part.
-- Local commits: per tier setting (`local_commit_without_asking`). Tier C and soft mode: ask before every commit. Conventional Commits unless config says otherwise. After a commit, run `git status` - pre-commit hooks may have reformatted files; commit those too if the project's hooks produced them, never bypass hooks (`--no-verify` is blocked).
+- **Commits follow `commit_gate` in `guard.json` (CLAUDE.md "never commit without asking" wins):** tier A/B = `batched`: **make no commit in this stage**; the changes stay in the worktree and are committed once, at the stage-7 commit gate. Tier C (and soft mode) = `each`: ask before every commit (show the message and the staged diff). Conventional Commits unless config says otherwise; never bypass hooks (`--no-verify` is blocked). A commit that a pre-commit hook changed: see `7-commit-mr.md`.
 - Env files: never read; key names only via `scripts/env-keys.sh <file>`. A ticket that needs a new key in `.env.example` gets a **manual step for me** in the stage output (edits to `.env*` are blocked).
 - Nothing leaves the machine in this stage (no push, no MR).
 

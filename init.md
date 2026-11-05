@@ -34,11 +34,11 @@ For each group: look in the places given, show findings, ask what is left, write
 | **Verify** | `package.json` scripts, Makefile, CI files, CLAUDE.md | lint / test / build / e2e commands; which run on push (build only if fast); dev ports and how a port is overridden without editing `.env`; env file names; stage-0 checks; **repo without tests**: (a) add tests for changed logic or (b) real run + "no automated tests" stated in the MR; **only if the Risk group maps a per-user server API/store**: how to get two test identities through the project's own auth (mocked identities in tests preferred; otherwise two test accounts I use by hand - you never type passwords) | (a) for pure logic, (b) otherwise |
 | **Definition of Done** | CLAUDE.md | edit the common list: lint/build/tests green, regression scope, no secrets, risk areas reviewed | default list in the template |
 | **Git** | `git remote -v`, `git branch -a`, recent commit messages, commitlint/husky config | **base branch** (every ticket branch starts from its latest commit, not `origin/<default>`); branch naming; push remote; allowed and forbidden remotes; commit convention | detect + confirm |
-| **Workspace + parallel** | `git worktree list`, ignore files, tool configs | worktree per ticket (only mode in v0.1); env files to symlink (names only); dependency install command; port variables and the per-ticket port block; max parallel (3 in tier B/C + 5 total) | defaults shown |
+| **Workspace + parallel** | `git worktree list`, ignore files, `.worktreeinclude`, tool configs | worktree per ticket (only mode in v0.1); env files to symlink (names only; **if the repo has `.worktreeinclude`, read it as that list and show it for confirmation instead of asking**; the skill symlinks them, it does not copy; no such file -> ask); dependency install command; port variables and the per-ticket port block; max parallel (3 in tier B/C + 5 total) | defaults shown |
 | **DB / shared resources** (only if detected) | `docker-compose*.yml`, `.env.example` key names via `env-keys.sh`, migration folders, README | does a local DB exist; how it runs (Docker, shared, remote); safe to share across worktrees (seed data, migrations) or one per ticket. Nothing found -> one line "no local DB found", I confirm | shown as findings |
 | **MR** | remote host, `glab auth status` | adapter (`gitlab-glab` / `manual`); target branch; labels; turn glab telemetry off (`GLAB_SEND_TELEMETRY=0`) - say that glab sends a usage event to the GitLab host by default | `manual` if the adapter check fails |
 | **Risk** | CLAUDE.md, `.claude/rules/`, code layout | see "Risk mapping" below | thresholds from the template |
-| **Autonomy** | - | per tier: local commit without asking; final stop point | table in the template |
+| **Autonomy** | - | per tier: commit model (`batched` = no commit in stage 3 and one commit gate in stage 7 / `each` = ask before every commit); final stop point. Check CLAUDE.md for commit/push rules first - it wins, record the conflict and how the table satisfies it | table in the template |
 | **Hooks + permissions** | `~/.claude/settings.json` and `<repo>/.claude/settings*.json` (hooks only), git hooks (husky, lint-staged, pre-commit), formatter, CI config | which verify commands run on push; existing hooks that may interact; whether a formatter exists (the formatter is the project's job) | detect + show |
 | **Language** | - | `chat_language`, `docs_language` | `en` / `en` |
 | **Time tracking** | - | off / on (stage timestamps only) | off |
@@ -49,7 +49,7 @@ Workspace checks that need commands (read-only): `git worktree list`; whether `.
 
 The mapping turns "risk" into globs that `classify.py` and the hooks can read. It only raises the floor: a path with no match is **not** "no risk" - at every stage you still judge each category yourself.
 
-Categories (key in `guard.json`): `risk_paths`, `auth`, `payment`, `personal_data`, `migration`, `new_dependency`, `infra_config`, `per_user_server_api_or_store`, `ai_agent_side_effects`. Plus `labels` (tracker labels that force tier C), `personal_data_fields` (names), `thresholds`.
+Categories (key in `guard.json`): `risk_paths`, `auth`, `payment`, `personal_data`, `migration`, `new_dependency`, `infra_config`, `per_user_server_api_or_store`, `ai_agent_side_effects`. Plus `labels` (tracker labels that force tier C), `personal_data_fields` (names), `thresholds`, and `exclude` (globs, default `**/*.test.*` and `**/*.spec.*`: files matching them never count as a risk path, so a test-only change does not raise the tier; I confirm the list).
 
 1. Propose a glob list per category from the code layout (route/handler folders -> per-user API; agent tool folders -> AI action with side effects; migration folders; manifests and lockfiles -> new dependency; CI and `.claude/` -> infra config; auth folders -> auth). Show each glob with the files it matches today (`ls` / glob, a count and 2-3 examples) so I can judge it.
 2. A category that doesn't apply (no payments, no AI agent) -> `N/A`, only after I confirm. A category that applies but has no known path -> `[]`.
@@ -77,9 +77,9 @@ Only after step 1 is confirmed. Create the state dir and, in this order:
 | `install` | Workspace | `setup-worktree.sh` |
 | `ports` `{vars, base, step}` | Workspace | `setup-worktree.sh`, stage 1b |
 | `allowlist_extra` | extra writable paths I name (usually `[]`) | `guard.sh`, `worktree-guard.sh` |
-| `stop_points`, `local_commit_without_asking` | Autonomy | stages 3, 7 |
+| `stop_points`, `commit_gate` (`batched`\|`each` per tier) | Autonomy | stages 3, 7 |
 | `max_parallel` `{tier_bc, total}` | Workspace | stage 0 |
-| `risk` `{categories, labels, personal_data_fields, thresholds}` | Risk group | `classify.py` |
+| `risk` `{categories, labels, personal_data_fields, thresholds, exclude}` | Risk group | `classify.py` |
 
    Write it as JSON with no comments, then validate: `python3 <skill>/scripts/validate-guard.py <state>/guard.json`. Exit code must be 0. **Never leave an invalid `guard.json`** - hooks treat an unreadable state as "block everything in this repo". Fix and re-validate, or delete only your own half-written file after asking me.
 4. Show me a summary: every `<ASK>` still open, every conflict with CLAUDE.md, every tool-config gap.

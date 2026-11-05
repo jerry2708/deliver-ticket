@@ -71,7 +71,7 @@ Stage files hold the detail; read the file for the stage you are in, don't work 
 | - | Rework (MR comments) | `stages/rework.md` | by tier |
 | - | Cancel | `stages/cancel.md` | me |
 
-Tiers: v0.1 runs **B and C**; a ticket classified A runs as B and the log says `classified A, run as B (v0.1)`. B gates: ticket + tier, plan, final review. C gates: every stage. Stop points, lowest to highest: `local` -> `before-push` -> `draft-mr` -> `ready-mr`; the per-tier default is in config. Merge is never automated.
+Tiers: v0.1 runs **B and C**; a ticket classified A runs as B and the log says `classified A, run as B (v0.1)`. B gates: ticket + tier, plan, final review, and the commit set at stage 7 (A/B make no commit before it; one yes covers all planned commits). Tier C asks before every commit. C gates: every stage. Stop points, lowest to highest: `local` -> `before-push` -> `draft-mr` -> `ready-mr`; the per-tier default is in config. Merge is never automated.
 
 If a stage file is missing, say which one and stop. Never improvise a stage from the table above.
 

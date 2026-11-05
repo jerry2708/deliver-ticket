@@ -21,7 +21,7 @@ Written from what `copilot-kit-training` shows (the evidence column). Rows marke
 
 ## Install and worktrees
 - Install command: `<manager> install` (README `pnpm install`). A fresh worktree has no `node_modules` and no `.husky/_`; this repo already installs on the first `git commit` in a worktree through `.claude/hooks/ensure-worktree-deps.sh` (existing hook: report it, do not duplicate it).
-- Env files to link into worktrees: the repo may list them (`.worktreeinclude`: `apps/web/.env.local`, `apps/agent/.env`); otherwise names come from `ls -a` + `scripts/env-keys.sh`, never contents.
+- Env files to link into worktrees: the repo may list them (`.worktreeinclude`: `apps/web/.env.local`, `apps/agent/.env`; init reads it as the list, the skill symlinks); otherwise names come from `ls -a` + `scripts/env-keys.sh`, never contents.
 - Ports: `next dev` and `mastra dev` defaults are 3000 and 4111 as README / CLAUDE.md state (`README.md:88-90`); how a port is overridden without editing `.env` is **unverified here** - do not guess a variable name, ask.
 
 ## Tool configs that may scan `.claude/worktrees/` (init checks, reports gaps, never edits)

@@ -6,7 +6,7 @@
               [--new-dep]               a new dependency is named by the ticket/plan
 Prints JSON {"floor": "A|B|C", "by_criterion": {...}, "reasons": [...]}; floor = highest criterion.
 It only sets a floor from what it is given: no path match is NOT "no risk" - Claude judges every
-category too. Lines exclude lockfiles, generated code and tests (caller's job). Exit 2 on bad input.
+category too. `risk.exclude` globs (test files) are ignored for every category. Lines exclude lockfiles, generated code and tests (caller's job). Exit 2 on bad input.
 """
 import argparse
 import json
@@ -61,13 +61,14 @@ def main():
     except (OSError, ValueError, KeyError) as e:
         print("classify: cannot use guard.json: %s" % e, file=sys.stderr)
         return 2
+    excl = risk.get("exclude", [])      # globs (test files) that never count as a risk path
     reasons, by = [], {}
 
     r = "A"
     for name, globs in cats.items():
         if globs == "N/A":
             continue
-        hit = [f for f in a.files if match(f, globs)]
+        hit = [f for f in a.files if not match(f, excl) and match(f, globs)]
         if hit:
             r = "C"
             reasons.append("risk: %s matches %s" % (name, ", ".join(hit[:3])))

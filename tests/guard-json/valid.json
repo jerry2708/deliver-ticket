@@ -4,29 +4,102 @@
   "repo_root": "/Users/example/work/sample-app",
   "base_branch": "main",
   "branch_naming": "feature/{id}-{slug}",
-  "remotes": {"push": "training-v2", "allowed": ["training-v2"], "forbidden": ["origin"]},
-  "verify": {"lint": "pnpm lint", "test": "pnpm test", "build": "pnpm build", "on_push": ["lint", "test"], "timeout_sec": 300},
-  "env_files": ["apps/web/.env.local"],
+  "remotes": {
+    "push": "training-v2",
+    "allowed": [
+      "training-v2"
+    ],
+    "forbidden": [
+      "origin"
+    ]
+  },
+  "verify": {
+    "lint": "pnpm lint",
+    "test": "pnpm test",
+    "build": "pnpm build",
+    "on_push": [
+      "lint",
+      "test"
+    ],
+    "timeout_sec": 300
+  },
+  "env_files": [
+    "apps/web/.env.local"
+  ],
   "install": "pnpm install",
-  "ports": {"vars": ["PORT", "AGENT_PORT"], "base": 3100, "step": 10},
+  "ports": {
+    "vars": [
+      "PORT",
+      "AGENT_PORT"
+    ],
+    "base": 3100,
+    "step": 10
+  },
   "allowlist_extra": [],
-  "stop_points": {"A": "before-push", "B": "before-push", "C": "local"},
-  "local_commit_without_asking": {"A": true, "B": true, "C": false},
-  "max_parallel": {"tier_bc": 3, "total": 5},
+  "stop_points": {
+    "A": "before-push",
+    "B": "before-push",
+    "C": "local"
+  },
+  "commit_gate": {
+    "A": "batched",
+    "B": "batched",
+    "C": "each"
+  },
+  "max_parallel": {
+    "tier_bc": 3,
+    "total": 5
+  },
   "risk": {
     "categories": {
-      "risk_paths": ["apps/agent/src/mastra/auth/**"],
-      "auth": ["apps/agent/src/mastra/auth/**"],
+      "risk_paths": [
+        "apps/agent/src/mastra/auth/**"
+      ],
+      "auth": [
+        "apps/agent/src/mastra/auth/**"
+      ],
       "payment": "N/A",
-      "personal_data": ["apps/web/src/**/profile/**"],
-      "migration": ["**/migrations/**"],
-      "new_dependency": ["**/package.json", "pnpm-lock.yaml"],
-      "infra_config": [".github/**", ".gitlab-ci.yml", ".claude/**"],
-      "per_user_server_api_or_store": ["apps/agent/src/**/routes/**"],
-      "ai_agent_side_effects": ["apps/agent/src/mastra/tools/**"]
+      "personal_data": [
+        "apps/web/src/**/profile/**"
+      ],
+      "migration": [
+        "**/migrations/**"
+      ],
+      "new_dependency": [
+        "**/package.json",
+        "pnpm-lock.yaml"
+      ],
+      "infra_config": [
+        ".github/**",
+        ".gitlab-ci.yml",
+        ".claude/**"
+      ],
+      "per_user_server_api_or_store": [
+        "apps/agent/src/**/routes/**"
+      ],
+      "ai_agent_side_effects": [
+        "apps/agent/src/mastra/tools/**"
+      ]
     },
-    "labels": ["security", "needs-human-review"],
-    "personal_data_fields": ["email", "name", "phone"],
-    "thresholds": {"s_files": 3, "s_acs": 5, "s_lines": 100, "m_files": 10, "m_lines": 400}
+    "labels": [
+      "security",
+      "needs-human-review"
+    ],
+    "personal_data_fields": [
+      "email",
+      "name",
+      "phone"
+    ],
+    "thresholds": {
+      "s_files": 3,
+      "s_acs": 5,
+      "s_lines": 100,
+      "m_files": 10,
+      "m_lines": 400
+    },
+    "exclude": [
+      "**/*.test.*",
+      "**/*.spec.*"
+    ]
   }
 }
