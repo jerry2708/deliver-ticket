@@ -26,6 +26,9 @@ done
 inst=$(py 'import json,sys; print(json.load(open(sys.argv[1])).get("install") or "")')
 if [ -n "$inst" ]; then echo "install: $inst" >&2; (cd "$wt" && sh -c "$inst") >&2; fi
 
+# DT_NO_PORTS=1 (the shared base worktree, scripts/base-worktree.sh): env links and install only
+[ -n "${DT_NO_PORTS:-}" ] && exit 0
+
 # 3. port block: lowest free slot, recorded per ticket (ports are not secrets)
 mkdir -p "$state/ports"
 # mkdir is atomic: only one setup at a time picks a slot (stale lock after ~15s => stop, never break it silently)

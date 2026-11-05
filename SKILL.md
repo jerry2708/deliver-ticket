@@ -48,7 +48,7 @@ Gates are **soft in v0.1**: nothing but you stops you from running past one. So 
 
 All working state lives outside every repo, in `~/.local/share/deliver-ticket/`. Nothing is written into a client repo except what the client allows.
 
-Project key = `<basename>-<first 8 hex of sha1>` where basename is the last directory name and the sha1 is of the absolute path printed by `git rev-parse --path-format=absolute --git-common-dir` with a trailing `/.git` removed, **without a trailing newline** (e.g. `printf '%s' "$p" | shasum -a 1`). It is the same in the main checkout and in every worktree. Project state is `~/.local/share/deliver-ticket/<project-key>/` (`config.md`, `config.local.md`, `guard.json`, `lessons.md`, `tickets/<ID>.md`, `evidence/<ID>/`). Global lessons: `~/.local/share/deliver-ticket/lessons.md`. Session map: `sessions/<session_id>` (written by a hook when the session enters the worktree; the worktree is named after the ticket ID, so the `SessionStart` hook after a compaction can find the ticket - before stage 1b there is no map).
+Project key = `<basename>-<first 8 hex of sha1>` where basename is the last directory name and the sha1 is of the absolute path printed by `git rev-parse --path-format=absolute --git-common-dir` with a trailing `/.git` removed, **without a trailing newline** (e.g. `printf '%s' "$p" | shasum -a 1`). It is the same in the main checkout and in every worktree. Project state is `~/.local/share/deliver-ticket/<project-key>/` (`config.md` = decisions, `config.local.md`, `guard.json`, `project.md` = facts about the codebase with sources and freshness lines, `lessons.md` = what tickets taught, `tickets/<ID>.md`, `evidence/<ID>/`). Global lessons: `~/.local/share/deliver-ticket/lessons.md`. Session map: `sessions/<session_id>` (written by a hook when the session enters the worktree; the worktree is named after the ticket ID, so the `SessionStart` hook after a compaction can find the ticket - before stage 1b there is no map).
 
 No project state for this repo -> the project was never initialised: say so and offer `/deliver-ticket init`. Don't guess settings.
 
@@ -63,7 +63,7 @@ Stage files hold the detail; read the file for the stage you are in, don't work 
 | 1b | Workspace (worktree) - runs after the stage-1 gate | `stages/1b-workspace.md` | auto |
 | 2 | Plan + plan check | `stages/2-plan.md` | B, C |
 | 3 | Build | `stages/3-build.md` | C |
-| 4 | Verify | `stages/4-verify.md` | by tier |
+| 4 | Verify (a failing check: stale-fact triage, then pre-existing vs regression) | `stages/4-verify.md` | by tier |
 | 5 | Review | `stages/5-review.md` | B, C |
 | 6 | Security | `stages/6-security.md` | C (B: findings at the final review) |
 | 7 | Commit + MR text | `stages/7-commit-mr.md` | by tier |
@@ -83,6 +83,7 @@ After a long ticket the conversation is auto-compacted, and the skill text is go
 2. Read the stage file for that stage.
 3. Read the hard rules in section 2 of this file again.
 4. Show the lessons tagged with that stage (project + global), if any.
+   Stages 2-4: `project.md` and its listed knowledge sources are the map, **the code is the truth** - on a contradiction trust the code, note it, fix the section.
 5. Update the ticket file's `stage:` and `next:` line when you leave the stage. The header of every ticket file carries the absolute path of this skill and `next: read stages/<N>.md`, so a context that remembers nothing can still find its way back.
 
 A `SessionStart` hook may inject "ticket X, stage N: re-read ..." after a compaction. Treat that as the same instruction.
@@ -101,7 +102,8 @@ Chat with me in `chat_language` from config (default `en`). Files you write for 
 - `stages/` - one file per stage (section 4 above).
 - `adapters/` - `gitlab-glab.md`, `manual.md`; the core calls only check / create / update / comments.
 - `templates/` - ticket, question, plan-split, ac-evidence, reviewer-verify, review-round, mr-description, config.
-- `scripts/` - `classify.py` (tier floor), `setup-worktree.sh`, `env-keys.sh`, `install-hooks.sh`, `validate-guard.py`, `setup-exclude.sh`.
+- `profiles/` - ecosystem hints for init (`node.md`); hints only, I confirm every value.
+- `scripts/` - `classify.py` (tier floor), `setup-worktree.sh`, `env-keys.sh`, `install-hooks.sh`, `validate-guard.py`, `setup-exclude.sh`, `project-map-stale.sh` (freshness of `project.md`), `compare-failures.py` (pre-existing vs new failures), `base-worktree.sh` (shared detached `_base` worktree for re-running a check on the base).
 - `hooks/` - `guard.sh`, `verify-on-push.sh`, `worktree-guard.sh`, `worktree-create.sh`, `session-start.sh`; registered at user level by `install-hooks.sh`.
 - `CHANGELOG.md` - one generic line per applied lesson or rule change. Lessons are applied to this folder only in a separate session started here, never from a ticket session.
 

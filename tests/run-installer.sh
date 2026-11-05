@@ -6,9 +6,12 @@ SK="$(cd "$(dirname "$0")/.." && pwd)"
 D="${1:?scratch dir (must be empty or new)}"
 SRC="${2:-$HOME/.claude/settings.json}"
 mkdir -p "$D"; [ -z "$(ls -A "$D")" ] || { echo "scratch dir not empty" >&2; exit 1; }
-cp "$SRC" "$D/orig.json"; cp "$SRC" "$D/s.json"
+cp "$SRC" "$D/s.json"
 export DT_SETTINGS="$D/s.json"
 fail=0
+# the source may already have this skill installed: start the round trip from a copy without it
+"$SK/scripts/install-hooks.sh" status >/dev/null 2>&1 && "$SK/scripts/install-hooks.sh" uninstall --confirmed >/dev/null 2>&1
+cp "$D/s.json" "$D/orig.json"
 "$SK/scripts/install-hooks.sh" apply --confirmed >/dev/null 2>&1 && echo "ok apply" || { fail=1; echo "FAIL apply"; }
 "$SK/scripts/install-hooks.sh" status >/dev/null 2>&1 && echo "ok status after apply" || { fail=1; echo "FAIL status after apply"; }
 cmp -s "$D/orig.json" "$D/s.json" && { fail=1; echo "FAIL apply changed nothing"; }
