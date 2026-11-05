@@ -808,7 +808,9 @@ def mode_session(payload, g):
                       if "=" in l)
     except OSError:
         return
-    ticket, proj = fields.get("ticket"), fields.get("project") or os.path.basename(STATE)
+    # the worktree is named after the ticket ID, so the ticket is known even if nobody wrote ticket=
+    ticket = fields.get("ticket") or (os.path.basename(fields["worktree"].rstrip("/")) if fields.get("worktree") else None)
+    proj = fields.get("project") or os.path.basename(STATE)
     if not ticket or not re.fullmatch(r"[A-Za-z0-9._-]+", ticket) or not re.fullmatch(r"[A-Za-z0-9._-]+", proj):
         return
     tf = os.path.join(DT_HOME, proj, "tickets", ticket + ".md")

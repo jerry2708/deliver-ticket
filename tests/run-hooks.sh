@@ -126,6 +126,10 @@ mkdir -p "$DELIVER_TICKET_HOME/$key/tickets"; printf 'stage: 3\nnext: read stage
 printf 'ticket=T1\n' >> "$DELIVER_TICKET_HOME/sessions/sess-9"
 out=$(jq -nc --arg cwd "$W" '{session_id:"sess-9",cwd:$cwd,hook_event_name:"SessionStart",source:"compact"}' | "$SK/hooks/session-start.sh"); rc=$?
 echo "$out" | jq -e '.hookSpecificOutput.additionalContext|test("ticket T1.*stage 3")' >/dev/null && [ $rc = 0 ] && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL session-start out=$out"; }
+# no ticket= line: derived from the worktree name
+sed -i.bak '/^ticket=/d' "$DELIVER_TICKET_HOME/sessions/sess-9"
+out=$(jq -nc --arg cwd "$W" '{session_id:"sess-9",cwd:$cwd,hook_event_name:"SessionStart",source:"compact"}' | "$SK/hooks/session-start.sh")
+echo "$out" | jq -e '.hookSpecificOutput.additionalContext|test("ticket T1")' >/dev/null && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL session-start without ticket= line: $out"; }
 out=$(jq -nc --arg cwd "$W" '{session_id:"nope",cwd:$cwd,source:"compact"}' | "$SK/hooks/session-start.sh"); [ -z "$out" ] && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL session-start unknown session should be silent"; }
 echo "# corrupt guard.json with state => block (except skill scripts)"
 echo '{broken' > "$DELIVER_TICKET_HOME/$key/guard.json"

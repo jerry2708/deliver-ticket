@@ -1,0 +1,24 @@
+# Stage 2 - Plan + plan check
+
+Gate: tier A (runs as B in v0.1): see 1-intake; **B and C: me**. Work in the ticket's worktree. Plan from the normalised ticket only, never the raw text.
+
+## Plan
+Enter plan mode (`EnterPlanMode`) if available, else write the plan in the ticket file and stop for my approval. The plan must have:
+- **Steps** in build order; a big task is cut into chunks: spikes first, risky parts separate, vertical slices (each chunk runnable and checkable).
+- **Per step:** files to touch, the AC(s) it serves, the test that proves it. Supporting steps (scaffolding, refactor, tooling) are labelled `support: <AC>`.
+- **Every assumption about existing contracts** (function signatures, API shapes, data formats) cited with `file:line` after you read it; unread = marked `unverified`.
+- **Waiting ACs** shown as parked (not planned, with the open question); everything else is planned.
+- **Planned file list** and a size estimate: Size is re-judged now. Over M (>10 files or >400 lines) -> propose several MRs with `templates/plan-split.md` (each MR deployable, ACs traced); I confirm the split.
+- **Bugs:** the root cause, cited `file:line`, and the failing test that will prove it (stage 3 writes it first).
+- **Risk re-check:** re-judge all 9 categories with the planned file list; the tier can only go up. Raise it -> stop and tell me (reason, new gates). Categories flagged `risk re-check at stage 2` from intake are resolved here.
+- **Stop point and commits:** per tier and config; soft mode caps at `local`.
+
+## Plan check (read-only, before showing the plan)
+Build a small table and put it in the ticket file:
+- **Tier B:** AC -> plan step(s) -> test(s). An AC with no step or no test is flagged.
+- **Tier C:** also step -> AC (a step with no AC and no `support:` label is scope creep) and conflicts with CLAUDE.md / the common DoD (**critical**).
+- Tier A/no plan gate: a critical finding -> stop and ask; others are listed.
+Fixes to the plan only after my OK; tell me what you would change.
+
+## Gate
+Show: plan (steps), plan-check table, risk re-check result, tier (unchanged or raised), stop point, parked ACs. Stop and wait. On approval: `stage: 3`, `next: read stages/3-build.md`.
