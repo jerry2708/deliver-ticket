@@ -3,6 +3,7 @@
 Gate: tier A and B auto (no gate until the final review); **C: me after the stage (I read the diff)**. Work only inside the ticket worktree (path in the ticket file; call `EnterWorktree` with it if this session is elsewhere). Build only planned steps for non-waiting ACs.
 
 ## Rules
+- **Code is the truth over `project.md`:** if a path, command, port or structure it states differs from what you see, trust the code, note the mismatch in the stage output, and fix that section at stage 8.
 - **Bugs: failing test first**, at the lowest sensible level, failing for the right reason (show the failure). Then the fix.
 - **Run lint + tests + build from the current worktree**, with the project's commands from config (`<ASK>` -> ask, never guess). Ports on the command line, never edit `.env`.
 - **Never silence lint or type errors** (no `eslint-disable`, `@ts-ignore`, `any` to dodge a check).

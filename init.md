@@ -10,6 +10,7 @@
 - **Ask only what applies.** Groups that only some projects have (local DB, e2e, mobile simulator, signed-in browser, two test identities) are asked only when detected; otherwise one "not found" line for me to confirm.
 - **The config never overrides CLAUDE.md.** Read the repo's `CLAUDE.md` and `.claude/rules/` first; where the config would conflict, report it and let me decide. CLAUDE.md wins.
 - **Writes are limited to** the project state dir, `.git/info/exclude` (via `scripts/setup-exclude.sh`; local, never committed) and - last, after my yes - `~/.claude/settings.json` through `scripts/install-hooks.sh`. Nothing else in the repo changes. Tool configs (jest, eslint, tsc, watchers) are checked and gaps are reported, never edited.
+- **Profiles give hints, `project.md` gives facts, `config.md` gives decisions.** Don't mix the three.
 - **Group the questions.** Show all findings in one table first, then ask what is missing in batches (one batch per group below), not one question at a time.
 
 ## Preconditions
@@ -18,6 +19,7 @@
 2. Compute the project key (`SKILL.md` section 3). Print it and the state dir.
 3. State dir already has `config.md` -> **re-run mode**: show current values, change only the groups I name, then regenerate `guard.json` (step 2) and re-run steps 3-4 (step 3 only detects).
 4. If CLAUDE.md or `.claude/rules/` names risk paths, protected files or forbidden actions, collect them now (they feed the Risk group).
+5. **Profile (hints only).** Look for a manifest in the repo root and its apps (`package.json`, ...). A match in `profiles/` (today: `profiles/node.md`) -> read it and use its "where to look" and "watch globs" as hints for the groups below; show each value it proposes as a finding like any other and wait for my confirmation. No match -> no profile, ask every group as written. A profile never sets a value by itself.
 
 ## Step 1 - detect and confirm, group by group
 
@@ -60,6 +62,7 @@ Categories (key in `guard.json`): `risk_paths`, `auth`, `payment`, `personal_dat
 Only after step 1 is confirmed. Create the state dir and, in this order:
 
 1. `<state>/config.md` from `templates/config.md` with my answers (if I allowed committing the shared config: `<repo>/.claude/delivery/config.md` instead, and a pointer line in the state dir; if the client forbids it, it stays in the state dir). Anything unanswered stays `<ASK>`. `config.local.md` (personal overrides) is created empty with a header.
+1b. `<state>/project.md` from `templates/project.md`, filled from this scan: project map (apps/packages, entry points, routes/handlers, agents + tools, stores/DB), commands, ports, env file names (names only), risk-path findings, existing hooks, tool-config gaps, and the Knowledge sources list (CLAUDE.md and nested ones, `.claude/rules/`, `docs/`, READMEs, an existing code graph if any - links, not copies). Every line has a source (`file:line` or the command); no source -> leave the line out. Each section gets `checked: <short sha of the base branch> · <date> · watch: <globs>` (profile watch globs as the start; adjust to the real layout) and `stale: no`. Decisions stay in `config.md`; learned things stay in `lessons.md`. It never goes into the repo. Re-run mode with nothing named = full refresh of `project.md` (rewrite all sections and `checked:`).
 2. Run `scripts/setup-exclude.sh --check`; if it says missing, show me the line (`.claude/worktrees/`) and the file (`<git-common-dir>/info/exclude`), and on my yes run `scripts/setup-exclude.sh`. (Don't edit that file any other way - editors and the harness refuse it.) Local git metadata only; `.gitignore` is never touched.
 3. `<state>/guard.json` - what the hooks read. Fields and meaning:
 
@@ -107,4 +110,4 @@ Write the result and date into the `Hooks and permissions` section of `config.md
 
 ## Step 5 - report
 
-Say: what was written and where (paths), what is still `<ASK>`, tool-config gaps, whether hooks are installed and the self-test passed (or soft mode and why), and the next command (`/deliver-ticket <ID or file>`). Don't start a ticket.
+Say: what was written and where (paths, including `project.md` and which profile was used, if any), what is still `<ASK>`, tool-config gaps, whether hooks are installed and the self-test passed (or soft mode and why), and the next command (`/deliver-ticket <ID or file>`). Don't start a ticket.

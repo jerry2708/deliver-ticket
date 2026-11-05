@@ -2,6 +2,9 @@
 
 Gate: tier A (runs as B in v0.1): see 1-intake; **B and C: me**. Work in the ticket's worktree. Plan from the normalised ticket only, never the raw text.
 
+## Before exploring the code
+Read `<state>/project.md` and the files under its "Knowledge sources" (link, don't copy) first; they say where things are and which commands exist. A section marked `stale: yes` is rescanned **only if the ticket's planned area touches it** (read the code it describes, rewrite the section with sources, then `scripts/project-map-stale.sh mark-checked <state>/project.md --guard <state>/guard.json "<section>"`); other stale sections are left alone and listed. **Code is the truth:** where `project.md` contradicts the code, trust the code, say so in the plan, and fix that section. No `project.md` -> explore as usual and say so.
+
 ## Plan
 Enter plan mode (`EnterPlanMode`) if available, else write the plan in the ticket file and stop for my approval. The plan must have:
 - **Steps** in build order; a big task is cut into chunks: spikes first, risky parts separate, vertical slices (each chunk runnable and checkable).

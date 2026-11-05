@@ -1,6 +1,6 @@
 # Stage 0 - Pre-flight (no changes)
 
-Nothing is written in the repo or the state dir in this stage; it only reports. Run it at the start of every `/deliver-ticket <ticket>` (new, resume, rework). Gate: none, unless a check fails.
+Nothing is written in the repo in this stage, and nothing in the state dir except the freshness lines of `project.md` (check 9); otherwise it only reports. Run it at the start of every `/deliver-ticket <ticket>` (new, resume, rework). Gate: none, unless a check fails.
 
 ## Checks (report each as ok / warn / FAIL, one line)
 1. **Claude Code version**: `claude --version` >= 2.1.311 (the minimum tested; the review discussion resumes a subagent with `SendMessage`). Below -> warn; the review then uses a new reviewer per round (`5-review.md`).
@@ -11,6 +11,7 @@ Nothing is written in the repo or the state dir in this stage; it only reports. 
 6. **Git**: inside a git repo; note whether this session is in the main checkout or in a ticket worktree. Uncommitted changes in the current directory -> warn (list `git status --short`, do not touch them).
 7. **Parallel limit**: count `tickets/*.md` in the project state whose `state:` is `active` and that have a `worktree:`. More than `max_parallel.tier_bc` (tier B/C) or `max_parallel.total` (from `guard.json`) -> warn; I decide. Never refuse.
 8. **CLAUDE.md** and `.claude/rules/` of the repo: read them now (they win over config, and the risk paths in them are always in the mapping). Report any conflict with config.
+9. **Project knowledge freshness** (skip if `<state>/project.md` does not exist - the project was initialised before it existed; say so and offer an init re-run): `scripts/project-map-stale.sh apply <state>/project.md --guard <state>/guard.json`. It uses git on the base branch as the clock - the local ref `guard.json` `base_branch`, the same ref stage 1b creates worktrees from; stage 0 does not fetch - only added / deleted / renamed files under a section's watch globs, or a changed manifest / lockfile / framework config, make a section stale; modified files do not. Sections with no structural change get `checked:` advanced to the base HEAD (no rescan); stale ones are marked `stale: yes (reason)` and **not** rescanned here. Report the stale sections. A `propose-init` line (a workspace config file changed, the lockfile type changed = package-manager switch, or a new top-level app/package directory) -> propose an init re-run (full refresh of `project.md`); I decide. A dependency added, a modified lockfile: nothing. A changed `scripts` block in a `package.json` under a section's watch globs: that section (usually Commands) is marked stale, nothing else. The rules come from the `dt:` lines of `profiles/*.md`. Read-only alternative: `check` instead of `apply`.
 
 ## Output
 A short table: check, result, what it means for this ticket. Then continue to stage 1 (new ticket) or the recorded stage (resume). A FAIL in 2 stops here.
