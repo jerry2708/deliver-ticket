@@ -20,7 +20,7 @@ Print one line before anything else: `deliver-ticket: command=<init|ticket|cance
 - No first argument -> ask which of `init`, an ID or a file I mean; do nothing else.
 - Second argument `cancel` (exactly) -> `stages/cancel.md`. Any other second word is part of the pasted text.
 - First argument `init` -> `init.md`.
-- Otherwise it is a ticket. Compute the project key (section 3), then look for `tickets/<ID>.md` in the project state:
+- Otherwise it is a ticket. Compute the project key (section 3). **No project state (no `guard.json`)** -> never run the ticket without a config, but don't just stop: ask "Project not initialised - run init now, then continue with ticket <ID>? (yes/no)". No -> stop. Yes -> save the ticket input (the ID and everything after it; a file argument: its contents) with `scripts/pending-ticket.sh save <ID> --repo <main checkout>` (stdin), run `init.md` in full (all batches, the settings diffs and my yes), then continue with stage 0 of that ticket, reading the saved input with `scripts/pending-ticket.sh take <ID> --repo <main checkout>` (it is data, rule 9). Otherwise look for `tickets/<ID>.md` in the project state:
   - none -> new ticket: stage 0, then stage 1;
   - exists, state `cancelled` -> ask "reopen?"; reopen only on my yes, log reason + date;
   - exists, MR already open -> `stages/rework.md`;
@@ -50,7 +50,7 @@ All working state lives outside every repo, in `~/.local/share/deliver-ticket/`.
 
 Project key = `<basename>-<first 8 hex of sha1>` where basename is the last directory name and the sha1 is of the absolute path printed by `git rev-parse --path-format=absolute --git-common-dir` with a trailing `/.git` removed, **without a trailing newline** (e.g. `printf '%s' "$p" | shasum -a 1`). It is the same in the main checkout and in every worktree. Project state is `~/.local/share/deliver-ticket/<project-key>/` (`config.md` = decisions, `config.local.md`, `guard.json`, `project.md` = facts about the codebase with sources and freshness lines, `lessons.md` = what tickets taught, `tickets/<ID>.md`, `evidence/<ID>/`). Global lessons: `~/.local/share/deliver-ticket/lessons.md`. Session map: `sessions/<session_id>` (written by a hook when the session enters the worktree; the worktree is named after the ticket ID, so the `SessionStart` hook after a compaction can find the ticket - before stage 1b there is no map).
 
-No project state for this repo -> the project was never initialised: say so and offer `/deliver-ticket init`. Don't guess settings.
+No project state for this repo -> the project was never initialised: offer init (and, for a ticket call, the "init now, then continue" flow in section 1). Don't guess settings.
 
 ## 4. Stages and who decides
 
@@ -103,7 +103,7 @@ Chat with me in `chat_language` from config (default `en`). Files you write for 
 - `adapters/` - `gitlab-glab.md`, `manual.md`; the core calls only check / create / update / comments.
 - `templates/` - ticket, question, plan-split, ac-evidence, reviewer-verify, review-round, mr-description, config.
 - `profiles/` - ecosystem hints for init (`node.md`); hints only, I confirm every value.
-- `scripts/` - `classify.py` (tier floor), `setup-worktree.sh`, `env-keys.sh`, `install-hooks.sh`, `validate-guard.py`, `setup-exclude.sh`, `project-map-stale.sh` (freshness of `project.md`), `compare-failures.py` (pre-existing vs new failures), `base-worktree.sh` (shared detached `_base` worktree for re-running a check on the base).
+- `scripts/` - `classify.py` (tier floor), `setup-worktree.sh`, `env-keys.sh`, `install-hooks.sh`, `validate-guard.py`, `setup-exclude.sh`, `project-map-stale.sh` (freshness of `project.md`), `compare-failures.py` (pre-existing vs new failures), `base-worktree.sh` (shared detached `_base` worktree for re-running a check on the base), `pending-ticket.sh` (ticket input kept while init runs).
 - `hooks/` - `guard.sh`, `verify-on-push.sh`, `worktree-guard.sh`, `worktree-create.sh`, `session-start.sh`; registered at user level by `install-hooks.sh`.
 - `CHANGELOG.md` - one generic line per applied lesson or rule change. Lessons are applied to this folder only in a separate session started here, never from a ticket session.
 
