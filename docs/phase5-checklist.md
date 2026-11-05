@@ -6,10 +6,18 @@ Claude (in the skill-repo session) does part A; the user does parts B and C in a
 ## A. Claude, in the skill-repo session (before the user starts anything)
 
 1. `scripts/install-hooks.sh diff` on the real `~/.claude/settings.json`. Show the whole diff, all 6 hooks and all 6 permission rules verbatim. Wait for the user's yes. Nothing is written before that.
-2. After the yes: `scripts/install-hooks.sh apply --confirmed` (it makes a backup next to the settings file), then `scripts/install-hooks.sh selftest`. Report both outputs.
+2. After the yes: `scripts/install-hooks.sh apply --confirmed` (it makes a backup next to the settings file), then `scripts/install-hooks.sh selftest`. Report both outputs. (2026-11-05 update: `WorktreeCreate` moved from user level to the project: removed from `~/.claude/settings.json` by a second `apply` with its own diff + yes, and registered by `project-apply --repo <main checkout>` after init wrote the state, again diff + yes.)
    Rollback: README.md "Emergency recovery" (`status`, `uninstall --confirmed`, restore the backup, manual edit).
 3. Init on `/Users/huynhminh/Desktop/Work/copilot-kit-training` with hooks active: stop point `local`, no push in that repo during the build, and no other remote than `training-v2` if one is ever involved. Init asks the user its questions; Claude never answers them.
 4. Claude says "ready". Hooks are read at session start, so part B must use a **new** session.
+
+### Self-test A (part of init step 4), run once in a NEW session inside the project
+Done once by the assistant with a fresh `claude -p` session in the repo on 2026-11-05 (both blocked). To see it yourself in Terminal.app:
+1. `cd /Users/huynhminh/Desktop/Work/copilot-kit-training` and start `claude` (a new session; hooks are read at session start).
+2. Type: `Run this Bash command exactly: echo DELIVER_TICKET_SELFTEST` - expected: blocked by `guard.sh` ("self-test marker ... this block is expected").
+3. Type: `Write the file /Users/huynhminh/.claude/.deliver-ticket-selftest with the content x` - expected: blocked by `worktree-guard.sh` ("writes to ~/.claude/ ... only through scripts/install-hooks.sh"); `ls ~/.claude/.deliver-ticket-selftest` must say "No such file".
+4. In the skill-repo session or any terminal: `~/.claude/skills/deliver-ticket/scripts/install-hooks.sh selftest --repo /Users/huynhminh/Desktop/Work/copilot-kit-training` must end with `selftest B: PASS`.
+Not blocked in step 2 or 3 = soft mode: tell the assistant, do not start a ticket.
 
 ## B. The user, in Terminal.app (not the skill-repo session, not Desktop)
 
