@@ -530,6 +530,227 @@ def check_merge(c, over, g, all_cmds):
         block("git merge while on %r (default/target branch): merging into it is never automated" % br)
 
 
+# --- recursive searches that could read .env* ---------------------------------------------------
+GREP_PROGS = {"grep", "egrep", "fgrep", "ggrep", "ugrep"}
+GREP_SHORT_ARG = set("ABCDdefmt")      # grep short flags that take a value (rest of the cluster or next word)
+RG_SHORT_ARG = set("ABCEMTdefgjmrt")
+RG_LONG_ARG = {"glob", "iglob", "type", "type-not", "type-add", "max-depth", "max-count", "max-filesize",
+               "regexp", "file", "replace", "context", "after-context", "before-context", "threads", "encoding",
+               "sort", "sortr", "pre", "pre-glob", "colors", "ignore-file", "path-separator", "engine",
+               "context-separator", "field-context-separator", "field-match-separator", "max-columns",
+               "dfa-size-limit", "regex-size-limit", "hostname-bin", "hyperlink-format"}
+WALK_CAP = 50000
+SEARCH_FIX = ("exclude them: grep -r --exclude='.env*' ... | rg --hidden -g '!.env*' ... | "
+              "git grep ... -- ':!.env*' (rg without --hidden skips dotfiles)")
+
+
+def _exclude_covers_env(glob):
+    g = glob[1:] if glob.startswith("!") else glob
+    while g.startswith("**/"):
+        g = g[3:]
+    return fnmatch.fnmatch(".env", g) and fnmatch.fnmatch(".env.example", g) and fnmatch.fnmatch(".env.local", g)
+
+
+def _env_files_under(dirs):
+    """First .env* file found under the given dirs (files are checked too); (path|None, overflow)."""
+    seen = 0
+    for d in dirs:
+        if os.path.isfile(d):
+            if os.path.basename(d).startswith(".env"):
+                return d, False
+            continue
+        for root, dnames, fnames in os.walk(d, followlinks=False):
+            dnames[:] = [x for x in dnames if x != ".git"]
+            for f in fnames:
+                seen += 1
+                if f.startswith(".env"):
+                    return os.path.join(root, f), False
+            seen += len(dnames)
+            if seen > WALK_CAP:
+                return None, True
+    return None, False
+
+
+def _search_targets(cwd, words):
+    out = []
+    for w in words:
+        if SUBST in w or "$" in w or "`" in w:
+            return None
+        w = re.split(r"[*?\[]", w)[0].rsplit("/", 1)[0] if re.search(r"[*?\[]", w) else w
+        path = real(os.path.join(cwd, w or "."))
+        if os.path.exists(path):
+            out.append(path)
+    return out
+
+
+def exclusion_word_idx(a, prog):
+    """Indexes of words that are exclude patterns of a search command (they name .env* to skip it, not to read it)."""
+    idx = set()
+    if prog not in GREP_PROGS and prog != "rg" and prog != "git":
+        return idx
+    for i, w in enumerate(a):
+        val, prev = None, a[i - 1] if i else ""
+        if prog in GREP_PROGS:
+            if w.startswith("--exclude="):
+                val = w[10:]
+            elif prev == "--exclude":
+                val = w
+        elif prog == "rg":
+            if w.startswith("--glob=") or w.startswith("--iglob="):
+                val = w.split("=", 1)[1]
+            elif prev in ("-g", "--glob", "--iglob"):
+                val = w
+            elif w.startswith("-g") and len(w) > 2 and w[2] != "-":
+                val = w[2:]
+            if val is not None and not val.startswith("!"):
+                val = None
+        else:
+            if re.match(r":(!|\^|\(exclude\))", w):
+                val = w[w.index(")") + 1:] if w.startswith(":(") else w[2:]
+        if val is not None and _exclude_covers_env(val):
+            idx.add(i)
+    return idx
+
+
+def check_search(c, prog):
+    """grep -r / rg --hidden / git grep must not be able to read .env* files unless excluded."""
+    a, cwd = c.argv, c.cwd
+    if not cwd:
+        return
+    if prog in GREP_PROGS:
+        rec = haspat = False
+        excl, pos, i, endopts = [], [], 1, False
+        while i < len(a):
+            t = a[i]
+            i += 1
+            if endopts or not t.startswith("-") or t == "-":
+                pos.append(t)
+            elif t == "--":
+                endopts = True
+            elif t.startswith("--"):
+                name, eq, val = t[2:].partition("=")
+                if name in ("recursive", "dereference-recursive"):
+                    rec = True
+                elif name == "directories" and (val or (a[i:i + 1] or [""])[0]) == "recurse":
+                    rec = True
+                    i += 0 if eq else 1
+                elif name in ("regexp", "file"):
+                    haspat = True
+                    i += 0 if eq else 1
+                elif name == "exclude":
+                    if eq:
+                        excl.append(val)
+                    elif i < len(a):
+                        excl.append(a[i]); i += 1
+                elif name in ("exclude-from", "include", "exclude-dir", "max-count", "after-context",
+                              "before-context", "context", "label", "binary-files", "devices", "color",
+                              "colour", "include-dir") and not eq:
+                    i += 1
+            else:
+                for k, ch in enumerate(t[1:]):
+                    if ch in "rR":
+                        rec = True
+                    elif ch in GREP_SHORT_ARG:
+                        rest = t[2 + k:]
+                        if ch in "ef":
+                            haspat = True
+                        if ch == "d":
+                            if (rest or (a[i:i + 1] or [""])[0]) == "recurse":
+                                rec = True
+                        if not rest:
+                            i += 1
+                        break
+        if not rec:
+            return
+        if any(_exclude_covers_env(x) for x in excl):
+            return
+        words = pos if haspat else pos[1:]
+        targets = _search_targets(cwd, words) if words else [cwd]
+        what = "%s -r" % prog
+    elif prog == "rg":
+        hidden, u, haspat, globs, pos, i, endopts = False, 0, False, [], [], 1, False
+        while i < len(a):
+            t = a[i]
+            i += 1
+            if endopts or not t.startswith("-") or t == "-":
+                pos.append(t)
+            elif t == "--":
+                endopts = True
+            elif t.startswith("--"):
+                name, eq, val = t[2:].partition("=")
+                if name == "hidden":
+                    hidden = True
+                elif name == "unrestricted":
+                    u += 1
+                elif name in ("glob", "iglob"):
+                    if eq:
+                        globs.append(val)
+                    elif i < len(a):
+                        globs.append(a[i]); i += 1
+                elif name in ("regexp", "file"):
+                    haspat = True
+                    i += 0 if eq else 1
+                elif name in RG_LONG_ARG and not eq:
+                    i += 1
+            else:
+                for k, ch in enumerate(t[1:]):
+                    if ch == "." :
+                        hidden = True
+                    elif ch == "u":
+                        u += 1
+                    elif ch in RG_SHORT_ARG:
+                        rest = t[2 + k:]
+                        val = rest or (a[i] if i < len(a) else "")
+                        if ch == "g":
+                            globs.append(val)
+                        if ch in "ef":
+                            haspat = True
+                        if not rest:
+                            i += 1
+                        break
+        if not (hidden or u >= 2):
+            return                      # ripgrep skips dotfiles by default
+        if any(g.startswith("!") and _exclude_covers_env(g) for g in globs):
+            return
+        words = pos if haspat else pos[1:]
+        targets = _search_targets(cwd, words) if words else [cwd]
+        what = "rg with hidden files enabled"
+    elif prog == "git":
+        sub, rest, over, _ = parse_git(a)
+        if sub != "grep":
+            return
+        base = real(os.path.join(cwd, over)) if over else cwd
+        specs = []
+        if "--" in rest:
+            specs = rest[rest.index("--") + 1:]
+        if any(sp.startswith((":!", ":^", ":(exclude")) and ".env" in sp for sp in specs):
+            return
+        plain = [sp for sp in specs if not sp.startswith(":")]
+        untracked = any(t in ("--untracked", "--no-index") for t in rest)
+        env, over_cap = None, False
+        try:
+            ls = subprocess.run(["git", "-C", base, "ls-files"], capture_output=True, text=True, timeout=5).stdout.split("\n")
+        except (OSError, subprocess.SubprocessError):
+            ls = []
+        for f in ls:
+            if os.path.basename(f).startswith(".env") and (
+                    not plain or any(f == sp.rstrip("/") or f.startswith(sp.rstrip("/") + "/") or fnmatch.fnmatch(f, sp) for sp in plain)):
+                env = f
+                break
+        if env is None and untracked:
+            env, over_cap = _env_files_under(_search_targets(base, plain) if plain else [base])
+        if env or over_cap:
+            block("git grep could read %s - %s" % (env or "more than %d files" % WALK_CAP, SEARCH_FIX))
+        return
+    else:
+        return
+    if targets is None:
+        block("%s with a target the hook cannot resolve ($VAR / substitution) could read .env* - %s" % (what, SEARCH_FIX))
+    env, over_cap = _env_files_under(targets)
+    if env or over_cap:
+        block("%s could read %s - %s" % (what, env or "more than %d files" % WALK_CAP, SEARCH_FIX))
+
+
 def check_cmd(c, g, payload, all_cmds=()):
     a = c.argv
     prog = os.path.basename(a[0]) if a else ""
@@ -543,12 +764,19 @@ def check_cmd(c, g, payload, all_cmds=()):
 
     # --- .env* by any shell route
     if not exempt:
-        for w in a + [t for _, t in c.redirs]:
+        skip = exclusion_word_idx(a, prog)
+        for k, w in enumerate(a + [t for _, t in c.redirs]):
+            if k in skip:
+                continue
             if SUBST not in w and is_env_name(w):
                 block("%r touches a .env* file - key names only, via scripts/env-keys.sh" % w)
         if prog in ("python", "python3", "node", "ruby", "perl") and any(
                 re.search(r"\.env(?![A-Za-z_])", w) for w in a[1:]):
             block("interpreter code mentions .env* - key names only, via scripts/env-keys.sh")
+
+    # --- recursive searches that could cover .env*
+    if not exempt and (prog in GREP_PROGS or prog in ("rg", "git")):
+        check_search(c, prog)
 
     # --- git
     if prog == "git":

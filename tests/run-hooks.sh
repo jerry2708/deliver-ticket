@@ -121,6 +121,20 @@ jq -nc --arg cwd "$R" --arg w "$W" '{session_id:"sess-9",cwd:$cwd,hook_event_nam
 grep -q "worktree=$W" "$DELIVER_TICKET_HOME/sessions/sess-9" && { pass=$((pass+1)); echo "ok session map: $(tr '\n' ' ' < $DELIVER_TICKET_HOME/sessions/sess-9)"; } || { fail=$((fail+1)); echo "FAIL session map"; }
 # session now allows its worktree even from the main checkout cwd
 jq -nc --arg cwd "$R" --arg f "$W/z.txt" '{session_id:"sess-9",cwd:$cwd,hook_event_name:"PreToolUse",tool_name:"Write",tool_input:{file_path:$f}}' | "$SK/hooks/worktree-guard.sh" >/dev/null 2>&1; [ $? = 0 ] && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL mapped worktree not allowed"; }
+echo "# recursive searches that could read .env* (block unless excluded)"
+mkdir -p "$W/se/with" "$W/se/clean"; printf 'K=1\n' > "$W/se/with/.env.example"; printf 'x\n' > "$W/se/with/a.txt"; printf 'x\n' > "$W/se/clean/a.txt"
+git -C "$W" add -f se/with/.env.example se/with/a.txt se/clean/a.txt
+for c in 'grep -r foo se' 'grep -rn foo se/with' 'grep -R foo .' 'grep --recursive foo se' 'grep -rl -e foo se' 'grep -d recurse foo se' 'grep -r foo' \
+  'grep -r foo se/*' 'grep -r --include=*.txt foo se' 'grep -r --exclude-dir=node_modules foo se' 'grep -r --exclude=*.log foo se' 'egrep -rn foo se' \
+  'rg --hidden foo se' 'rg -uu foo se' 'rg -. foo' 'rg --hidden -g "*.txt" foo se' 'rg --hidden foo' \
+  'git grep foo' 'git -C se/with grep foo' 'git grep foo -- se' 'git grep --untracked foo' 'grep -r foo $UNKNOWNDIR' 'cd se && grep -r foo with'; do t 2 guard.sh "$W" "$c"; done
+echo "# recursive searches: allowed forms (rc 0)"
+for c in "grep -r --exclude='.env*' foo se" 'grep -rn --exclude=.env* foo se/with' "grep -r --exclude '.env*' foo se" 'grep -r foo se/clean' 'grep -rn foo se/clean/a.txt' \
+  'grep foo se/with/a.txt' 'grep -c foo se/clean/a.txt' 'echo foo | grep foo' 'grep -rn foo se/clean se/clean' \
+  'rg foo se' 'rg -l foo se/with' "rg --hidden -g '!.env*' foo se" "rg --hidden --glob=!.env* foo se" "rg -uu -g '!**/.env*' foo se" 'rg --hidden foo se/clean' \
+  "git grep foo -- ':!.env*'" "git grep foo -- ':(exclude).env*'" "git grep foo -- se/clean" "git -C se/clean grep foo" 'git log --oneline'; do t 0 guard.sh "$W" "$c"; done
+# the block message names the fixed command
+out=$(payload "$W" Bash 'grep -r foo se' | "$SK/hooks/guard.sh" 2>&1); echo "$out" | grep -q "exclude='.env\*'" && echo "$out" | grep -q "rg --hidden -g '!.env\*'" && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL search block message: $out"; }
 echo "# session-start (compact)"
 mkdir -p "$DELIVER_TICKET_HOME/$key/tickets"; printf 'stage: 3\nnext: read stages/3-build.md\n' > "$DELIVER_TICKET_HOME/$key/tickets/T1.md"
 printf 'ticket=T1\n' >> "$DELIVER_TICKET_HOME/sessions/sess-9"

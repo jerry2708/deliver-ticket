@@ -28,12 +28,13 @@ What to watch and note while running (write the answer next to each):
 - Did the session map get written (`ls ~/.local/share/deliver-ticket/sessions/`) after stage 1b?
 - Did the worktree appear under `copilot-kit-training/.claude/worktrees/<ID>`, with env symlinks and a free port block?
 - Any step where the skill filled in a value instead of asking?
-- Any `.env*` read, even by a search command? (Known limit: a recursive `grep -r` is not caught by the guard; the stage 0 smoke in phase 4 showed Claude doing it once. The hard-rule text now tells it to exclude `.env*` from searches.)
+- Any `.env*` read, even by a search command? (`guard.sh` now blocks `grep -r/-R`, `rg --hidden`/`-uu` and `git grep` without an exclude when a `.env*` file is in reach; the phase-4 smoke showed Claude running `grep -r` over the repo once. Not caught: `find -exec grep`, other search tools.)
 
 ## C. Only the user can run (open items from plan section 13)
 
 - [ ] **Desktop `WorktreeCreate`**: in the Desktop app, start a session with the Worktree toggle in a repo that has delivery state, then in a repo without. Does `worktree-create.sh` fire (path under `<repo>/.claude/worktrees/`, branch per naming rule / `worktree-<name>`)?
 - [ ] **Interactive `EnterWorktree` prompt** (CLI and Desktop): does `EnterWorktree(name=<ID>)` ask for permission? If yes, note the wording and whether an allow rule can cover it.
+- [ ] **UNVERIFIED: does `deny Read(**/.env*)` also stop the built-in Grep and Glob tools** (content search / listing that reaches `.env*`)? Try in a scratch repo with a dummy `.env.example` containing a fake key: Grep for the key name, Glob `**/.env*`. Note what comes back. If they are not stopped, `guard.sh` does not cover them either (it only sees Bash).
 - [ ] Dev-server watchers: does a dev server in the main checkout pick up `.claude/worktrees/**` changes?
 - [ ] Auto-compaction: after a real auto-compact in a long ticket, does `session-start.sh` inject the re-orientation text? (Stage 0-1 case too: with no worktree yet, it injects the single open intake ticket or lists several.)
 - [ ] IDE extension (unsupported in v0.1): fallback = new session in the worktree.

@@ -186,6 +186,8 @@ def cmd_diff():
         return 0
     sys.stdout.writelines(difflib.unified_diff(old.splitlines(True), new.splitlines(True),
                                                "a/" + SETTINGS, "b/" + SETTINGS))
+    print("\nbackup apply will make: %s.bak-deliver-ticket-<YYYYMMDD-HHMMSS> (timestamp = time of apply)\n"
+          "manifest apply will write: %s" % (SETTINGS, MANIFEST))
     return 0
 
 
