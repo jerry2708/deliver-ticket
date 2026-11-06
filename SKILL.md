@@ -58,11 +58,12 @@ The full guard (main checkout read-only, write allowlist) applies only to a sess
 - **Bound** = the ticket has no `closed/<ID>` marker and the session either has `ticket=<ID>` (not paused), or entered a worktree under `.claude/worktrees/<ID>` whose ticket file exists (EnterWorktree hook), or runs with that worktree as cwd.
 - **Which ticket states bind:** `active` in stages 1-8 bind. A ticket **parked at an intake stop with no code yet** (`stop (DoR)`, a split parent, all work waiting for answers) does not: run `scripts/session-map.sh pause <ID> --reason "<why>" --session <id> --repo <repo_root>` when you stop there; my next `/deliver-ticket <ID> ...` prompt binds the session again. `waiting for review` (stage 8 reached): `pause ... --after-stage8`. `done` and `cancelled` end it for good, and only through `scripts/ticket-state.sh done|cancelled <ID> --reason "<why>" ...` (it needs `stage: 8` for `done`, writes the `closed/<ID>` marker and logs the transition in `delivery.log`). `pause` is refused once a worktree exists.
 - **The first word was not the ticket ID** (`/deliver-ticket fix cart bug`, a file path): when you know the real ID and have created `tickets/<ID>.md`, run `scripts/session-map.sh rebind <that word> <ID> --session <id> --repo <repo_root>` and tell me in one line. Never edit `sessions/`, `closed/` or `delivery.log` by hand: the hooks block it, and the text `state: done` in a ticket file does not unbind anything.
+- **Do not `cd` into a ticket worktree from a session that never ran `/deliver-ticket`** (read its files and its diff with absolute paths): a cwd inside `.claude/worktrees/<ID>` binds the session to that open ticket. It unbinds when you leave the worktree; the guard's block message says so (`pause` does not apply to this rule).
 - `<id>` = the session id from the first line you printed; `<repo_root>` = `repo_root` in `guard.json`.
 
 ## 4. Stages and who decides
 
-Stage files hold the detail; read the file for the stage you are in, don't work from memory of this table.
+Stage files hold the detail; read the file for the stage you are in, don't work from memory of this table. **Read skill files with the Read tool and an absolute path** (`<skill dir>/stages/<file>`; the skill dir is the folder of this SKILL.md and is written in the ticket file header). Never `cd <skill dir> && cat stages/...`: with the `Read(**/.env*)` deny rule Claude Code prompts for a compound `cd` plus a relative read.
 
 | # | Stage | File | Gate with me |
 |---|---|---|---|
@@ -92,7 +93,7 @@ After a long ticket the conversation is auto-compacted, and the skill text is go
 3. Read the hard rules in section 2 of this file again.
 4. Show the lessons tagged with that stage (project + global), if any.
    Stages 2-4: `project.md` and its listed knowledge sources are the map, **the code is the truth** - on a contradiction trust the code, note it, fix the section.
-5. Update the ticket file's `stage:` and `next:` line when you leave the stage. The header of every ticket file carries the absolute path of this skill and `next: read stages/<N>.md`, so a context that remembers nothing can still find its way back.
+5. Update the ticket file's `stage:` and `next:` line when you leave the stage. The header of every ticket file carries the absolute path of this skill and `next: Read <skill dir>/stages/<N>.md`, so a context that remembers nothing can still find its way back.
 
 A `SessionStart` hook may inject "ticket X, stage N: re-read ..." after a compaction. Treat that as the same instruction.
 
@@ -114,7 +115,7 @@ Chat with me in `chat_language` from config (default `en`). Files you write for 
 - `adapters/` - `gitlab-glab.md`, `manual.md`; the core calls only check / create / update / comments.
 - `templates/` - ticket, question, plan-split, ac-evidence, reviewer-verify, review-round, mr-description, config.
 - `profiles/` - ecosystem hints for init (`node.md`); hints only, I confirm every value.
-- `scripts/` - `classify.py` (tier floor), `setup-worktree.sh`, `env-keys.sh`, `install-hooks.sh`, `validate-guard.py`, `setup-exclude.sh`, `project-map-stale.sh` (freshness of `project.md`), `compare-failures.py` (pre-existing vs new failures), `base-worktree.sh` (shared detached `_base` worktree for re-running a check on the base), `pending-ticket.sh` (ticket input kept while init runs), `session-map.sh` / `ticket-state.sh` (the only writers of session binding and ticket closure, section 3b), `transcript-reads.py` (eval rule check; not part of a ticket run).
+- `scripts/` - `classify.py` (tier floor), `setup-worktree.sh`, `env-keys.sh`, `install-hooks.sh`, `validate-guard.py`, `setup-exclude.sh`, `project-map-stale.sh` (freshness of `project.md`), `compare-failures.py` (pre-existing vs new failures), `base-worktree.sh` (shared detached `_base` worktree for re-running a check on the base), `pending-ticket.sh` (ticket input kept while init runs), `session-map.sh` / `ticket-state.sh` (the only writers of session binding and ticket closure, section 3b), `transcript-reads.py` (eval rule check; not part of a ticket run), `branch-name.py` (final branch name, stage 1b).
 - `hooks/` - `guard.sh`, `verify-on-push.sh`, `worktree-guard.sh`, `worktree-create.sh`, `bind-session.sh`, `session-start.sh`; `guard.sh`, `verify-on-push.sh`, `worktree-guard.sh` and `session-start.sh` are registered at user level by `install-hooks.sh`; `worktree-create.sh` and `bind-session.sh` per project (`install-hooks.sh project-apply`).
 - `CHANGELOG.md` - one generic line per applied lesson or rule change. Lessons are applied to this folder only in a separate session started here, never from a ticket session.
 

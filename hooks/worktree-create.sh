@@ -41,8 +41,12 @@ fi
 # repo with delivery state
 read -r base naming < <(python3 -I -c 'import json,sys; g=json.load(open(sys.argv[1])); print(g["base_branch"], g.get("branch_naming") or "feature/{id}-{slug}")' "$guard") \
   || fail "guard.json unreadable at $guard"
-branch=${naming//\{id\}/$name}; branch=${branch//\{slug\}/}
-branch=$(printf '%s' "$branch" | sed -e 's/[-_.]*$//' -e 's#/*$##')
+# The hook only knows the worktree name (the ticket ID): it fills {id} and {id-lowercase}, uses the provisional type `work`
+# and drops {slug}. Stage 1b renames the branch to the full name (scripts/branch-name.py) before the first commit.
+idl=$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]')
+branch=${naming//\{id-lowercase\}/$idl}; branch=${branch//\{id\}/$name}; branch=${branch//\{type\}/work}; branch=${branch//\{slug\}/}
+case $branch in *'{'*|*'}'*) fail "branch_naming '$naming' has a placeholder the hook cannot fill (known: {id} {id-lowercase} {type} {slug})";; esac
+branch=$(printf '%s' "$branch" | sed -e 's#//*#/#g' -e 's#/-#/#g' -e 's#^-##' -e 's/[-_.]*$//' -e 's#/*$##')
 git check-ref-format --branch "$branch" >/dev/null 2>&1 || fail "branch name '$branch' (from naming rule '$naming') is not valid"
 git -C "$root" rev-parse --verify -q "refs/heads/$base" >/dev/null || fail "base branch '$base' does not exist locally"
 # remote-tracking refs only (no network inside a hook): a same-named branch on a remote needs my decision

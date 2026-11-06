@@ -24,4 +24,4 @@ Build a small table and put it in the ticket file:
 Fixes to the plan only after my OK; tell me what you would change.
 
 ## Gate
-Show: plan (steps), plan-check table, risk re-check result, tier (unchanged or raised), stop point, parked ACs. Stop and wait. On approval: `stage: 3`, `next: read stages/3-build.md`.
+Show: plan (steps), plan-check table, risk re-check result, tier (unchanged or raised), stop point, parked ACs. Stop and wait. On approval: `stage: 3`, `next: Read <skill dir>/stages/3-build.md`.

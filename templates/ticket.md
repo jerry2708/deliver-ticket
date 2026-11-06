@@ -1,7 +1,7 @@
 # <ID> - <title>
 skill: <absolute path of this skill>/SKILL.md
 stage: <0|1|1b|2|3|4|5|6|7|8>
-next: read stages/<file>.md
+next: Read <skill dir>/stages/<file>.md
 state: active   <!-- active | waiting | split | waiting for review | done | cancelled -->
 mode: normal    <!-- normal | soft -->
 tier: provisional <A|B|C>   <!-- confirmed <tier> after the gate; "classified A, run as B (v0.1)" when A -->

@@ -6,6 +6,7 @@ Gate: tier A and B auto (no gate until the final review); **C: me after the stag
 - **Code is the truth over `project.md`:** if a path, command, port or structure it states differs from what you see, trust the code, note the mismatch in the stage output, and fix that section at stage 8.
 - **Bugs: failing test first**, at the lowest sensible level, failing for the right reason (show the failure). Then the fix.
 - **Run lint + tests + build from the current worktree**, with the project's commands from config (`<ASK>` -> ask, never guess). Ports on the command line, never edit `.env`.
+- **Save the output of every check you run and report** (tests, lint, build, a mutation check, a before/after run) to `evidence/<ID>/stage3-<check>.txt` in the state dir: the command and its exit code on the first line, then the full output. List the paths in the ticket file. A check you report without a saved file is not reported as done (the stage-4 reviewer flags it).
 - **Never silence lint or type errors** (no `eslint-disable`, `@ts-ignore`, `any` to dodge a check).
 - **Tests:** change an existing test only when an AC changes that behaviour - one line per changed test: `test -> AC -> reason`, collected for the review table. **Deleting or skipping a test goes to me.** A failing test is not "fixed" by weakening it.
 - **Diff discipline:** if the diff grows well beyond the plan (new files not in the plan, a risk path touched, a much larger size), **stop and escalate**: say what changed, re-judge the 9 categories, tier only goes up, I confirm.
@@ -16,4 +17,4 @@ Gate: tier A and B auto (no gate until the final review); **C: me after the stag
 - Nothing leaves the machine in this stage (no push, no MR).
 
 ## Leave
-Update the ticket file: files changed, commits, test-change lines, deviations from the plan. `stage: 4`, `next: read stages/4-verify.md`. Tier C: stop and show the diff summary; wait for me.
+Update the ticket file: files changed, commits, test-change lines, deviations from the plan, the paths of the saved check outputs (`evidence/<ID>/stage3-*.txt`). `stage: 4`, `next: Read <skill dir>/stages/4-verify.md`. Tier C: stop and show the diff summary; wait for me.

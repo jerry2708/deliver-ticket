@@ -7,6 +7,7 @@ Exit 2: unreadable / not JSON. The hooks treat an invalid guard.json as
 Standard library only.
 """
 import json
+import re
 import sys
 
 STOP_POINTS = ["local", "before-push", "draft-mr", "ready-mr"]
@@ -46,6 +47,13 @@ def check(g):
     for k in ("project_key", "repo_root", "base_branch"):
         v = get(g, k, "$")
         need(k, isinstance(v, str) and v != "", "non-empty string required")
+    bn = g.get("branch_naming")
+    if bn is not None:
+        known = {"id", "id-lowercase", "type", "slug"}
+        bad = set(re.findall(r"\{([^{}]*)\}", bn)) - known if isinstance(bn, str) else None
+        need("branch_naming", isinstance(bn, str) and not bad and ("{id}" in bn or "{id-lowercase}" in bn)
+             and not re.search(r"[{}]", re.sub(r"\{(?:id-lowercase|id|type|slug)\}", "", bn)),
+             "string with {id} or {id-lowercase} and only the placeholders {id} {id-lowercase} {type} {slug}%s" % ("; unknown: %s" % sorted(bad) if bad else ""))
     if isinstance(g.get("repo_root"), str):
         need("repo_root", g["repo_root"].startswith("/"), "absolute path required")
 

@@ -66,6 +66,27 @@ J
 for i in 1 2 3 4 5 6; do hook $S/par P$i >/dev/null 2>&1 & done; wait
 n=$(cat $DELIVER_TICKET_HOME/$keyp/ports/P? 2>/dev/null | grep '^PORT=' | sort -u | wc -l | tr -d ' '); [ "$n" = 6 ]; ok $? "6 parallel setups => $n distinct ports"
 [ ! -d $DELIVER_TICKET_HOME/$keyp/ports/.lock ]; ok $? "lock released"
+echo "# branch naming: the real pattern {type}/{id-lowercase}-{slug} (the hook knows only the ticket ID)"
+mkproj() { # mkproj <dir> <naming> -> repo with state
+  mkrepo $1; local k; k=$(printf '%s-%s' "$(basename $1)" "$(printf '%s' "$1" | shasum -a 1 | cut -c1-8)"); mkdir -p $DELIVER_TICKET_HOME/$k
+  cat > $DELIVER_TICKET_HOME/$k/guard.json <<J
+{"version":1,"project_key":"$k","repo_root":"$1","base_branch":"main","branch_naming":"$2",
+ "remotes":{"push":"mirror","allowed":["mirror"],"forbidden":["origin"]},
+ "verify":{"lint":null,"test":null,"build":null,"on_push":[],"timeout_sec":30},
+ "env_files":[],"install":null,"ports":{"vars":[],"base":3100,"step":10}}
+J
+}
+mkproj $S/rp '{type}/{id-lowercase}-{slug}'
+out=$(hook $S/rp RETRO-7 2>$S/err); rc=$?; ok $rc "real pattern: rc ($(cat $S/err | tr '\n' ' '))"
+[ "$(git -C $out rev-parse --abbrev-ref HEAD)" = "work/retro-7" ]; ok $? "real pattern: branch is exactly work/retro-7 (no {type}, no {id-lowercase}, no trailing '-')"
+out=$(hook $S/rp WL-05 2>/dev/null); [ "$(git -C $out rev-parse --abbrev-ref HEAD)" = "work/wl-05" ]; ok $? "real pattern: WL-05 -> work/wl-05"
+mkproj $S/rp2 '{type}/{slug}-{id}'
+out=$(hook $S/rp2 RETRO-7 2>/dev/null); [ "$(git -C $out rev-parse --abbrev-ref HEAD)" = "work/RETRO-7" ]; ok $? "slug dropped in front: no '/-' left (work/RETRO-7)"
+mkproj $S/rp3 'feature/{id}-{slug}'
+out=$(hook $S/rp3 WL-01 2>/dev/null); [ "$(git -C $out rev-parse --abbrev-ref HEAD)" = "feature/WL-01" ]; ok $? "old default pattern still gives feature/WL-01"
+mkproj $S/rp4 '{type}/{ticket}-{slug}'
+hook $S/rp4 RETRO-7 2>$S/err4 >/dev/null; rc=$?; [ $rc != 0 ] && grep -q 'placeholder the hook cannot fill' $S/err4; ok $? "unknown placeholder {ticket}: refused with a clear message (rc $rc)"
+[ ! -e $S/rp4/.claude/worktrees/RETRO-7 ]; ok $? "unknown placeholder: no worktree left behind"
 echo "# env-keys.sh: names only"
 printf 'A=secretvalue1\nexport B = "two words"\n# C=commented\n  D_1=x\nbad line\nE=\n' > $S/.env.test
 out=$("$SK/scripts/env-keys.sh" $S/.env.test | tr '\n' ' '); [ "$out" = "A B D_1 E " ]; ok $? "env-keys: names [$out]"

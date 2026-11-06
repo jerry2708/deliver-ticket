@@ -22,4 +22,4 @@ Conventional Commits unless config says otherwise; commits end with the attribut
 - Anything outward (push, MR create, comments) beyond the stop point -> stop and ask.
 
 ## Leave
-Record in the ticket file: commits, MR URL if any, stop point reached, `state: waiting for review` (or `done` at `local`). `stage: 8`, `next: read stages/8-record.md`. Then the final-review gate: show the AC table, review table, security table, gaps; wait.
+Record in the ticket file: commits, MR URL if any, stop point reached, `state: waiting for review` (or `done` at `local`). `stage: 8`, `next: Read <skill dir>/stages/8-record.md`. Then the final-review gate: show the AC table, review table, security table, gaps; wait.

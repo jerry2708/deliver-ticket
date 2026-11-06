@@ -196,6 +196,10 @@ wsid 2 sess-9 "$R" Write "{\"file_path\":\"$R/docs/x.md\"}"                     
 git -C "$R" worktree add -q .claude/worktrees/T5 -b feat-T5; W5=$R/.claude/worktrees/T5
 printf 'stage: 3\nstate: active\nworktree: %s\n' "$W5" > "$DT/$key/tickets/T5.md"
 wsid 2 nomap "$W5" Write "{\"file_path\":\"$R/docs/x.md\"}"                       # cwd inside a ticket worktree with an open ticket file
+msg=$(jq -nc --arg cwd "$W5" --arg f "$R/docs/x.md" '{session_id:"nomap",cwd:$cwd,hook_event_name:"PreToolUse",tool_name:"Write",tool_input:{file_path:$f}}' | "$SK/hooks/worktree-guard.sh" 2>&1)
+echo "$msg" | grep -q 'only because its cwd is inside that worktree - cd out of the worktree' && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL cwd-bound block message lacks the unbind hint: $msg"; }
+msg=$(jq -nc --arg cwd "$R" --arg f "$R/docs/x.md" '{session_id:"s1",cwd:$cwd,hook_event_name:"PreToolUse",tool_name:"Write",tool_input:{file_path:$f}}' | "$SK/hooks/worktree-guard.sh" 2>&1)
+echo "$msg" | grep -q 'cd out of the worktree' && { fail=$((fail+1)); echo "FAIL the cwd hint must appear only for cwd-bound sessions: $msg"; } || pass=$((pass+1))
 wsid 0 nomap "$W3" Write "{\"file_path\":\"$R/docs/x.md\"}"                       # cwd in a worktree that has no ticket file: not a ticket session
 echo "## closed ticket (marker written only by ticket-state.sh) and paused session"
 mkdir -p "$DT/$key/closed"; printf 'x\n' > "$DT/$key/closed/T5"

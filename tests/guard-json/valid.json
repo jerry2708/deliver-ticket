@@ -3,7 +3,7 @@
   "project_key": "sample-app-1a2b3c4d",
   "repo_root": "/Users/example/work/sample-app",
   "base_branch": "main",
-  "branch_naming": "feature/{id}-{slug}",
+  "branch_naming": "{type}/{id-lowercase}-{slug}",
   "remotes": {
     "push": "training-v2",
     "allowed": [

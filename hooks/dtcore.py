@@ -387,32 +387,32 @@ def ticket_closed(token):
 
 
 def session_bound(payload, g, cwd):
-    """The open ticket this session works on, or None. Bound = full guard (main checkout read-only, allowlist).
+    """(ticket, how) for the open ticket this session works on, or None; how = map | worktree | cwd. Bound = full guard (main checkout read-only, allowlist).
     A session with no open ticket keeps Claude Code's normal behaviour except the always-on rules."""
     wt_root = real(os.path.join(g["repo_root"], ".claude", "worktrees"))
     proj = os.path.basename(STATE)
     sid = _sid(payload)
     lines = read_map(sid) if sid else []
-    cands = []                                       # (token, ticket file must exist)
+    cands = []                                       # (token, ticket file must exist, how it binds)
     if any(k == "project" and v == proj for k, v in lines):
         paused = {v for k, v in lines if k == "paused"}
         for k, v in lines:
             if k == "ticket" and TOKEN_RE.fullmatch(v) and v not in paused:
-                cands.append((v, False))
+                cands.append((v, False, "map"))
             elif k == "worktree":
                 w = real(v)
                 if under(w, wt_root) and w != wt_root:
                     t = os.path.relpath(w, wt_root).split(os.sep)[0]
                     if t not in paused:
-                        cands.append((t, True))
+                        cands.append((t, True, "worktree"))
     if cwd and under(real(cwd), wt_root) and real(cwd) != wt_root:
-        cands.append((os.path.relpath(real(cwd), wt_root).split(os.sep)[0], True))
-    for t, needs_file in cands:
+        cands.append((os.path.relpath(real(cwd), wt_root).split(os.sep)[0], True, "cwd"))
+    for t, needs_file, via in cands:
         if ticket_closed(t):
             continue
         if needs_file and not os.path.isfile(os.path.join(STATE, "tickets", t + ".md")):
             continue
-        return t
+        return t, via
     return None
 
 
@@ -450,6 +450,10 @@ def path_ok(p, g, payload, cwd):
                 "scripts/ticket-state.sh" % rp)
     if bound is None:
         return None          # no open ticket in this session: Claude Code's normal behaviour (always-on rules live elsewhere)
+    hint = ""
+    if bound[1] == "cwd":
+        hint = (" [this session never ran /deliver-ticket: it is bound to ticket %s only because its cwd is inside that worktree - "
+                "cd out of the worktree (read it with absolute paths) to unbind]" % bound[0])
     repo = real(g["repo_root"])
     wt_root = os.path.join(repo, ".claude", "worktrees")
     roots = allowed_roots(g, payload, cwd)
@@ -457,11 +461,11 @@ def path_ok(p, g, payload, cwd):
         # main checkout is never writable; only a ticket worktree inside it is
         if any(under(rp, r) and under(r, wt_root) and r != wt_root for r in roots):
             return None
-        return "%s is in the main checkout - work happens in the ticket worktree" % rp
+        return "%s is in the main checkout - work happens in the ticket worktree%s" % (rp, hint)
     for r in roots:
         if under(rp, r):
             return None
-    return ("%s is outside the allowlist (ticket worktree, state dir, tmp, scratchpad, auto-memory)" % rp)
+    return ("%s is outside the allowlist (ticket worktree, state dir, tmp, scratchpad, auto-memory)%s" % (rp, hint))
 
 
 # ---------------------------------------------------------------- command checks

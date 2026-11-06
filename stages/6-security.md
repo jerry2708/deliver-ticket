@@ -13,4 +13,4 @@ Checks are tied to **Risk categories, not the tier**: run the check for every ca
 - **Secrets in the diff, logs, evidence:** `git diff` and the evidence files, searched for key-looking strings; never open `.env*`.
 
 ## Output
-A table: category, yes/no, check run, result, evidence, open items. Anything not verifiable is `unverified` (never pass). `stage: 7`, `next: read stages/7-commit-mr.md`. Tier C: stop and wait.
+A table: category, yes/no, check run, result, evidence, open items. Anything not verifiable is `unverified` (never pass). `stage: 7`, `next: Read <skill dir>/stages/7-commit-mr.md`. Tier C: stop and wait.
