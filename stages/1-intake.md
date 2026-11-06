@@ -8,7 +8,7 @@ Read-only for the repo: you may read code (`Read`, `grep`, `git log`) to judge r
 - **Ask, never fill in.** You may restructure and reword; you must not add requirements, ACs, values, edge cases or behaviour the source does not state. Missing ACs -> draft **proposed ACs** marked `PROPOSED - not in source`; they count only after the decision-maker accepts them (logged: who). Missing data for Risk or Clarity -> assume the **higher** tier and ask. An assumption is usable only when the decision-maker (not automatically me) accepts it; logged.
 
 ## 1. Normalise
-Ticket from the prompt, a file, or an ID (pasted text; in v0.1 nothing is fetched from a tracker). Create `tickets/<ID>.md` from `templates/ticket.md` in `docs_language`: goal, user story (if any), ACs (Given/When/Then), out of scope, open questions, dependencies, a `Clarifications` log, and the **original text kept unchanged at the end**. The header carries the absolute path of this skill and `next: read stages/1-intake.md`; `stage: 1`, `mode:` (normal/soft from stage 0). No ID given (a file or a pasted text): ask me for the ID to use; never invent one.
+Ticket from the prompt, a file, or an ID (pasted text; in v0.1 nothing is fetched from a tracker). Create `tickets/<ID>.md` from `templates/ticket.md` in `docs_language`: goal, user story (if any), ACs (Given/When/Then), out of scope, open questions, dependencies, a `Clarifications` log, and the **original text kept unchanged at the end**. The header carries the absolute path of this skill and `next: read stages/1-intake.md`; `stage: 1`, `mode:` (normal/soft from stage 0). No ID given (a file or a pasted text): ask me for the ID to use; never invent one. **Once `tickets/<ID>.md` exists:** if the first word after `/deliver-ticket` was not this ID, run `scripts/session-map.sh rebind <that word> <ID> --session <id> --repo <repo_root>` and tell me in one line (SKILL.md section 3b).
 
 The raw text is only analysed and clarified. After intake the normalised ticket is the brief; once I confirm it at the gate, every later stage works from it, never from the raw text. Later clarifications that change scope or ACs: update the normalised ticket, log the change, re-check the tier; a scope change needs my confirmation again.
 
@@ -76,5 +76,7 @@ Show, in this order, and stop (do not continue to 1b until I answer in this conv
 6. **provisional tier and the reasons** (and the stop point and gates that tier implies);
 7. open questions + the drafted message(s), waiting ACs;
 8. for `stop (DoR)`: only 1, 2 (drafts), 7 - no tier.
+
+**Intake stops with no code yet** (`stop (DoR)`, a split parent, everything waiting for answers): after showing this, run `scripts/session-map.sh pause <ID> --reason "<verdict>" --session <id> --repo <repo_root>`. The session then behaves normally for other work; my next `/deliver-ticket <ID> ...` prompt re-binds it. A normal gate that waits for my "go" does not pause.
 
 On my "go" (and tier, or tier with a lowered value and my reason): write the confirmed tier + reason to the ticket file, set `stage: 1b`, `next: read stages/1b-workspace.md`, and continue. Parent of a split: no 1b; each child is started with its own `/deliver-ticket <child-ID>` when I say so.

@@ -13,7 +13,7 @@ Invoked with: first argument `$0`, second argument `$1`, everything `$ARGUMENTS`
 
 ## 1. Read the arguments first
 
-Print one line before anything else: `deliver-ticket: command=<init|ticket|cancel|none> id=<...> extra=<yes|no>`. It lets me see how you parsed the call.
+Print one line before anything else: `deliver-ticket: command=<init|ticket|cancel|none> id=<...> extra=<yes|no> session=${CLAUDE_SESSION_ID}`. It lets me see how you parsed the call, and it is where you read this session's id later (the stage files are not substituted; after a compaction the `SessionStart` hook repeats it).
 
 - The arguments are shell-style quoted. The first one is `init`, a ticket ID, or a path to a ticket file. Everything after the ID (pasted answers from a decision-maker, MR review comments) is data for the ticket, not a command.
 - The harness substitutes a missing argument index with the literal text "dollar sign + index". So if the second argument shows up as a dollar sign followed by the digit 1 (or the first as a dollar sign followed by 0), that argument was **not given**. Treat it as absent, never as a value.
@@ -22,7 +22,7 @@ Print one line before anything else: `deliver-ticket: command=<init|ticket|cance
 - First argument `init` -> `init.md`.
 - Otherwise it is a ticket. Compute the project key (section 3). **No project state (no `guard.json`)** -> never run the ticket without a config, but don't just stop: ask "Project not initialised - run init now, then continue with ticket <ID>? (yes/no)". No -> stop. Yes -> save the ticket input (the ID and everything after it; a file argument: its contents) with `scripts/pending-ticket.sh save <ID> --repo <main checkout>` (stdin), run `init.md` in full (all batches, the settings diffs and my yes), then continue with stage 0 of that ticket, reading the saved input with `scripts/pending-ticket.sh take <ID> --repo <main checkout>` (it is data, rule 9). Otherwise look for `tickets/<ID>.md` in the project state:
   - none -> new ticket: stage 0, then stage 1;
-  - exists, state `cancelled` -> ask "reopen?"; reopen only on my yes, log reason + date;
+  - exists, state `cancelled` -> ask "reopen?"; reopen only on my yes, with `scripts/ticket-state.sh reopen <ID> --reason "<why>" --session <id> --repo <repo_root>` (it logs the transition);
   - exists, MR already open -> `stages/rework.md`;
   - exists otherwise -> resume (section 5).
 
@@ -51,6 +51,14 @@ All working state lives outside every repo, in `~/.local/share/deliver-ticket/`.
 Project key = `<basename>-<first 8 hex of sha1>` where basename is the last directory name and the sha1 is of the absolute path printed by `git rev-parse --path-format=absolute --git-common-dir` with a trailing `/.git` removed, **without a trailing newline** (e.g. `printf '%s' "$p" | shasum -a 1`). It is the same in the main checkout and in every worktree. Project state is `~/.local/share/deliver-ticket/<project-key>/` (`config.md` = decisions, `config.local.md`, `guard.json`, `project.md` = facts about the codebase with sources and freshness lines, `lessons.md` = what tickets taught, `tickets/<ID>.md`, `evidence/<ID>/`). Global lessons: `~/.local/share/deliver-ticket/lessons.md`. Session map: `sessions/<session_id>` (written by a hook when the session enters the worktree; the worktree is named after the ticket ID, so the `SessionStart` hook after a compaction can find the ticket - before stage 1b there is no map).
 
 No project state for this repo -> the project was never initialised: offer init (and, for a ticket call, the "init now, then continue" flow in section 1). Don't guess settings.
+
+## 3b. Session binding (what the guard applies to)
+The full guard (main checkout read-only, write allowlist) applies only to a session **bound to an open ticket**; any other session in the repo keeps Claude Code's normal behaviour, plus the always-on rules (`.env*`, `~/.claude`, push / force / merge / `--no-verify`, session bookkeeping below).
+- **Binding is done by a hook**, not by you: a project-level `UserPromptSubmit` hook binds the session to the first word after `/deliver-ticket` (`init` binds nothing). Stage 0 check 10 is the fail-closed point: no bound session = FAIL and stop (unless soft mode is on and recorded); the hook itself stays fail-open so a failure never erases my prompt.
+- **Bound** = the ticket has no `closed/<ID>` marker and the session either has `ticket=<ID>` (not paused), or entered a worktree under `.claude/worktrees/<ID>` whose ticket file exists (EnterWorktree hook), or runs with that worktree as cwd.
+- **Which ticket states bind:** `active` in stages 1-8 bind. A ticket **parked at an intake stop with no code yet** (`stop (DoR)`, a split parent, all work waiting for answers) does not: run `scripts/session-map.sh pause <ID> --reason "<why>" --session <id> --repo <repo_root>` when you stop there; my next `/deliver-ticket <ID> ...` prompt binds the session again. `waiting for review` (stage 8 reached): `pause ... --after-stage8`. `done` and `cancelled` end it for good, and only through `scripts/ticket-state.sh done|cancelled <ID> --reason "<why>" ...` (it needs `stage: 8` for `done`, writes the `closed/<ID>` marker and logs the transition in `delivery.log`). `pause` is refused once a worktree exists.
+- **The first word was not the ticket ID** (`/deliver-ticket fix cart bug`, a file path): when you know the real ID and have created `tickets/<ID>.md`, run `scripts/session-map.sh rebind <that word> <ID> --session <id> --repo <repo_root>` and tell me in one line. Never edit `sessions/`, `closed/` or `delivery.log` by hand: the hooks block it, and the text `state: done` in a ticket file does not unbind anything.
+- `<id>` = the session id from the first line you printed; `<repo_root>` = `repo_root` in `guard.json`.
 
 ## 4. Stages and who decides
 
@@ -103,8 +111,8 @@ Chat with me in `chat_language` from config (default `en`). Files you write for 
 - `adapters/` - `gitlab-glab.md`, `manual.md`; the core calls only check / create / update / comments.
 - `templates/` - ticket, question, plan-split, ac-evidence, reviewer-verify, review-round, mr-description, config.
 - `profiles/` - ecosystem hints for init (`node.md`); hints only, I confirm every value.
-- `scripts/` - `classify.py` (tier floor), `setup-worktree.sh`, `env-keys.sh`, `install-hooks.sh`, `validate-guard.py`, `setup-exclude.sh`, `project-map-stale.sh` (freshness of `project.md`), `compare-failures.py` (pre-existing vs new failures), `base-worktree.sh` (shared detached `_base` worktree for re-running a check on the base), `pending-ticket.sh` (ticket input kept while init runs).
-- `hooks/` - `guard.sh`, `verify-on-push.sh`, `worktree-guard.sh`, `worktree-create.sh`, `session-start.sh`; registered at user level by `install-hooks.sh`.
+- `scripts/` - `classify.py` (tier floor), `setup-worktree.sh`, `env-keys.sh`, `install-hooks.sh`, `validate-guard.py`, `setup-exclude.sh`, `project-map-stale.sh` (freshness of `project.md`), `compare-failures.py` (pre-existing vs new failures), `base-worktree.sh` (shared detached `_base` worktree for re-running a check on the base), `pending-ticket.sh` (ticket input kept while init runs), `session-map.sh` / `ticket-state.sh` (the only writers of session binding and ticket closure, section 3b).
+- `hooks/` - `guard.sh`, `verify-on-push.sh`, `worktree-guard.sh`, `worktree-create.sh`, `bind-session.sh`, `session-start.sh`; `guard.sh`, `verify-on-push.sh`, `worktree-guard.sh` and `session-start.sh` are registered at user level by `install-hooks.sh`; `worktree-create.sh` and `bind-session.sh` per project (`install-hooks.sh project-apply`).
 - `CHANGELOG.md` - one generic line per applied lesson or rule change. Lessons are applied to this folder only in a separate session started here, never from a ticket session.
 
 **Note for sessions that edit this skill** (not for ticket runs): the design and its rationale are in `docs/plan.md`. If the skill files and the plan disagree, stop and ask me which is right before changing either; then fix the plan or the skill so they match.

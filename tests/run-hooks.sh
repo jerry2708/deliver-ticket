@@ -20,6 +20,13 @@ cat > "$DELIVER_TICKET_HOME/$key/guard.json" <<J
  "verify":{"lint":"true","test":"false","build":null,"on_push":["lint","test"],"timeout_sec":20},
  "env_files":[".env.local"],"install":null,"ports":{"vars":[],"base":3100,"step":10},"allowlist_extra":[]}
 J
+# FIXTURE: "bound" now means a session with an OPEN TICKET (meaning changed 2026-11-06: before, every session in an
+# initialised repo was guarded, which blocked non-ticket sessions). s1, the default session of the older tests below, is the
+# ticket session of T1: its map says project + ticket, and tickets/T1.md exists. This is not there to make old tests pass:
+# those tests exercise the guard of a ticket session, which must still hold.
+mkdir -p "$DELIVER_TICKET_HOME/$key/tickets" "$DELIVER_TICKET_HOME/sessions"
+printf 'stage: 3\nnext: read stages/3-build.md\nstate: active\nworktree: %s\n' "$R/.claude/worktrees/T1" > "$DELIVER_TICKET_HOME/$key/tickets/T1.md"
+printf 'project=%s\nticket=T1\nworktree=%s\n' "$key" "$R/.claude/worktrees/T1" > "$DELIVER_TICKET_HOME/sessions/s1"
 pass=0; fail=0
 payload() { jq -nc --arg cwd "$1" --arg tool "$2" --arg cmd "$3" --arg sid "${4:-s1}" --arg ev "${5:-PreToolUse}" \
   '{session_id:$sid,cwd:$cwd,hook_event_name:$ev,tool_name:$tool,tool_input:{command:$cmd}}'; }
@@ -154,9 +161,95 @@ out=$(sc); echo "$out" | jq -e '.hookSpecificOutput.additionalContext|test("ask 
 printf 'stage: 1\nstate: cancelled\nworktree: none\n' > "$DELIVER_TICKET_HOME/$key/tickets/I1.md"
 printf 'stage: 8\nstate: done\nworktree: none\n' > "$DELIVER_TICKET_HOME/$key/tickets/I2.md"
 out=$(sc); [ -z "$out" ] && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL intake none should be silent: $out"; }
+echo "# bound (open ticket) vs unbound session: the main-checkout guard applies only to a session with an open ticket"
+DT=$DELIVER_TICKET_HOME
+tsid() { local exp=$1 hook=$2 sid=$3 cwd=$4 cmd=$5 out rc
+  out=$(payload "$cwd" Bash "$cmd" "$sid" | "$SK/hooks/$hook" 2>&1); rc=$?
+  if [ "$rc" = "$exp" ]; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL rc=$rc want=$exp sid=$sid cwd=${cwd##*/} [$hook] $cmd"; echo "   $out" | head -2; fi; }
+wsid() { local exp=$1 sid=$2 cwd=$3 tool=$4 ti=$5 rc
+  jq -nc --arg cwd "$cwd" --arg tool "$tool" --argjson ti "$ti" --arg sid "$sid" '{session_id:$sid,cwd:$cwd,hook_event_name:"PreToolUse",tool_name:$tool,tool_input:$ti}' | "$SK/hooks/worktree-guard.sh" >/dev/null 2>&1; rc=$?
+  if [ "$rc" = "$exp" ]; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL wguard rc=$rc want=$exp sid=$sid $tool $ti"; fi; }
+mkdir -p "$R/docs"
+echo "## unbound session u1 (no map): normal Claude Code behaviour in the main checkout"
+wsid 0 u1 "$R" Write "{\"file_path\":\"$R/docs/x.md\"}"
+wsid 0 u1 "$R" Edit "{\"file_path\":\"$R/docs/x.md\"}"
+tsid 0 guard.sh u1 "$R" "echo hi > $R/docs/y.md"
+tsid 0 guard.sh u1 "$R" "touch $R/docs/z.md"
+tsid 0 guard.sh u1 "$R" "git -C $R add -A"
+tsid 0 guard.sh u1 "$R" 'echo x > /Users/Shared/outside.txt'
+tsid 0 guard.sh u1 "$R" 'echo x > $UNKNOWNVAR/a.txt'
+echo "## bound session s1 (open ticket T1): main checkout stays read-only"
+wsid 2 s1 "$R" Write "{\"file_path\":\"$R/docs/x.md\"}"
+tsid 2 guard.sh s1 "$R" "echo hi > $R/docs/y.md"
+tsid 2 guard.sh s1 "$R" "git -C $R add -A"
+tsid 2 guard.sh s1 "$R" 'echo x > /Users/Shared/outside.txt'
+wsid 0 s1 "$R" Write "{\"file_path\":\"$W/src/a.ts\"}"
+echo "## two sessions in parallel in the same repo (one ticket, one not)"
+wsid 0 u1 "$R" Write "{\"file_path\":\"$R/docs/p.md\"}"; wsid 2 s1 "$R" Write "{\"file_path\":\"$R/docs/p.md\"}"
+wsid 0 u1 "$R" Write "{\"file_path\":\"$R/docs/p.md\"}"; wsid 2 s1 "$R" Write "{\"file_path\":\"$R/docs/p.md\"}"
+echo "## what makes a session bound"
+printf 'project=%s\nticket=T9\n' "$key" > "$DT/sessions/b2"                      # explicit token, no ticket file yet = new ticket at intake
+wsid 2 b2 "$R" Write "{\"file_path\":\"$R/docs/x.md\"}"
+printf 'project=other-00000000\nticket=T9\n' > "$DT/sessions/b3"                  # bound to a ticket of ANOTHER project: unbound here
+wsid 0 b3 "$R" Write "{\"file_path\":\"$R/docs/x.md\"}"
+wsid 2 sess-9 "$R" Write "{\"file_path\":\"$R/docs/x.md\"}"                       # EnterWorktree map (worktree under .claude/worktrees/T1 + tickets/T1.md)
+git -C "$R" worktree add -q .claude/worktrees/T5 -b feat-T5; W5=$R/.claude/worktrees/T5
+printf 'stage: 3\nstate: active\nworktree: %s\n' "$W5" > "$DT/$key/tickets/T5.md"
+wsid 2 nomap "$W5" Write "{\"file_path\":\"$R/docs/x.md\"}"                       # cwd inside a ticket worktree with an open ticket file
+wsid 0 nomap "$W3" Write "{\"file_path\":\"$R/docs/x.md\"}"                       # cwd in a worktree that has no ticket file: not a ticket session
+echo "## closed ticket (marker written only by ticket-state.sh) and paused session"
+mkdir -p "$DT/$key/closed"; printf 'x\n' > "$DT/$key/closed/T5"
+wsid 0 nomap "$W5" Write "{\"file_path\":\"$R/docs/x.md\"}"                       # closed -> no longer bound
+printf 'stage: 3\nstate: done\n' > "$DT/$key/tickets/T1.md.test"; mv "$DT/$key/tickets/T1.md.test" "$DT/$key/tickets/T1.md"
+wsid 2 s1 "$R" Write "{\"file_path\":\"$R/docs/x.md\"}"                           # `state: done` TEXT does not unbind (only the marker does)
+printf 'stage: 3\nnext: read stages/3-build.md\nstate: active\nworktree: %s\n' "$W" > "$DT/$key/tickets/T1.md"
+printf 'project=%s\nticket=T9\npaused=T9\n' "$key" > "$DT/sessions/p1"
+wsid 0 p1 "$R" Write "{\"file_path\":\"$R/docs/x.md\"}"                           # paused (DoR stop) -> not bound
+bind() { jq -nc --arg cwd "$2" --arg sid "$1" --arg p "$3" '{session_id:$sid,cwd:$cwd,hook_event_name:"UserPromptSubmit",prompt:$p}' | "$SK/hooks/bind-session.sh"; }
+bind p1 "$R" '/deliver-ticket T9 here is the answer'                            # next prompt for the ticket re-binds
+wsid 2 p1 "$R" Write "{\"file_path\":\"$R/docs/x.md\"}"
+echo "## bookkeeping is protected in EVERY session (no self-unbind)"
+for sid in u1 s1; do
+  wsid 2 $sid "$R" Write "{\"file_path\":\"$DT/sessions/s1\"}"
+  wsid 2 $sid "$R" Edit "{\"file_path\":\"$DT/sessions/$sid\"}"
+  wsid 2 $sid "$R" Write "{\"file_path\":\"$DT/$key/closed/T9\"}"
+  wsid 2 $sid "$R" Write "{\"file_path\":\"$DT/$key/delivery.log\"}"
+  tsid 2 guard.sh $sid "$R" "echo paused=T1 >> $DT/sessions/s1"
+  tsid 2 guard.sh $sid "$R" "sed -i '' s/ticket/x/ $DT/sessions/s1"
+  tsid 2 guard.sh $sid "$R" "rm $DT/$key/closed/T5"
+  tsid 2 guard.sh $sid "$R" "touch $DT/$key/closed/T1"
+  tsid 2 guard.sh $sid "$R" "mv $DT/sessions/s1 $DT/sessions/s1.old"
+done
+wsid 0 s1 "$R" Write "{\"file_path\":\"$DT/$key/tickets/T1.md\"}"                 # ticket files stay writable
+wsid 0 u1 "$R" Write "{\"file_path\":\"$DT/$key/tickets/T1.md\"}"
+tsid 0 guard.sh s1 "$R" "$SK/scripts/session-map.sh show T1 --session s1 --repo $R"   # the skill's own scripts may write them
+echo "## always-on rules also hold in an unbound session"
+mkdir -p "$R/sr"; printf 'K=1\n' > "$R/sr/.env.example"
+wsid 2 u1 "$R" Write "{\"file_path\":\"$R/.env.local\"}"
+wsid 2 u1 "$R" Write "{\"file_path\":\"$HOME/.claude/settings.json\"}"
+for c in 'cat .env.local' 'git push -f mirror main' 'git push origin main' 'git push' 'git commit --no-verify -m x' 'git -c core.hooksPath=/dev/null commit -m x' \
+  'git merge feat-T1' 'glab mr merge 5' 'grep -r foo sr' 'echo DELIVER_TICKET_SELFTEST'; do tsid 2 guard.sh u1 "$R" "$c"; done
+tsid 2 verify-on-push.sh u1 "$W" 'git push mirror feat-T1'
+echo "## bind hook (UserPromptSubmit): maps /deliver-ticket <token> to the session"
+nostate=$S/nostate; mkdir -p "$nostate" && git -C "$nostate" init -q -b main
+bind nb1 "$R" '/deliver-ticket WL-05 add a wishlist thing'; grep -qx 'ticket=WL-05' "$DT/sessions/nb1" && grep -qx "project=$key" "$DT/sessions/nb1" && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL bind: map for WL-05"; }
+bind nb1 "$R" '/deliver-ticket WL-05 again'; [ "$(grep -c '^ticket=WL-05$' "$DT/sessions/nb1")" = 1 ] && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL bind: duplicate line"; }
+bind nb1 "$R" '/deliver-ticket RETRO-7 other'; [ "$(grep -c '^ticket=' "$DT/sessions/nb1")" = 2 ] && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL bind: second ticket"; }
+bind nb2 "$R" '/deliver-ticket init'; [ ! -e "$DT/sessions/nb2" ] && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL bind: init must bind nothing"; }
+bind nb3 "$R" 'please look at /deliver-ticket docs'; [ ! -e "$DT/sessions/nb3" ] && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL bind: ordinary prompt"; }
+bind nb4 "$R" '/deliver-ticket ./tickets/WL-07.md'; grep -qx 'ticket=WL-07' "$DT/sessions/nb4" && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL bind: file path -> basename"; }
+bind nb5 "$R" '/deliver-ticket "T-8" quoted'; grep -qx 'ticket=T-8' "$DT/sessions/nb5" && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL bind: quoted token"; }
+bind nb6 "$R" '/deliver-ticket --weird'; [ ! -e "$DT/sessions/nb6" ] && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL bind: unsafe token"; }
+bind nb7 "$nostate" '/deliver-ticket T1'; [ ! -e "$DT/sessions/nb7" ] && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL bind: repo without state must be a no-op"; }
+printf 'project=other-00000000\nticket=Z1\n' > "$DT/sessions/nb8"; bind nb8 "$R" '/deliver-ticket T2 x'; grep -q 'Z1' "$DT/sessions/nb8" && { fail=$((fail+1)); echo "FAIL bind: stale project lines kept"; } || pass=$((pass+1))
+bind nb10 "$R" "$(printf '<command-message>deliver-ticket</command-message>\n<command-name>/deliver-ticket</command-name>\n<command-args>RETRO-9 pasted text</command-args>')"
+grep -qx 'ticket=RETRO-9' "$DT/sessions/nb10" && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL bind: expanded command form"; }
+out=$(bind nb9 "$R" '/deliver-ticket T2'; echo "rc=$?"); [ "$out" = "rc=0" ] && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL bind must print nothing and exit 0: $out"; }
+echo '{not json' | "$SK/hooks/bind-session.sh"; [ $? = 0 ] && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL bind: malformed payload must not block the prompt"; }
 echo "# corrupt guard.json with state => block (except skill scripts)"
 echo '{broken' > "$DELIVER_TICKET_HOME/$key/guard.json"
 t 2 guard.sh "$W" 'ls'
+tsid 2 guard.sh u1 "$R" 'ls'                                  # an unbound session is fail-closed too
 t 0 guard.sh "$W" "python3 $SK/scripts/validate-guard.py $DELIVER_TICKET_HOME/$key/guard.json"
 w 2 Write "{\"file_path\":\"$W/a\"}"
 w 0 Write "{\"file_path\":\"$DELIVER_TICKET_HOME/$key/guard.json\"}"

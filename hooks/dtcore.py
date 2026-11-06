@@ -356,16 +356,86 @@ def allowed_roots(g, payload, cwd):
     return roots
 
 
+TOKEN_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
+
+
+def _sid(payload):
+    sid = payload.get("session_id")
+    return sid if isinstance(sid, str) and re.fullmatch(r"[A-Za-z0-9._-]+", sid) else None
+
+
+def read_map(sid):
+    """sessions/<sid> -> list of (key, value); the file is written only by the bind / EnterWorktree hooks and the skill's scripts."""
+    try:
+        return [tuple(l.split("=", 1)) for l in open(os.path.join(DT_HOME, "sessions", sid)).read().splitlines() if "=" in l]
+    except OSError:
+        return []
+
+
+def write_map(sid, lines):
+    d = os.path.join(DT_HOME, "sessions")
+    os.makedirs(d, exist_ok=True)
+    tmp = os.path.join(d, ".%s.%d.tmp" % (sid, os.getpid()))
+    with open(tmp, "w") as fh:
+        fh.write("".join("%s=%s\n" % kv for kv in lines))
+    os.replace(tmp, os.path.join(d, sid))
+
+
+def ticket_closed(token):
+    """done / cancelled: a marker written only by scripts/ticket-state.sh (the ticket file's `state:` text is not trusted)."""
+    return os.path.exists(os.path.join(STATE, "closed", token))
+
+
+def session_bound(payload, g, cwd):
+    """The open ticket this session works on, or None. Bound = full guard (main checkout read-only, allowlist).
+    A session with no open ticket keeps Claude Code's normal behaviour except the always-on rules."""
+    wt_root = real(os.path.join(g["repo_root"], ".claude", "worktrees"))
+    proj = os.path.basename(STATE)
+    sid = _sid(payload)
+    lines = read_map(sid) if sid else []
+    cands = []                                       # (token, ticket file must exist)
+    if any(k == "project" and v == proj for k, v in lines):
+        paused = {v for k, v in lines if k == "paused"}
+        for k, v in lines:
+            if k == "ticket" and TOKEN_RE.fullmatch(v) and v not in paused:
+                cands.append((v, False))
+            elif k == "worktree":
+                w = real(v)
+                if under(w, wt_root) and w != wt_root:
+                    t = os.path.relpath(w, wt_root).split(os.sep)[0]
+                    if t not in paused:
+                        cands.append((t, True))
+    if cwd and under(real(cwd), wt_root) and real(cwd) != wt_root:
+        cands.append((os.path.relpath(real(cwd), wt_root).split(os.sep)[0], True))
+    for t, needs_file in cands:
+        if ticket_closed(t):
+            continue
+        if needs_file and not os.path.isfile(os.path.join(STATE, "tickets", t + ".md")):
+            continue
+        return t
+    return None
+
+
+def protected_state(rp):
+    """Written only by the bind hook and the skill's own scripts, in every session."""
+    if under(rp, os.path.join(DT_HOME, "sessions")):
+        return True
+    return bool(re.match(re.escape(DT_HOME) + r"/[^/]+/(closed(/|$)|delivery\.log$)", rp))
+
+
 def path_ok(p, g, payload, cwd):
-    """None if writing p is allowed, else a reason."""
+    """None if writing p is allowed, else a reason. A session with no open ticket is only held to the always-on rules
+    (~/.claude, session / ticket-state bookkeeping); a path it uses cannot be evaluated when it holds an unresolvable
+    variable, which is then allowed (known limit)."""
+    bound = session_bound(payload, g, cwd)
     if SUBST in p:
-        return "path comes from a command substitution - use a literal absolute path"
+        return None if bound is None else "path comes from a command substitution - use a literal absolute path"
     p = resolve_vars(os.path.expanduser(p))
     if "$" in p:
-        return "path has an unresolvable variable - use a literal absolute path"
+        return None if bound is None else "path has an unresolvable variable - use a literal absolute path"
     if not os.path.isabs(p):
         if cwd is None:
-            return "relative path after a cd that cannot be resolved - use an absolute path"
+            return None if bound is None else "relative path after a cd that cannot be resolved - use an absolute path"
         p = os.path.join(cwd, p)
     rp = real(p)
     if rp.startswith("/dev/"):
@@ -375,6 +445,11 @@ def path_ok(p, g, payload, cwd):
         if re.match(re.escape(claude) + r"/projects/[^/]+/memory(/|$)", rp):
             return None
         return "writes to ~/.claude/ (settings, hooks, skills) are only allowed through scripts/install-hooks.sh"
+    if protected_state(rp):
+        return ("%s is session / ticket-state bookkeeping: written only by the bind hook and scripts/session-map.sh, "
+                "scripts/ticket-state.sh" % rp)
+    if bound is None:
+        return None          # no open ticket in this session: Claude Code's normal behaviour (always-on rules live elsewhere)
     repo = real(g["repo_root"])
     wt_root = os.path.join(repo, ".claude", "worktrees")
     roots = allowed_roots(g, payload, cwd)
@@ -1099,11 +1174,43 @@ def mode_session(payload, g):
         nxt = _field(txt, "next") or nxt
     except OSError:
         pass
-    _emit("deliver-ticket: this session works on ticket %s (project %s), stage %s; next: %s. "
+    _emit("deliver-ticket: this session (id %s) works on ticket %s (project %s), stage %s; next: %s. "
           "The conversation was compacted and the skill text is gone. Before doing anything: "
           "read %s/SKILL.md section 2 (hard rules), read %s, then the stage file it names "
           "(%s/stages/). Do not work from memory of the earlier conversation."
-          % (ticket, proj, stage, nxt, SKILL_DIR, tf, SKILL_DIR))
+          % (sid, ticket, proj, stage, nxt, SKILL_DIR, tf, SKILL_DIR))
+
+
+def mode_bind(payload, g):
+    """UserPromptSubmit: `/deliver-ticket <token> ...` (or its expanded `<command-name>` form) binds this session to <token> (the first argument; a file path
+    gives its basename). `init` binds nothing. Stores only the token, never the prompt. A later prompt for the same
+    token un-pauses it. Silent on anything else."""
+    sid = _sid(payload)
+    prompt = payload.get("prompt")
+    if not sid or not isinstance(prompt, str):
+        return
+    m = re.match(r"\s*/deliver-ticket[ \t]+(\S+)", prompt)
+    if not m and re.search(r"<command-name>\s*/?deliver-ticket\s*</command-name>", prompt):
+        m = re.search(r"<command-args>\s*(\S+)", prompt)      # a slash command that reaches the hook already expanded
+    if not m:
+        return
+    tok = m.group(1).strip("\"'")
+    if tok == "init":
+        return
+    if "/" in tok or tok.endswith(".md"):
+        tok = re.sub(r"\.md$", "", os.path.basename(tok))
+    if not TOKEN_RE.fullmatch(tok):
+        return
+    proj = os.path.basename(STATE)
+    lines = read_map(sid)
+    if any(k == "project" and v != proj for k, v in lines):
+        lines = []                                   # the session moved to another project: start a fresh map
+    if not any(k == "project" for k, v in lines):
+        lines.insert(0, ("project", proj))
+    if ("ticket", tok) not in lines:
+        lines.append(("ticket", tok))
+    lines = [kv for kv in lines if kv != ("paused", tok)]
+    write_map(sid, lines)
 
 
 def main():
@@ -1113,12 +1220,12 @@ def main():
             payload = json.load(sys.stdin)
             assert isinstance(payload, dict)
         except Exception:
-            if mode == "session":
+            if mode in ("session", "bind"):
                 return 0
             block("payload is not valid JSON - blocked (fail-closed)")
         g = load_guard()
         {"guard": mode_guard, "verify": mode_verify, "wguard": mode_wguard,
-         "session": mode_session}[mode](payload, g)
+         "session": mode_session, "bind": mode_bind}[mode](payload, g)
     except Block as e:
         print("deliver-ticket: %s" % e, file=sys.stderr)
         return 2

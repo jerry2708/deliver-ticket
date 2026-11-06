@@ -48,12 +48,28 @@ cmp -s "$R/.claude/settings.local.json" "$D/proj-orig.json" && [ ! -s "$R/.git/i
 grep -qxF '/.claude/settings.local.json' "$R/.git/info/exclude" && git -C "$R" check-ignore -q .claude/settings.local.json && echo "ok exclude line added to info/exclude, file now ignored" || { fail=1; echo "FAIL exclude not added"; }
 [ ! -e "$R/.gitignore" ] && echo "ok the repo's .gitignore was not touched" || { fail=1; echo "FAIL .gitignore created"; }
 "$SK/scripts/install-hooks.sh" project-status --repo "$R" >/dev/null 2>&1 && echo "ok project-status" || { fail=1; echo "FAIL project-status"; }
+grep -q 'worktree-create.sh' "$R/.claude/settings.local.json" && grep -q 'bind-session.sh' "$R/.claude/settings.local.json" && grep -q '"UserPromptSubmit"' "$R/.claude/settings.local.json" && echo "ok both project hooks registered (WorktreeCreate, UserPromptSubmit bind)" || { fail=1; echo "FAIL project hooks missing"; }
+python3 -I - "$R/.claude/settings.local.json" <<'PY' && echo "ok bind hook has a timeout and no onFailure (a failure must never erase the user's prompt)" || { fail=1; echo "FAIL bind hook entry"; }
+import json, sys
+d = json.load(open(sys.argv[1]))
+h = d["hooks"]["UserPromptSubmit"][0]["hooks"][0]
+sys.exit(0 if h.get("timeout") and "onFailure" not in h else 1)
+PY
 ls "$DELIVER_TICKET_HOME/$key/backups/" 2>/dev/null | grep -q 'settings.local.json.bak-deliver-ticket-' && echo "ok backup in the state dir" || { fail=1; echo "FAIL no backup in the state dir"; }
 [ -z "$(ls "$R/.claude" | grep -v '^settings.local.json$')" ] && echo "ok nothing else written into the repo's .claude" || { fail=1; echo "FAIL extra files in $R/.claude: $(ls "$R/.claude")"; }
 grep -q '"baseRef": "head"' "$R/.claude/settings.local.json" && grep -q 'Bash(ls)' "$R/.claude/settings.local.json" && echo "ok existing project settings kept" || { fail=1; echo "FAIL existing settings lost"; }
 "$SK/scripts/install-hooks.sh" project-uninstall --repo "$R" --confirmed >/dev/null 2>&1 && echo "ok project-uninstall" || { fail=1; echo "FAIL project-uninstall"; }
 python3 -I -c 'import json,sys; sys.exit(0 if json.load(open(sys.argv[1]))==json.load(open(sys.argv[2])) else 1)' "$R/.claude/settings.local.json" "$D/proj-orig.json" && echo "ok project settings restored (semantically identical)" || { fail=1; echo "FAIL project settings not restored"; }
 "$SK/scripts/install-hooks.sh" project-status --repo "$R" >/dev/null 2>&1 && { fail=1; echo "FAIL project-status says installed after uninstall"; } || echo "ok project-status: not installed"
+# an earlier version registered only WorktreeCreate: status reports the missing bind hook, apply completes it
+R5="$D/proj5"; mkdir -p "$R5/.claude" && git -C "$R5" init -q -b main && printf '.claude/settings.local.json\n' > "$R5/.gitignore"
+key5=$(bash -c ". \"$SK/hooks/lib.sh\"; dt_key \"$R5\""); mkdir -p "$DELIVER_TICKET_HOME/$key5"; printf '{"version":1}\n' > "$DELIVER_TICKET_HOME/$key5/guard.json"
+python3 -I - "$R5/.claude/settings.local.json" "$SK" <<'PY'
+import json, os, sys
+json.dump({"hooks": {"WorktreeCreate": [{"hooks": [{"type": "command", "command": os.path.join(sys.argv[2], "hooks", "worktree-create.sh"), "timeout": 900}]}]}}, open(sys.argv[1], "w"))
+PY
+"$SK/scripts/install-hooks.sh" project-status --repo "$R5" >/dev/null 2>&1 && { fail=1; echo "FAIL status should report the missing bind hook"; } || echo "ok status reports the missing bind hook"
+"$SK/scripts/install-hooks.sh" project-apply --repo "$R5" --confirmed >/dev/null 2>&1 && "$SK/scripts/install-hooks.sh" project-status --repo "$R5" >/dev/null 2>&1 && echo "ok apply completes a partial project install" || { fail=1; echo "FAIL partial project install"; }
 # already ignored (.gitignore): no flag needed, info/exclude untouched
 R2="$D/proj2"; mkdir -p "$R2/.claude" && git -C "$R2" init -q -b main && printf '.claude/settings.local.json\n' > "$R2/.gitignore"
 key2=$(bash -c ". \"$SK/hooks/lib.sh\"; dt_key \"$R2\""); mkdir -p "$DELIVER_TICKET_HOME/$key2"; printf '{"version":1}\n' > "$DELIVER_TICKET_HOME/$key2/guard.json"

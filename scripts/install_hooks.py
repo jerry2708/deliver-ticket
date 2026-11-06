@@ -9,7 +9,7 @@
   selftest [--repo R]    part B of the hook self-test (registration + scripted hook checks); writes nothing real;
                          with --repo also checks the project-level WorktreeCreate hook of that repo
 
-WorktreeCreate is NOT registered at user level: a user-level WorktreeCreate hook replaces Claude Code's own worktree
+WorktreeCreate (and the UserPromptSubmit bind hook) are NOT registered at user level: a user-level WorktreeCreate hook replaces Claude Code's own worktree
 creation in every repo (verified 2026-11-05: repos without delivery state lost the .worktreeinclude copy). It is
 registered per initialised project in <repo>/.claude/settings.local.json (gitignored):
   project-status|project-diff --repo R        print / diff only
@@ -44,7 +44,8 @@ HOOK_SPECS = [
     ("SessionStart", "compact", "session-start.sh", 10, False),
 ]
 # registered per project (<repo>/.claude/settings.local.json), never at user level
-PROJECT_SPECS = [("WorktreeCreate", None, "worktree-create.sh", 900, False)]
+PROJECT_SPECS = [("WorktreeCreate", None, "worktree-create.sh", 900, False),
+                 ("UserPromptSubmit", None, "bind-session.sh", 10, False)]
 RETIRED_USER = {"worktree-create.sh"}   # earlier versions registered these at user level; apply removes them
 
 
@@ -277,7 +278,7 @@ def cmd_uninstall(args):
 
 
 
-# ---- project level: WorktreeCreate in <repo>/.claude/settings.local.json ------------------------------------------------
+# ---- project level: WorktreeCreate + UserPromptSubmit (bind-session) in <repo>/.claude/settings.local.json ------------------------------------------------
 def parse_repo(args):
     rest, repo, i = [], None, 0
     while i < len(args):
@@ -404,7 +405,7 @@ def cmd_project(cmd, args):
     cur = project_load(path)
     if cmd == "project-status":
         p = project_problems(cur)
-        print("ok: WorktreeCreate registered in %s" % path if not p else "not installed in %s:\n  %s" % (path, "\n  ".join(p)))
+        print("ok: %s registered in %s" % (", ".join(e for e, *_ in PROJECT_SPECS), path) if not p else "not installed in %s:\n  %s" % (path, "\n  ".join(p)))
         return 1 if p else 0
     if cmd == "project-diff":
         new = project_desired(cur)
@@ -452,9 +453,16 @@ def cmd_project(cmd, args):
             print("already installed, nothing written"); return 0
         bak = project_backup(path, state)
         os.makedirs(state, exist_ok=True)
+        try:
+            old_m = json.load(open(mpath))
+        except (OSError, ValueError):
+            old_m = None
+        events = sorted(set((old_m or {}).get("events_created", [])) |
+                        {ev for ev, *_ in PROJECT_SPECS if ev not in cur.get("hooks", {})})
         with open(mpath, "w") as f:
-            json.dump({"settings_created": not os.path.exists(path), "hooks_created": "hooks" not in cur,
-                       "events_created": [ev for ev, *_ in PROJECT_SPECS if ev not in cur.get("hooks", {})]}, f, indent=2)
+            json.dump({"settings_created": (old_m or {}).get("settings_created", not os.path.exists(path)),
+                       "hooks_created": (old_m or {}).get("hooks_created", "hooks" not in cur),
+                       "events_created": events}, f, indent=2)
         project_write(path, dump(new))
         if project_problems(project_load(path)):
             print("written file does not verify - restore from %s" % bak, file=sys.stderr); return 1
@@ -511,7 +519,7 @@ def cmd_selftest(args=()):
         rest, repo = parse_repo(list(args))
         path, state, mpath = project_paths(repo)
         pp = project_problems(project_load(path))
-        check(not pp, "project-level WorktreeCreate registered in %s%s" % (path, "" if not pp else ": " + "; ".join(pp)))
+        check(not pp, "project-level hooks (WorktreeCreate, UserPromptSubmit) registered in %s%s" % (path, "" if not pp else ": " + "; ".join(pp)))
 
     base = os.path.join(os.environ.get("TMPDIR", "/tmp"), "deliver-ticket-selftest")  # reused, never deleted
     os.makedirs(base, exist_ok=True)
