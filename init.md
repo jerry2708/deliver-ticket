@@ -100,6 +100,7 @@ Hooks are user-level (`~/.claude/settings.json`) so they also apply after a resu
 Two parts; both must pass.
 
 **A. Harness (you run it; it proves Claude Code runs the hooks in this session)**
+First print one line: `Next 2 calls are expected to be blocked (hook self-test): echo DELIVER_TICKET_SELFTEST, then a Write to ~/.claude/.deliver-ticket-selftest.` After both are blocked print `Self-test A: both blocked, as expected`.
 1. Run a Bash call whose command is exactly `echo DELIVER_TICKET_SELFTEST` - it must be **blocked** by a hook.
 2. Write a file `~/.claude/.deliver-ticket-selftest` - it must be **blocked** (the guards protect `~/.claude/`).
 

@@ -7,7 +7,7 @@ disable-model-invocation: true
 
 # /deliver-ticket
 
-You run my ticket-delivery workflow: you do the work between gates, I own the gates, and the number of gates depends on the ticket's risk tier. This file and the files it points to are everything you need to run a ticket. `docs/plan.md` is the design rationale, not an instruction set: don't read it during a ticket unless I ask.
+You run my ticket-delivery workflow: you do the work between gates, I own the gates, and the number of gates depends on the ticket's risk tier. This file and the files it points to are everything you need to run a ticket. `docs/plan.md` is the design rationale, not an instruction set: don't read it during a ticket unless I ask. The same goes for `evals/` (it holds the answer key of the classification evals).
 
 Invoked with: first argument `$0`, second argument `$1`, everything `$ARGUMENTS`.
 
@@ -103,6 +103,9 @@ A `SessionStart` hook may inject "ticket X, stage N: re-read ..." after a compac
 ## 6. Language and style
 
 Chat with me in `chat_language` from config (default `en`). Files you write for the skill, tickets, MR text, commit messages: `docs_language` (default `en`). Commits use Conventional Commits unless the project's convention (config) says otherwise. Say "I don't know" for what you didn't verify; separate verified facts (with `file:line` or command output) from inferences. Check every factual claim in anything that leaves the machine (commits, MR text, comments, messages) against the diff or the source before it goes.
+- **A cut search is not evidence of absence.** A result you truncated (`| head`, `-m`, `sed -n 1,20p`, "the first N lines") proves nothing about what is missing. For the definition of a named symbol (tool, function, component, type) run its own uncut search: `name: '<x>'`, `export (const|function|class) <x>`, `<x> =`, plus a file-name match, and show the hit count; use the Grep tool, or pipe to `wc -l` first. Say in the report when output was truncated. "Not found / does not exist" needs an uncut search with zero hits shown.
+- **Write to literal absolute paths in Bash** (no `$VAR`, no command substitution as a path): the guard blocks paths it cannot resolve in a ticket session.
+
 
 ## 7. Where things are
 
@@ -111,7 +114,7 @@ Chat with me in `chat_language` from config (default `en`). Files you write for 
 - `adapters/` - `gitlab-glab.md`, `manual.md`; the core calls only check / create / update / comments.
 - `templates/` - ticket, question, plan-split, ac-evidence, reviewer-verify, review-round, mr-description, config.
 - `profiles/` - ecosystem hints for init (`node.md`); hints only, I confirm every value.
-- `scripts/` - `classify.py` (tier floor), `setup-worktree.sh`, `env-keys.sh`, `install-hooks.sh`, `validate-guard.py`, `setup-exclude.sh`, `project-map-stale.sh` (freshness of `project.md`), `compare-failures.py` (pre-existing vs new failures), `base-worktree.sh` (shared detached `_base` worktree for re-running a check on the base), `pending-ticket.sh` (ticket input kept while init runs), `session-map.sh` / `ticket-state.sh` (the only writers of session binding and ticket closure, section 3b).
+- `scripts/` - `classify.py` (tier floor), `setup-worktree.sh`, `env-keys.sh`, `install-hooks.sh`, `validate-guard.py`, `setup-exclude.sh`, `project-map-stale.sh` (freshness of `project.md`), `compare-failures.py` (pre-existing vs new failures), `base-worktree.sh` (shared detached `_base` worktree for re-running a check on the base), `pending-ticket.sh` (ticket input kept while init runs), `session-map.sh` / `ticket-state.sh` (the only writers of session binding and ticket closure, section 3b), `transcript-reads.py` (eval rule check; not part of a ticket run).
 - `hooks/` - `guard.sh`, `verify-on-push.sh`, `worktree-guard.sh`, `worktree-create.sh`, `bind-session.sh`, `session-start.sh`; `guard.sh`, `verify-on-push.sh`, `worktree-guard.sh` and `session-start.sh` are registered at user level by `install-hooks.sh`; `worktree-create.sh` and `bind-session.sh` per project (`install-hooks.sh project-apply`).
 - `CHANGELOG.md` - one generic line per applied lesson or rule change. Lessons are applied to this folder only in a separate session started here, never from a ticket session.
 

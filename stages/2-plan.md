@@ -3,13 +3,13 @@
 Gate: tier A (runs as B in v0.1): see 1-intake; **B and C: me**. Work in the ticket's worktree. Plan from the normalised ticket only, never the raw text.
 
 ## Before exploring the code
-Read `<state>/project.md` and the files under its "Knowledge sources" (link, don't copy) first; they say where things are and which commands exist. A section marked `stale: yes` is rescanned **only if the ticket's planned area touches it** (read the code it describes, rewrite the section with sources, then `scripts/project-map-stale.sh mark-checked <state>/project.md --guard <state>/guard.json "<section>"`); other stale sections are left alone and listed. **Code is the truth:** where `project.md` contradicts the code, trust the code, say so in the plan, and fix that section. No `project.md` -> explore as usual and say so.
+Read `<state>/project.md` and the files under its "Knowledge sources" (link, don't copy) first; they say where things are and which commands exist. A section marked `stale: yes` is rescanned **only if the ticket's planned area touches it** (read the code it describes, rewrite the section with sources, then `scripts/project-map-stale.sh mark-checked <state>/project.md --guard <state>/guard.json "<section>"`); other stale sections are left alone and listed. The ban on searching repo notes for the ticket (`1-intake.md`, Input rules) holds here too; technical docs by API or symbol are fine. **Code is the truth:** where `project.md` contradicts the code, trust the code, say so in the plan, and fix that section. No `project.md` -> explore as usual and say so.
 
 ## Plan
 Enter plan mode (`EnterPlanMode`) if available, else write the plan in the ticket file and stop for my approval. The plan must have:
 - **Steps** in build order; a big task is cut into chunks: spikes first, risky parts separate, vertical slices (each chunk runnable and checkable).
 - **Per step:** files to touch, the AC(s) it serves, the test that proves it. Supporting steps (scaffolding, refactor, tooling) are labelled `support: <AC>`.
-- **Every assumption about existing contracts** (function signatures, API shapes, data formats) cited with `file:line` after you read it; unread = marked `unverified`.
+- **Every assumption about existing contracts** (function signatures, API shapes, data formats) cited with `file:line` after you read it, found by an uncut search (SKILL.md section 6); unread = marked `unverified`.
 - **Waiting ACs** shown as parked (not planned, with the open question); everything else is planned.
 - **Planned file list** and a size estimate: Size is re-judged now. Over M (>10 files or >400 lines) -> propose several MRs with `templates/plan-split.md` (each MR deployable, ACs traced); I confirm the split.
 - **Bugs:** the root cause, cited `file:line`, and the failing test that will prove it (stage 3 writes it first).

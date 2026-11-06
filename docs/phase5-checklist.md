@@ -21,6 +21,7 @@ Not blocked in step 2 or 3 = soft mode: tell the assistant, do not start a ticke
 
 ## B. The user, in Terminal.app (not the skill-repo session, not Desktop)
 
+0. **Precondition for every eval run (answer key out of the project):** move only the `deliver-ticket-*.md` files out of `copilot-kit-training` yourself (`docs/training-v2/deliver-ticket-sample-tiers.md` and its siblings). `day-15.md` and `capstone/tickets.md` stay on purpose: the run then also checks that the rule "repo notes are not searched for the ticket" (`stages/1-intake.md`, Input rules) held. Each eval run uses a **fresh session** (a session that has seen the answer key or an earlier run is contaminated).
 1. `cd /Users/huynhminh/Desktop/Work/copilot-kit-training`, start `claude` (new session).
 2. **Retro #7** (tier C, ground truth in `evals/sample-tiers.md`, row 13):
    1. Type: `/deliver-ticket RETRO-7 Retro #7 - Prompt says productId, tool takes productNameOrId`.
@@ -31,12 +32,21 @@ Not blocked in step 2 or 3 = soft mode: tell the assistant, do not start a ticke
 3. **Retro #5** (tier B, row 11): same pattern, `/deliver-ticket RETRO-5 Retro #5 - purchase-plan-card crashes when the result has no checkout`, then the fixture for row 11.
 4. Paste the whole terminal output of each ticket (and anything odd: a blocked command, a hook message, a question you did not expect) back into the skill-repo session. Claude reviews it against the stage files and `sample-tiers.md`; Claude does not answer gates and does not run the tickets itself.
 
+After each run (rule check, record it in the run log below): `scripts/transcript-reads.py ~/.claude/projects/-Users-huynhminh-Desktop-Work-copilot-kit-training/<session id>.jsonl --ticket RETRO-7 --title 'Retro #7' --title retro` lists every Read / Grep / Glob / Bash call that touches `docs` (with or without the slash) and every search for the ticket ID / title words that is not restricted to code paths (a `git grep` or `grep -r .` over the whole repo counts; `git log --grep` and code-path searches do not). Expected: none that searches for the ticket. Allowed and to be noted but not counted as a violation: technical docs by API or symbol (for example `node_modules/next/dist/docs/`), knowledge sources opened by path from `project.md`. Second check for retro #7: the run must find `moveWishlistItemToCartTool` at `apps/web/src/tools/use-commerce-cart-tools.tsx:223` (it takes `productNameOrId`) with an uncut search (SKILL.md section 6).
+
 What to watch and note while running (write the answer next to each):
 - Did a hook block something it should not (or fail to block something it should)? Paste the message.
 - Did the session map get written (`ls ~/.local/share/deliver-ticket/sessions/`) after stage 1b?
 - Did the worktree appear under `copilot-kit-training/.claude/worktrees/<ID>`, with env symlinks and a free port block?
 - Any step where the skill filled in a value instead of asking?
 - Any `.env*` read, even by a search command? (`guard.sh` now blocks `grep -r/-R`, `rg --hidden`/`-uu` and `git grep` without an exclude when a `.env*` file is in reach; the phase-4 smoke showed Claude running `grep -r` over the repo once. Not caught: `find -exec grep`, other search tools.)
+
+### Run log
+| Run | Session | Result | Rule check (docs/ reads) | Notes |
+|---|---|---|---|---|
+| RETRO-7, dry run 1 (2026-11-06) | e5ee55ac | `stop (DoR)` = ground truth row 13 (missing goal + testable AC); no tier, worktree or repo change; bind fired on a typed prompt (payload in the expanded `<command-name>` / `<command-args>` form); self-test A blocked both; `pause` + `delivery.log` line correct; guard caught `grep -r` without a `.env` exclude and `$VAR` write paths, the model recovered | **violated**: searched `docs/training-v2` for "retro" and read `deliver-ticket-sample-tiers.md` (answer key), disclosed it; run contaminated | The first version of `transcript-reads.py` listed only lines 100 and 108; it now also lists lines 90, 94 and 97 (`ls docs`, `grep -rn "RETRO-7\|Retro #7" … .`, `git grep -n -e 'RETRO-7' -e 'Retro #7'`), the real commands are test cases. The first `transcript-reads.py` listed only lines 100 and 108; it now also lists 90, 94 and 97 (`ls docs`, `grep -rn "RETRO-7\|Retro #7" … .`, `git grep -n -e 'RETRO-7' -e 'Retro #7'`), and those real commands are its test cases. `\| head -20` cut the grep and hid `moveWishlistItemToCartTool` (`use-commerce-cart-tools.tsx:223`); fixes: intake rule, no-truncation rule, self-test pre-announce line, absolute-path line |
+| RETRO-7, dry run 2 | (fresh session) | | | |
+| RETRO-5 | | | | |
 
 ## C. Only the user can run (open items from plan section 13)
 
