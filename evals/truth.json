@@ -1,0 +1,292 @@
+{
+  "version": 1,
+  "source": "evals/sample-tiers.md",
+  "rows": [
+    {
+      "row": 1,
+      "id": "WL-01",
+      "kind": "capstone",
+      "retro_no": null,
+      "title": "Save and unsave from the product card and detail view",
+      "source": "capstone/tickets.md",
+      "intake": "go",
+      "tier": "C",
+      "parts": null,
+      "reason": "creates a new authenticated per-user server API/store (IDOR risk: user id must come from the verified token); changed from B after discussion",
+      "missing_dor": [],
+      "fixture": null
+    },
+    {
+      "row": 2,
+      "id": "WL-02",
+      "kind": "capstone",
+      "retro_no": null,
+      "title": "Wishlist side panel and header entry",
+      "source": "capstone/tickets.md",
+      "intake": "go",
+      "tier": "B",
+      "parts": null,
+      "reason": "small feature",
+      "missing_dor": [],
+      "fixture": null
+    },
+    {
+      "row": 3,
+      "id": "WL-03",
+      "kind": "capstone",
+      "retro_no": null,
+      "title": "Add to cart from the wishlist panel",
+      "source": "capstone/tickets.md",
+      "intake": "go",
+      "tier": "B",
+      "parts": null,
+      "reason": "small feature",
+      "missing_dor": [],
+      "fixture": null
+    },
+    {
+      "row": 4,
+      "id": "WL-04",
+      "kind": "capstone",
+      "retro_no": null,
+      "title": "Assistant: save, remove and view the wishlist",
+      "source": "capstone/tickets.md",
+      "intake": "go",
+      "tier": "C",
+      "parts": null,
+      "reason": "AI agent changes saved wishlist/cart data on the user's behalf",
+      "missing_dor": [],
+      "fixture": null
+    },
+    {
+      "row": 5,
+      "id": "WL-05",
+      "kind": "capstone",
+      "retro_no": null,
+      "title": "Assistant: stock check and move wishlist items to the cart",
+      "source": "capstone/tickets.md",
+      "intake": "go",
+      "tier": "C",
+      "parts": null,
+      "reason": "AI agent changes saved wishlist/cart data on the user's behalf",
+      "missing_dor": [],
+      "fixture": null
+    },
+    {
+      "row": 6,
+      "id": "WL-06",
+      "kind": "capstone",
+      "retro_no": null,
+      "title": "Save button on products the assistant suggests",
+      "source": "capstone/tickets.md",
+      "intake": "go",
+      "tier": "B",
+      "parts": null,
+      "reason": "small feature",
+      "missing_dor": [],
+      "fixture": null
+    },
+    {
+      "row": 7,
+      "id": "RETRO-1",
+      "kind": "retro",
+      "retro_no": 1,
+      "title": "`refresh()` drops a chat-made wishlist change while a toggle is pending",
+      "source": "day-15.md retro",
+      "intake": "stop (DoR)",
+      "tier": "B",
+      "parts": null,
+      "reason": "bug to fix",
+      "missing_dor": [
+        "goal",
+        "testable AC",
+        "repro steps",
+        "expected vs actual"
+      ],
+      "fixture": {
+        "goal": "A wishlist change made in the chat is never lost when a web save/unsave is still in progress.",
+        "acs": [
+          "AC1: Given a save toggle on product X is pending, when the assistant saves product Y and the wishlist refreshes, then after the toggle completes the wishlist holds both the toggle's result for X and Y."
+        ],
+        "note": null
+      }
+    },
+    {
+      "row": 8,
+      "id": "RETRO-2",
+      "kind": "retro",
+      "retro_no": 2,
+      "title": "Bulk wishlist→cart move uses a stale snapshot; `moveToCart` doesn't re-check membership",
+      "source": "day-15.md retro",
+      "intake": "stop (DoR)",
+      "tier": "B",
+      "parts": null,
+      "reason": "bug (concurrency) – bug is B minimum; changed from A after discussion",
+      "missing_dor": [
+        "goal",
+        "testable AC",
+        "repro steps",
+        "expected vs actual"
+      ],
+      "fixture": {
+        "goal": "Moving the whole wishlist to the cart uses the wishlist as it is at move time.",
+        "acs": [
+          "AC1: Given a whole-wishlist move has started and item X is removed from the wishlist before it is moved, then X is not added to the cart.",
+          "AC2: Given an item is no longer in the wishlist, when the move reaches it, then it is skipped and reported, and nothing else changes."
+        ],
+        "note": null
+      }
+    },
+    {
+      "row": 9,
+      "id": "RETRO-3",
+      "kind": "retro",
+      "retro_no": 3,
+      "title": "Stock has two sources of truth (`inStock` vs `inventory`)",
+      "source": "day-15.md retro",
+      "intake": "stop (DoR)",
+      "tier": "C",
+      "parts": null,
+      "reason": "data migration – choosing one source of truth changes the data contract; changed from B after discussion",
+      "missing_dor": [
+        "goal",
+        "testable AC (which source of truth is a decision)"
+      ],
+      "fixture": {
+        "goal": "Stock status has one source of truth.",
+        "acs": [
+          "AC1: In-stock status is derived from one field only; the other is removed or derived from it.",
+          "AC2: Every product shows the same in-stock status as before the change (today 41/41 consistent)."
+        ],
+        "note": "Open question: which field becomes the source of truth."
+      }
+    },
+    {
+      "row": 10,
+      "id": "RETRO-4",
+      "kind": "retro",
+      "retro_no": 4,
+      "title": "`GET /chat/threads?agentId` returns 500 for all 4 agents",
+      "source": "day-15.md retro",
+      "intake": "stop (DoR)",
+      "tier": "C",
+      "parts": null,
+      "reason": "per-user server API (thread list must be filtered by user)",
+      "missing_dor": [
+        "goal",
+        "testable AC",
+        "expected vs actual"
+      ],
+      "fixture": {
+        "goal": "Listing chat threads works for every agent.",
+        "acs": [
+          "AC1: Given a signed-in user, when the web app calls `GET /chat/threads?agentId=<id>` for each of the 4 agents, then the response is 200 with that user's threads for that agent.",
+          "AC2: Another user's threads are never returned."
+        ],
+        "note": null
+      }
+    },
+    {
+      "row": 11,
+      "id": "RETRO-5",
+      "kind": "retro",
+      "retro_no": 5,
+      "title": "`purchase-plan-card` crashes when the result has no `checkout`",
+      "source": "day-15.md retro",
+      "intake": "stop (DoR)",
+      "tier": "B",
+      "parts": null,
+      "reason": "bug to fix",
+      "missing_dor": [
+        "goal",
+        "testable AC",
+        "repro steps",
+        "expected vs actual"
+      ],
+      "fixture": {
+        "goal": "The purchase-plan card never crashes on a valid result.",
+        "acs": [
+          "AC1: Given a purchase-plan result without `checkout`, when the card renders, then it shows the plan without the checkout section and no error.",
+          "AC2: Given a result with `checkout`, the card renders as today."
+        ],
+        "note": null
+      }
+    },
+    {
+      "row": 12,
+      "id": "RETRO-6",
+      "kind": "retro",
+      "retro_no": 6,
+      "title": "Rec-card \"Added\" stays after the cart changes elsewhere",
+      "source": "day-15.md retro",
+      "intake": "stop (DoR)",
+      "tier": "B",
+      "parts": null,
+      "reason": "bug to fix",
+      "missing_dor": [
+        "goal",
+        "testable AC",
+        "repro steps",
+        "expected vs actual"
+      ],
+      "fixture": {
+        "goal": "The recommendation card's \"Added\" state matches the current cart.",
+        "acs": [
+          "AC1: Given a recommended product shows \"Added\", when it is removed from the cart elsewhere (cart panel or chat), then the card no longer shows \"Added\"."
+        ],
+        "note": null
+      }
+    },
+    {
+      "row": 13,
+      "id": "RETRO-7",
+      "kind": "retro",
+      "retro_no": 7,
+      "title": "Prompt says `productId`, tool takes `productNameOrId`",
+      "source": "day-15.md retro",
+      "intake": "stop (DoR)",
+      "tier": "C",
+      "parts": null,
+      "reason": "prompt changes args passed to a side-effect tool (`moveWishlistItemToCartTool` writes the cart); changed from B on 2026-11-04",
+      "missing_dor": [
+        "goal",
+        "testable AC"
+      ],
+      "fixture": {
+        "goal": "The agent's prompt describes the arguments the wishlist→cart tool really takes.",
+        "acs": [
+          "AC1: The prompt and the tool's parameter description agree (product id preferred, from the latest wishlist view; name allowed).",
+          "AC2: Given two wishlist items with similar names, when I ask to move one of them by name, then exactly that item is moved, or the assistant asks which one."
+        ],
+        "note": null
+      }
+    },
+    {
+      "row": 14,
+      "id": "RETRO-8",
+      "kind": "retro",
+      "retro_no": 8,
+      "title": "Process: `env-check` skill, `Stop` hook, `verify-report` skill",
+      "source": "day-15.md retro",
+      "intake": "split",
+      "tier": null,
+      "parts": [
+        {
+          "name": "env-check skill",
+          "tier": "B"
+        },
+        {
+          "name": "Stop hook",
+          "tier": "C"
+        },
+        {
+          "name": "verify-report skill",
+          "tier": "B"
+        }
+      ],
+      "reason": "three unrelated changes → separate tickets; hook/settings = infra config",
+      "missing_dor": [],
+      "fixture": null
+    }
+  ]
+}

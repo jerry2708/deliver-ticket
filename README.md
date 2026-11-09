@@ -84,4 +84,5 @@ tests/run-transcript-reads.sh <new scratch dir> # eval rule check: tool calls to
 tests/run-pending-ticket.sh <new scratch dir>  # ticket input saved before init, taken after it
 tests/run-session-ctl.sh <new scratch dir>     # session-map.sh (pause/rebind) and ticket-state.sh (done/cancelled/reopen) + effect on the guard
 tests/run-base-worktree.sh <new scratch dir>   # shared detached _base worktree: acquire / move / lock / dirty / main checkout untouched
+tests/run-evals.sh <new scratch dir>           # phase-6 eval tooling (truth.json, runner, scorer) against a fake `claude`; starts no real session
 ```
