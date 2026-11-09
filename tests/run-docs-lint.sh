@@ -27,4 +27,23 @@ echo "# rules from dry runs 1-2"
 has stages/1-intake.md 'Repo notes are not searched for the ticket'
 has SKILL.md 'A cut search is not evidence of absence'
 has SKILL.md 'literal absolute paths in Bash'
+echo "# backlog item 10 (no plan mode in stage 2)"
+has stages/2-plan.md 'Do not use plan mode'
+has stages/2-plan.md 'which the guard blocks (dry runs 2 and 3)'
+has stages/2-plan.md 'its exit dialog switches the session to default mode'
+has stages/2-plan.md 'is never my approval'
+hasnt "SKILL.md init.md README.md stages templates" 'Enter plan mode'
+has docs/plan.md 'no plan mode'
+echo "# auto mode, no plan mode (documented)"
+has README.md 'claude --permission-mode auto'
+has README.md 'CLAUDE_CODE_DISABLE_AUTO_MEMORY=1 claude --permission-mode auto'
+has README.md 'does not use plan mode'
+has README.md 'which the guard blocks (dry runs 2 and 3)'
+has README.md 'only policy/user/flag settings may grant auto mode'
+hasnt "README.md SKILL.md stages" 'blocks ticket-file writes\|blocks writes to the ticket file'
+has SKILL.md 'meant for auto mode'
+has SKILL.md 'Do not use plan mode'
+has SKILL.md 'which the guard blocks (dry runs 2 and 3)'
+has SKILL.md 'its exit dialog switches the session to default mode'
+has docs/plan.md 'HIGH PRIORITY – permission mode'
 echo "pass=$pass fail=$fail"; [ $fail = 0 ]

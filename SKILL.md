@@ -9,6 +9,8 @@ disable-model-invocation: true
 
 You run my ticket-delivery workflow: you do the work between gates, I own the gates, and the number of gates depends on the ticket's risk tier. This file and the files it points to are everything you need to run a ticket. `docs/plan.md` is the design rationale, not an instruction set: don't read it during a ticket unless I ask. The same goes for `evals/` (it holds the answer key of the classification evals).
 
+**Mode:** this skill is meant for auto mode (`claude --permission-mode auto`; a skill cannot set the mode). Do not use plan mode (`EnterPlanMode` / `ExitPlanMode`): plan mode writes its plan under `~/.claude/plans/`, which the guard blocks (dry runs 2 and 3); its exit dialog switches the session to default mode; its "approved" came back although I had seen no plan (dry run 3), so it is never my approval. Plans go into the ticket file (stage 2).
+
 Invoked with: first argument `$0`, second argument `$1`, everything `$ARGUMENTS`.
 
 ## 1. Read the arguments first

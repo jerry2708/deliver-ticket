@@ -2,6 +2,16 @@
 
 `/deliver-ticket init | <ticket-id|file> | <ID> cancel`. Run it only by typing it. Design rationale: `docs/plan.md`.
 
+## Permission mode: launch in auto mode, no plan mode
+The skill is meant for **auto mode**: the gates are the skill's, the safety is the hooks'. A skill cannot set the mode. In Claude Code 2.1.311 auto is granted only from user or policy settings or the `--permission-mode` flag (a project or local `defaultMode: "auto"` is ignored; verified in the 2.1.311 binary: "only policy/user/flag settings may grant auto mode"). Launch with:
+
+```
+claude --permission-mode auto
+CLAUDE_CODE_DISABLE_AUTO_MEMORY=1 claude --permission-mode auto     # eval runs
+```
+
+The skill does not use plan mode (`EnterPlanMode` / `ExitPlanMode`): plan mode writes its plan under `~/.claude/plans/`, which the guard blocks (dry runs 2 and 3); its exit dialog switches the session to default mode; its "approved" came back although the user had seen no plan (dry run 3), so it is never the user's approval. Stage 2 writes the plan into the ticket file and stops at the gate.
+
 ## Emergency: a hook blocks every session
 
 The hooks are registered in `~/.claude/settings.json` (user level). If a hook bug blocks all work, run these **from a normal terminal** (not from inside Claude Code):
