@@ -132,6 +132,9 @@ rows = [
  tu("e18", "Bash", command="git -C /r worktree list --porcelain"),                                                                     # 19 review
  tu("e19", "Bash", command="grep -rn retro-notes apps/web/src"),                                                                       # 20 not a branch name: not listed
  tu("e20", "Bash", command="git checkout -b work/retro-7"),                                                                            # 21 provisional branch name of a finished ticket: invalid
+ tu("e21", "Bash", command="ls /Users/huynhminh/Desktop/Work/copilot-kit-training/.claude/worktrees 2>&1 | head"),                          # 22 plain listing of the directory: review
+ tu("e22", "Bash", command="ls /r/.claude/worktrees/"),                                                                                # 23 ditto with a trailing slash: review
+ tu("e23", "Bash", command="ls /r/.claude/worktrees/RETRO-5/apps"),                                                                    # 24 inside a named worktree: invalid
 ]
 with open(S + "/t3.jsonl", "w") as f:
     for r in rows: f.write(json.dumps(r) + "\n")
@@ -143,11 +146,13 @@ for n in 1 2 6 9 10 12; do echo "$out" | grep -q "^line $n " && { fail=$((fail+1
 echo "$out" | grep -q '^line 3 .*reads outside this run' && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL eval-run: reason for line 3"; }
 echo "$out" | grep -q '^line 7 .*touches the answer key' && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL eval-run: reason for line 7"; }
 echo "$out" | grep -q 'attempts, not counted): line 10 Bash' && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL eval-run: errored attempt line 10 not named: $out"; }
-for n in 13 14 15 16 17 19 21; do echo "$out" | grep -q "^line $n " && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL eval-run: line $n must be flagged"; }; done
+for n in 13 14 15 16 17 19 21 22 23 24; do echo "$out" | grep -q "^line $n " && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL eval-run: line $n must be flagged"; }; done
 for n in 18 20; do echo "$out" | grep -q "^line $n " && { fail=$((fail+1)); echo "FAIL eval-run: line $n must NOT be flagged"; } || pass=$((pass+1)); done
 for n in 13 14; do echo "$out" | grep -q "^line $n .*reads a ticket worktree" && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL eval-run: line $n reason (worktree)"; }; done
 for n in 15 21; do echo "$out" | grep -q "^line $n .*references a finished ticket's branch" && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL eval-run: line $n reason (branch)"; }; done
+for n in 22 23; do echo "$out" | grep -q "^line $n .*lists .claude/worktrees (REVIEW" && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL eval-run: line $n reason (directory listing)"; }; done
+echo "$out" | grep -q "^line 24 .*reads a ticket worktree" && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL eval-run: line 24 reason (inside a worktree)"; }
 for n in 16 17 19; do echo "$out" | grep -q "^line $n .*lists worktrees or branches (REVIEW" && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL eval-run: line $n reason (listing)"; }; done
-echo "$out" | tail -1 | grep -qx '12 call(s) flagged' && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL eval-run count: $(echo "$out" | tail -1)"; }
+echo "$out" | tail -1 | grep -qx '15 call(s) flagged' && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL eval-run count: $(echo "$out" | tail -1)"; }
 $T "$S/t3.jsonl" >/dev/null; eq "$?" 0 "without --eval-run nothing is flagged"
 echo "pass=$pass fail=$fail"; [ $fail = 0 ]

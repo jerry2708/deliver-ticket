@@ -48,7 +48,7 @@ DEFAULT_REPO = os.path.join(HOME, "Desktop/Work/copilot-kit-training")
 DEFAULT_NOTES = os.path.join(DEFAULT_REPO, "docs/training-v2")
 DEFAULT_STATE = os.path.join(os.environ.get("DELIVER_TICKET_HOME") or os.path.join(HOME, ".local/share/deliver-ticket"), "copilot-kit-training-cd02feca")
 SEED_FILES = ["config.md", "config.local.md", "guard.json", "project.md"]
-LIMIT_WORDS = ("usage limit", "rate limit", "rate_limit", "overloaded", "529", "429", "quota", "credit")
+LIMIT_WORDS = ("session limit", "usage limit", "rate limit", "rate_limit", "overloaded", "529", "429", "quota", "credit")
 
 
 def now():
@@ -220,12 +220,14 @@ def run_job(truth, job, a):
         meta["result"] = {k: result.get(k) for k in ("subtype", "is_error", "duration_ms", "num_turns", "total_cost_usd", "usage") if k in result}
         meta["final_message"] = result.get("result") if isinstance(result.get("result"), str) else None
     if reason is None:
-        if p.returncode != 0:
+        # observed 2026-11-09: a usage limit gives exit 1 and a result event {subtype: success, is_error: true, api_error_status: 429,
+        # terminal_reason: api_error, result: "You've hit your session limit ..."}; the result text is more telling than the exit code
+        if result is not None and (result.get("is_error") or result.get("subtype") not in (None, "success")):
+            reason = "result is_error=%s subtype=%s api_error_status=%s: %s" % (result.get("is_error"), result.get("subtype"), result.get("api_error_status"), str(result.get("result"))[:200])
+        elif p.returncode != 0:
             reason = "exit code %s" % p.returncode
         elif result is None:
             reason = "no result event in the stream"
-        elif result.get("is_error") or result.get("subtype") not in (None, "success"):
-            reason = "result is_error=%s subtype=%s: %s" % (result.get("is_error"), result.get("subtype"), str(result.get("result"))[:200])
     if reason and any(w in (reason + " " + str((result or {}).get("result"))).lower() for w in LIMIT_WORDS):
         reason = "limit_or_api: " + reason
     safety = []

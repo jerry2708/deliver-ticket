@@ -70,7 +70,7 @@ if mode == "realstate": open(os.environ["FAKE_REAL"] + "/touched", "w").write("x
 if mode == "bound":
     os.makedirs(os.environ["FAKE_REAL_HOME"] + "/sessions", exist_ok=True); open(os.environ["FAKE_REAL_HOME"] + "/sessions/" + sid, "w").write("x")
 if mode == "limit":
-    emit({"type": "result", "subtype": "error_during_execution", "is_error": True, "session_id": sid, "result": "Claude AI usage limit reached"}); sys.exit(1)
+    emit({"type": "result", "subtype": "success", "is_error": True, "api_error_status": 429, "terminal_reason": "api_error", "session_id": sid, "result": "You've hit your session limit · resets 7pm"}); sys.exit(1)
 dor = tid.startswith("RETRO") and tid != "RETRO-8" and "Goal:" not in prompt
 verdict = os.environ.get("FAKE_VERDICT") or ("split" if tid == "RETRO-8" else "stop (DoR)" if dor else "go")
 tier = os.environ.get("FAKE_TIER", "B")
@@ -95,10 +95,12 @@ if dor:
             q += "**%d. What is the goal, the expected and actual result, the repro steps and a testable acceptance criterion %d?**\nWhy it matters: build.\nReference: %s, AC1.\nOptions:\n- A (recommended): x\n- B: y\n" % (i, i, tid)
     if os.environ.get("FAKE_MANYQ"):
         q += "".join("**%d. extra question\nWhy: x\nReference: y\nOptions:\n- A (r): x\n- B: y\n" % k for k in (4, 5, 6))
-    if not os.environ.get("FAKE_NOQFILE"):
+    if os.environ.get("FAKE_QFILE"):
         open("%s/%s/tickets/%s-questions.md" % (home, key, tid), "w").write(q)
-    # the gate itself is numbered 1-7: those numbers are not questions
+    # the gate itself is numbered 1-7: those numbers are not questions; since round 1 the questions are in the final message
     final = "".join("**%d. Gate section %d**\n" % (k, k) for k in range(1, 8)) + ("Verdict: stop (DoR)\n")
+    if not os.environ.get("FAKE_QFILE") and not os.environ.get("FAKE_NOQ"):
+        final += "".join("> " + l + "\n" for l in q.splitlines()) if os.environ.get("FAKE_QUOTE") else q
     if os.environ.get("FAKE_NAMETIER"):
         final += "Provisional tier B\n"
 elif verdict == "split":
@@ -162,7 +164,7 @@ eq "$(ls "$DT_EVAL_ROOT/runs" | sort | tr '\n' ' ')" "r1-RETRO-5-intake.a1 r1-WL
 eq "$(ls "$DT_EVAL_ROOT/runs/r1-WL-02-intake.a2/home/proj-key/tickets" | tr '\n' ' ')" "WL-02.md " "a2 home holds only its own ticket"
 out=$($SCORE score $PJ --eval-root $DT_EVAL_ROOT --projects $FAKE_PROJECTS); has "$out" "FAILED attempts (partial output kept, never scored)" "scorer lists the failed attempt"; has "$out" "r1-WL-02-intake a1: exit code 1" "failed attempt named"
 scen c
-out=$(FAKE_MODE=limit $RUN run $PJ $COMMON); eq "$?" 3 "limit -> rc 3"; has "$(cat $DT_EVAL_ROOT/runs/r1-WL-02-intake.a1/meta.json)" 'limit_or_api' "limit-like text labelled"
+out=$(FAKE_MODE=limit $RUN run $PJ $COMMON); eq "$?" 3 "limit -> rc 3"; has "$(cat $DT_EVAL_ROOT/runs/r1-WL-02-intake.a1/meta.json)" 'limit_or_api: result is_error=True subtype=success api_error_status=429' "the real usage-limit shape (exit 1, is_error, 429) is labelled"
 scen d
 FAKE_MODE=noresult $RUN run $PJ $COMMON >/dev/null; eq "$?" 3 "no result event -> rc 3"; has "$(cat $DT_EVAL_ROOT/runs/r1-WL-02-intake.a1/meta.json)" 'no result event' "reason: no result event"
 scen e
@@ -195,12 +197,18 @@ eq "$(sc | field r1-RETRO-5-intake "r['status'],r['verdict'],r['tier'],r['ac_unm
 echo '{"covers_all": false, "missing": ["goal"], "superfluous": [], "notes": "x"}' > "$DT_EVAL_ROOT/runs/r1-RETRO-5-intake.a1/grade.json"
 eq "$(sc | field r1-RETRO-5-intake "r['status']")" "fail" "rubric not covered -> fail"
 has "$(sc | field r1-RETRO-5-intake "r['review']")" "disagree" "grader vs keywords disagreement is a review item"
+has "$(sc | python3 -c "import json,sys;print(json.load(sys.stdin)['summary']['failed_runs'])")" "r1-RETRO-5-intake" "a rubric failure counts in the signals (failed_runs)"
 scen y; FAKE_LANG=vi $RUN run $PJ $COMMON >/dev/null; $SCORE grade $PJ --eval-root $DT_EVAL_ROOT --claude $DT_EVAL_CLAUDE >/dev/null
 eq "$(sc | field r1-RETRO-5-intake "r['status'],r['questions']['questions'],r['questions']['with_recommended'],r['questions']['with_options'],r['keyword_check']")" "ok 3 3 3 skipped" "Vietnamese question file: same shape check, keyword cross-check skipped"
 scen z1; FAKE_MANYQ=1 $RUN run $PJ $COMMON >/dev/null; $SCORE grade $PJ --eval-root $DT_EVAL_ROOT --claude $DT_EVAL_CLAUDE >/dev/null
 has "$(sc | field r1-RETRO-5-intake "r['fails']")" "6 questions in the draft" "more than 5 questions fails"
-scen z2; FAKE_NOQFILE=1 $RUN run $PJ $COMMON >/dev/null; $SCORE grade $PJ --eval-root $DT_EVAL_ROOT --claude $DT_EVAL_CLAUDE >/dev/null
-has "$(sc | field r1-RETRO-5-intake "r['review']")" "no tickets/RETRO-5-questions.md" "no questions file -> review, not a pass"
+scen z2; FAKE_NOQ=1 $RUN run $PJ $COMMON >/dev/null; $SCORE grade $PJ --eval-root $DT_EVAL_ROOT --claude $DT_EVAL_CLAUDE >/dev/null
+has "$(sc | field r1-RETRO-5-intake "r['fails']")" "no question draft found" "no questions anywhere -> fail"
+scen z3; FAKE_QUOTE=1 $RUN run $PJ $COMMON >/dev/null; $SCORE grade $PJ --eval-root $DT_EVAL_ROOT --claude $DT_EVAL_CLAUDE >/dev/null
+eq "$(sc | field r1-RETRO-5-intake "r['status'],r['questions']['questions'],r['questions_file']")" "ok 3 False" "questions in the final message (block-quoted), gate sections not counted"
+scen z4; FAKE_QFILE=1 $RUN run $PJ $COMMON >/dev/null; $SCORE grade $PJ --eval-root $DT_EVAL_ROOT --claude $DT_EVAL_CLAUDE >/dev/null
+eq "$(sc | field r1-RETRO-5-intake "r['status'],r['questions']['questions'],r['questions_file']")" "ok 3 True" "an old-style questions file is still read"
+
 scen l; FAKE_TIER=A $RUN run $PJ --only WL-02 $COMMON >/dev/null
 has "$(sc | field r1-WL-02-intake "r['fails']")" "HARD FAIL: tier A below B" "tier below the truth = hard fail"
 scen m; FAKE_TIER=C $RUN run $PJ $COMMON >/dev/null
@@ -236,8 +244,25 @@ scen t3; FAKE_DUPAC=1 $RUN run --only RETRO-8 --rounds 1 $COMMON >/dev/null
 has "$(sp)" "lists an AC twice: AC1" "an AC listed twice fails"
 scen t4; FAKE_WORKTREE=/x/wt $RUN run --only RETRO-8 --rounds 1 $COMMON >/dev/null
 has "$(sp)" "ticket file records a worktree" "a worktree before the split is confirmed fails"
-out=$($SCORE score --rounds 3 --only RETRO-8 --eval-root $DT_EVAL_ROOT --projects $FAKE_PROJECTS); has "$out" "INCOMPLETE" "missing rounds are reported as incomplete"; has "$out" "NOT PASSED" "incomplete is never a pass"
+out=$($SCORE score --rounds 3 --only RETRO-8 --eval-root $DT_EVAL_ROOT --projects $FAKE_PROJECTS); has "$out" "INCOMPLETE" "missing rounds are reported as incomplete"; has "$out" "SIGNALS: not all met" "incomplete never counts as met"
 
+echo "# scorer helpers: PROPOSED group heading, compact question lists"
+out=$(python3 - "$SK" <<'PY'
+import importlib.util, sys
+sp = importlib.util.spec_from_file_location("s", sys.argv[1] + "/scripts/score-evals.py"); m = importlib.util.module_from_spec(sp); sp.loader.exec_module(m)
+ok = lambda c, msg: print("PASS" if c else "FAIL helper: " + msg)
+t = "## Acceptance criteria\nnone in source.\nPROPOSED - not in source (do NOT count for DoR):\n- P1: Given x, then y.\n- P2: Given z, then w.\n## Out of scope\n"
+ok(m.ac_unmarked(t) == 0, "group heading marks the bullets after it")
+t2 = "## Acceptance criteria\n- AC1: Given x.\nPROPOSED - not in source:\n- P1: y\n## Out of scope\n"
+ok(m.ac_unmarked(t2) == 1, "a bullet before the heading is unmarked")
+t3 = "## Acceptance criteria\n- AC1: Given x, then y.\n## Out of scope\n"
+ok(m.ac_unmarked(t3) == 1, "plain AC without PROPOSED is unmarked")
+final = "**1. Verdict**\n- stop\n**2. Ticket**\n- Goal\n## Draft questions\n1. Should the fix cover moveToCart? **Recommended:** yes.\n2. May the test change?\n3. Repro steps and where seen?\nFile: x\n"
+q = m.question_block(final)
+ok(m.question_checks(q)["questions"] == 3, "compact numbered questions with '?' are found, gate sections are not (got %d)" % m.question_checks(q)["questions"])
+PY
+)
+pass=$((pass+$(echo "$out" | grep -c '^PASS'))); fail=$((fail+$(echo "$out" | grep -c '^FAIL'))); echo "$out" | grep '^FAIL'
 echo "# scope: v0.1 = 8 retro rows, WL = phase 6b"
 scen x
 out=$($RUN list --jobs r9-NOPE-intake $COMMON 2>&1); eq "$?" 2 "unknown job id -> rc 2"; has "$out" "unknown job id" "message"

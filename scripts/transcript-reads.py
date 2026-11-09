@@ -14,10 +14,10 @@ usage: transcript-reads.py <session.jsonl> [--under PREFIX ...] [--ticket ID [--
                    a separate line and not listed. `git log --grep` and a grep that filters stdin are not file searches.
   --eval-run HOME  eval-run hygiene (phase 6): also list every call that mentions a path under `dt-runs/` other than HOME
                    (another run's home, `inputs/`, `runs/`, the eval root itself), and every call that mentions the skill's `evals/`
-                   directory or its answer-key files (`sample-tiers`, `truth.json`); every call that mentions `.claude/worktrees` (also
-                   `git -C <it>`) or a `<type>/retro-N` branch name (finished tickets of the test project are visible from the main
-                   checkout). A plain `git worktree list` / `git branch` is listed too, as REVIEW only (the scorer does not invalidate the
-                   run for it). `~`, `$HOME` and `${HOME}` are expanded.
+                   directory or its answer-key files (`sample-tiers`, `truth.json`); every call that reads inside a named worktree
+                   under `.claude/worktrees/<name>` (also `git -C <it>`) or mentions a `<type>/retro-N` branch name (finished tickets of the
+                   test project are visible from the main checkout). A plain listing (`ls .claude/worktrees`, `git worktree list`,
+                   `git branch`) is listed too, as REVIEW only (the scorer does not invalidate the run for it). `~`, `$HOME` and `${HOME}` are expanded.
 Calls whose tool_result is an error (is_error) did not run and are not counted; the ones that would have been flagged are named in one line as attempts. Only tool calls are read, never their
 results. Exit 0 = nothing listed, 1 = at least one call listed (read it: technical docs by API / symbol and knowledge sources opened by
 path are allowed), 2 = bad input.
@@ -235,7 +235,8 @@ def ticket_search(name, inp, terms, roots, under, under_raw):
 
 EVAL_DIR = "dt-runs"
 EVAL_TOKEN = re.compile(r"[^\s'\"`;|&()<>=,]*%s[^\s'\"`;|&()<>=,]*" % EVAL_DIR)
-WORKTREES = re.compile(r"\.claude/worktrees")
+WT_INSIDE = re.compile(r"\.claude/worktrees/[^\s'\"/*;|&]+")        # a named worktree: reading inside it, git -C into it
+WT_LIST = re.compile(r"\.claude/worktrees")                              # the directory itself: ls, find
 RETRO_BRANCH = re.compile(r"(?i)\b(?:fix|work|feat|chore|hotfix)/retro-\d")
 GIT_LIST = re.compile(r"\bgit\s+(?:-C\s+\S+\s+)?(?:worktree\s+list\b|branch\b(?!\s+--show-current))")
 ANSWER_KEY = re.compile(r"""(?:deliver-ticket/evals\b|(?:^|[\s'"=:(])\.{0,2}/?evals/|sample-tiers|\btruth\.json)""")
@@ -261,12 +262,15 @@ def eval_leak(text, own_home):
     m = ANSWER_KEY.search(text)
     if m:
         return "touches the answer key (evals/): ...%s..." % text[max(0, m.start() - 8):m.end() + 14]
-    m = WORKTREES.search(text)
+    m = WT_INSIDE.search(text)
     if m:
         return "reads a ticket worktree (.claude/worktrees/ holds finished tickets): ...%s..." % text[max(0, m.start() - 20):m.end() + 14]
     m = RETRO_BRANCH.search(text)
     if m:
         return "references a finished ticket's branch (<type>/retro-N): ...%s..." % text[max(0, m.start() - 8):m.end() + 14]
+    m = WT_LIST.search(text)
+    if m:
+        return "lists .claude/worktrees (REVIEW, not invalid: the names show other tickets' branches): ...%s..." % text[max(0, m.start() - 12):m.end() + 14]
     m = GIT_LIST.search(text)
     if m:
         return "lists worktrees or branches (REVIEW, not invalid: the output shows other tickets' branches): ...%s..." % text[m.start():m.end() + 10]

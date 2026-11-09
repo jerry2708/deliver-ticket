@@ -136,10 +136,18 @@ def unknown_count(text):
 
 
 def ac_unmarked(text):
-    bad = 0
+    """AC bullets without `PROPOSED`. A group heading (a non-bullet line that says PROPOSED, e.g. "PROPOSED - not in source (...):")
+    marks every bullet after it in the section."""
+    bad, group = 0, False
     for l in section(text, "Acceptance criteria").splitlines():
-        if re.match(r"^\s*(?:[-*]|\d+[.)])\s+\S", l) and "PROPOSED" not in l and not re.match(r"^\s*[-*]\s*none\b", l, re.I):
-            bad += 1
+        bullet = re.match(r"^\s*(?:[-*]|\d+[.)])\s+\S", l)
+        if not bullet:
+            if "PROPOSED" in l:
+                group = True
+            continue
+        if "PROPOSED" in l or group or re.match(r"^\s*[-*]\s*none\b", l, re.I):
+            continue
+        bad += 1
     return bad
 
 
@@ -147,11 +155,30 @@ QHEAD = re.compile(r"^\s*\**\s*\d+[.)]\s+\S", re.M)
 QOPT = re.compile(r"^\s*[-*]\s*\**([A-C])\**\s*(\([^)]*\))?\s*[:.)-]", re.M)
 
 
+def unquote(text):
+    return re.sub(r"^\s*>\s?", "", text, flags=re.M)
+
+
 def read_questions(home, tid):
-    """The drafted questions: tickets/<ID>-questions.md when the skill wrote it (stage 1 does), else None."""
+    """A questions file, if one exists (older runs wrote tickets/<ID>-questions.md); since round 1 stage 1 keeps the questions in the
+    final message, see question_block(). -> text or None."""
     for p in glob.glob(os.path.join(home, "*", "tickets", tid + "-questions.md")):
-        return open(p).read()
+        return unquote(open(p).read())
     return None
+
+
+def question_block(final):
+    """The question draft inside the final message, language independent: numbered blocks that either carry >= 2 option lines
+    (`- A ...`, `- B ...`) or whose first line is a question (contains '?'). The numbered sections of the gate itself have neither."""
+    text = unquote(final or "")
+    heads = list(QHEAD.finditer(text))
+    keep = []
+    for k, m in enumerate(heads):
+        block = text[m.start(): heads[k + 1].start() if k + 1 < len(heads) else len(text)]
+        first = block.splitlines()[0]
+        if len(QOPT.findall(block)) >= 2 or "?" in first:
+            keep.append(block)
+    return "\n".join(keep)
 
 
 def question_checks(text):
@@ -260,13 +287,12 @@ def score_run(job, row, d, meta, a):
         qtext = read_questions(home, tid)
         res["questions_file"] = qtext is not None
         if qtext is None:
-            review.append("no tickets/%s-questions.md; the questions were not scored (read the final message)" % tid)
-            qtext = ""
+            qtext = question_block(final)
         q = question_checks(qtext)
         res["questions"] = q
-        if qtext and q["questions"] == 0:
-            fails.append("tickets/%s-questions.md has no numbered questions" % tid)
-        elif qtext:
+        if not qtext or q["questions"] == 0:
+            fails.append("no question draft found (numbered questions) in the final message or a questions file")
+        else:
             if q["questions"] > 5:
                 fails.append("%d questions in the draft (max 5 per message)" % q["questions"])
             if q["titles"] > 1:
@@ -347,7 +373,8 @@ def summarize(truth, jobs, results, missing, scope="v0.1"):
                all(v == next(r["intake"] for r in truth["rows"] if r["id"] == rid) for v in by.values())]
     s["verdict_rows_ok"], s["rows_required"], s["max_above"] = len(ok_rows), n_rows, max_above
     s["complete"] = not missing
-    s["pass"] = (s["complete"] and len(ok_rows) == n_rows and not s["below"] and not s["safety"] and not s["invalid"]
+    s["failed_runs"] = [r["job"] for r in results if r["status"] == "fail"]
+    s["pass"] = (s["complete"] and not s["failed_runs"] and len(ok_rows) == n_rows and not s["below"] and not s["safety"] and not s["invalid"]
                  and all(len(v) <= max_above for v in s["above_by_round"].values()))
     return s
 
@@ -375,11 +402,15 @@ def cmd_score(truth, a):
             print("  %s a%d: %s" % (j, n, why))
     if missing:
         print("\nINCOMPLETE: %d job(s) have no done run: %s" % (len(missing), ", ".join(missing[:8]) + (" ..." if len(missing) > 8 else "")))
-    print("\nrounds: %s | verdict correct in every round: %d/%d rows | tiers below the truth: %d run(s) %s | rows above, by round: %s | safety: %d | invalid: %d" % (
-        s["rounds"], s["verdict_rows_ok"], s["rows_required"], len(s["below"]), s["below"], s["above_by_round"] or "none", len(s["safety"]), len(s["invalid"])))
+    print("\nrounds: %s | verdict correct in every round: %d/%d rows | tiers below the truth: %d run(s) %s | rows above, by round: %s | safety: %d | invalid: %d | failed runs (incl. rubric): %d" % (
+        s["rounds"], s["verdict_rows_ok"], s["rows_required"], len(s["below"]), s["below"], s["above_by_round"] or "none", len(s["safety"]), len(s["invalid"]), len(s["failed_runs"])))
     if s["unknown"]:
         print("unknown categories per ticket (mean over runs): " + ", ".join("%s %.1f" % (k, sum(v) / len(v)) for k, v in sorted(s["unknown"].items())))
-    print("RESULT: %s" % ("PASS" if s["pass"] else "NOT PASSED" + ("" if s["complete"] else " (incomplete)")))
+    print("\nRound 1 is the baseline before the stage 1 rule changes of 2026-11-09 (questions confirm the PROPOSED drafts and follow the template; rubric reworded); stability is measured on rounds 2-3.")
+    print("Framing: the ground truth is the owner's judgement written in advance. The value of this run is rule bugs, stability across rounds and no tier below the floor; "
+          "8/8 verdicts is a review signal, not a hard gate. Stage 1 rules changed after the first pilot (2026-11-09): DoR needs ACs from the ticket or the decision-maker; bundling is checked before the DoR; "
+          "questions go in the final message.")
+    print("SIGNALS: %s" % ("all met" if s["pass"] else "not all met - read the failed and REVIEW items" + ("" if s["complete"] else " (incomplete)")))
     return 0 if s["pass"] else 1
 
 
@@ -390,15 +421,19 @@ Ticket text the assistant was given:
 {ticket}
 >>>
 
-Definition-of-Ready items that are missing and that the questions must cover (every one of them):
+Definition-of-Ready items that are missing and that the message must cover (every one of them):
 {missing}
 
-The assistant's final message (it contains the drafted questions):
+The assistant's final message (it contains the drafted questions and the drafted goal / acceptance criteria):
 <<<
 {final}
 >>>
 
-Judge only the questions. covers_all = true only if every missing item above is asked about by at least one question. superfluous = the numbers of questions that ask about something that is not a missing item above and does not change the build, tests, data or UX. Answer with one JSON object and nothing else:
+Rules for your judgement:
+- A missing item is COVERED when a direct question asks for it, or when the message drafted it as a PROPOSED draft AND explicitly asks the decision-maker to confirm or correct that draft. A draft that is only shown, with no request to confirm it, does not cover the item.
+- A question is SUPERFLUOUS only when it is neither about a missing item above nor a question whose answer changes the build, the tests, the data or the UX.
+- covers_all = true only if every missing item above is covered.
+Answer with one JSON object and nothing else:
 {{"covers_all": true|false, "missing": ["items not covered"], "superfluous": [question numbers], "notes": "one sentence"}}"""
 
 
