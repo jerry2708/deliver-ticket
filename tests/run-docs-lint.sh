@@ -82,4 +82,16 @@ has stages/1-intake.md 'Order: bundling first'
 has stages/1-intake.md 'decided before the DoR'
 has stages/1-intake.md 'goes through the DoR \*\*on its own\*\*'
 has docs/plan.md 'rules changed after the pilot'
+echo "# questions in the final message; eval framing (after round 1)"
+has stages/1-intake.md 'always go in your final message at the gate'
+hasnt stages/1-intake.md 'question drafts)'
+has docs/plan.md 'changed from B to C after the round 1 run'
+has docs/plan.md 'review signal, not a hard gate'
+has docs/plan.md 'Override log as the real-world measure'
+echo "# questions confirm the drafts, follow the template (after round 1 review)"
+has stages/1-intake.md 'Every question follows the template'
+has stages/1-intake.md 'Drafts must be confirmed'
+has stages/1-intake.md 'to confirm or correct them'
+has stages/1-intake.md 'ask for them (DoR item 4)'
+has docs/plan.md 'Round 1 is the baseline'
 echo "pass=$pass fail=$fail"; [ $fail = 0 ]

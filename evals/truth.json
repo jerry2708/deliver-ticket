@@ -126,9 +126,9 @@
       "title": "Bulk wishlist→cart move uses a stale snapshot; `moveToCart` doesn't re-check membership",
       "source": "day-15.md retro",
       "intake": "stop (DoR)",
-      "tier": "B",
+      "tier": "C",
       "parts": null,
-      "reason": "bug (concurrency) – bug is B minimum; changed from A after discussion",
+      "reason": "bug (concurrency) – bug is B minimum; changed from A after discussion; **changed from B to C after the round 1 run (2026-11-09)**: the bulk move is agent-only (`moveWholeWishlistToCartTool`, `use-commerce-cart-tools.tsx:255-263`), so the fix touches an AI agent action with side effects (`stages/1-intake.md:63`), consistent with Retro #7 and WL-05",
       "missing_dor": [
         "goal",
         "testable AC",
