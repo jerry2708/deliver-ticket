@@ -51,7 +51,7 @@ has SKILL.md '${DELIVER_TICKET_HOME:-$HOME/.local/share/deliver-ticket}'
 has SKILL.md 'This is the only place that names the default'
 bad=$(python3 - <<'PY'
 import os, re
-rx = re.compile(r"\.local/share/deliver-ticket(?!-eval)")
+rx = re.compile(r"\.local/share/deliver-ticket")
 skip_dirs = {".git", "tests", "docs", "evals", "__pycache__"}
 for d, dirs, files in os.walk("."):
     dirs[:] = [x for x in dirs if x not in skip_dirs]
@@ -74,4 +74,12 @@ echo "# phase 6 scope"
 has docs/plan.md 'v0.1 measures the 8 retro rows only'
 has docs/plan.md 'intake verdict \*\*8/8\*\*'
 has docs/plan.md 'phase 6b'
+echo "# stage 1 rules changed after the first phase-6 pilot (2026-11-09)"
+has stages/1-intake.md 'present in the ticket text or confirmed by the decision-maker'
+has stages/1-intake.md 'never satisfy this item'
+hasnt "stages SKILL.md templates" 'no source to draft from'
+has stages/1-intake.md 'Order: bundling first'
+has stages/1-intake.md 'decided before the DoR'
+has stages/1-intake.md 'goes through the DoR \*\*on its own\*\*'
+has docs/plan.md 'rules changed after the pilot'
 echo "pass=$pass fail=$fail"; [ $fail = 0 ]
