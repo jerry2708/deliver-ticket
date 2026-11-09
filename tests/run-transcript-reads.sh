@@ -103,4 +103,51 @@ echo "$out" | grep -q '^1 search(es) for the ticket with an unresolvable' && pas
 echo "$out" | tail -1 | grep -qx '6 call(s) flagged' && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL count: $(echo "$out" | tail -1)"; }
 # the exclusion pathspec alone must not make a call 'touch docs' (real lines 105 / 112 flagged by the old --under check)
 $T "$S/t2.jsonl" >/dev/null; [ $? = 0 ] && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL --under only: ':!docs' / --exclude-dir=docs / -g '!docs' must not count as touching docs"; }
+# ---- phase 6: --eval-run (cross-run leakage and the answer key)
+python3 -I - "$S" <<'PY'
+import json, sys
+S = sys.argv[1]
+def tu(i, name, **inp): return {"type": "assistant", "message": {"content": [{"type": "tool_use", "id": i, "name": name, "input": inp}]}}
+def res(i, err): return {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": i, "is_error": err, "content": "x"}]}}
+E = "/Users/huynhminh/.local/share/deliver-ticket-eval"
+OWN = E + "/runs/r1-WL-02-intake.a1/home"
+rows = [
+ tu("e1", "Read", file_path=OWN + "/copilot-kit-training-cd02feca/tickets/WL-02.md"),                  # 1  own home: fine
+ tu("e2", "Bash", command="ls %s/copilot-kit-training-cd02feca" % OWN),                                # 2  own home: fine
+ tu("e3", "Bash", command="cat %s/runs/r1-WL-03-intake.a1/home/x/tickets/WL-03.md" % E),              # 3  another run's home: flagged
+ tu("e4", "Read", file_path=E + "/inputs/WL-02.intake.txt"),                                          # 4  inputs dir: flagged
+ tu("e5", "Bash", command="ls ~/.local/share/deliver-ticket-eval/runs"),                              # 5  ~ form, the runs dir: flagged
+ tu("e6", "Bash", command="cat $HOME/.local/share/deliver-ticket-eval/runs/r1-WL-02-intake.a1/home/k/config.md"),   # 6  $HOME form of the own home: fine
+ tu("e7", "Read", file_path="/Users/huynhminh/.claude/skills/deliver-ticket/evals/truth.json"),       # 7  answer key: flagged
+ tu("e8", "Bash", command="cat evals/sample-tiers.md"),                                               # 8  answer key, relative: flagged
+ tu("e9", "Bash", command="grep -rn foo apps/web/evals/ apps/web/src"),                               # 9  a project dir that happens to be called evals: fine
+ tu("e10", "Bash", command="cat /Users/huynhminh/.local/share/deliver-ticket-eval/runs/r2-WL-02-intake.a1/home/x"), res("e10", True),   # 10,11 errored attempt: not counted
+ tu("e11", "Bash", command="cat /Users/huynhminh/.local/share/deliver-ticket/copilot-kit-training-cd02feca/tickets/RETRO-5.md"),         # 12 the real state dir is not the eval root: fine here (guard handles it)
+ tu("e12", "Bash", command="git -C /Users/huynhminh/Desktop/Work/copilot-kit-training/.claude/worktrees/RETRO-5 log --oneline"),         # 13 git -C into a ticket worktree: invalid
+ tu("e13", "Read", file_path="/Users/huynhminh/Desktop/Work/copilot-kit-training/.claude/worktrees/RETRO-7/apps/web/x.ts"),            # 14 read in a ticket worktree: invalid
+ tu("e14", "Bash", command="git log fix/retro-5-purchase-plan-card-missing-checkout --oneline"),                                       # 15 finished ticket's branch: invalid
+ tu("e15", "Bash", command="git worktree list"),                                                                                       # 16 plain listing: review
+ tu("e16", "Bash", command="git branch"),                                                                                              # 17 plain listing: review
+ tu("e17", "Bash", command="git branch --show-current"),                                                                               # 18 harmless: not listed
+ tu("e18", "Bash", command="git -C /r worktree list --porcelain"),                                                                     # 19 review
+ tu("e19", "Bash", command="grep -rn retro-notes apps/web/src"),                                                                       # 20 not a branch name: not listed
+ tu("e20", "Bash", command="git checkout -b work/retro-7"),                                                                            # 21 provisional branch name of a finished ticket: invalid
+]
+with open(S + "/t3.jsonl", "w") as f:
+    for r in rows: f.write(json.dumps(r) + "\n")
+PY
+OWN=/Users/huynhminh/.local/share/deliver-ticket-eval/runs/r1-WL-02-intake.a1/home
+out=$($T "$S/t3.jsonl" --eval-run "$OWN"); eq "$?" 1 "eval-run: rc 1"
+for n in 3 4 5 7 8; do echo "$out" | grep -q "^line $n " && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL eval-run: line $n must be flagged"; }; done
+for n in 1 2 6 9 10 12; do echo "$out" | grep -q "^line $n " && { fail=$((fail+1)); echo "FAIL eval-run: line $n must NOT be flagged"; } || pass=$((pass+1)); done
+echo "$out" | grep -q '^line 3 .*reads outside this run' && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL eval-run: reason for line 3"; }
+echo "$out" | grep -q '^line 7 .*touches the answer key' && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL eval-run: reason for line 7"; }
+echo "$out" | grep -q 'attempts, not counted): line 10 Bash' && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL eval-run: errored attempt line 10 not named: $out"; }
+for n in 13 14 15 16 17 19 21; do echo "$out" | grep -q "^line $n " && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL eval-run: line $n must be flagged"; }; done
+for n in 18 20; do echo "$out" | grep -q "^line $n " && { fail=$((fail+1)); echo "FAIL eval-run: line $n must NOT be flagged"; } || pass=$((pass+1)); done
+for n in 13 14; do echo "$out" | grep -q "^line $n .*reads a ticket worktree" && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL eval-run: line $n reason (worktree)"; }; done
+for n in 15 21; do echo "$out" | grep -q "^line $n .*references a finished ticket's branch" && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL eval-run: line $n reason (branch)"; }; done
+for n in 16 17 19; do echo "$out" | grep -q "^line $n .*lists worktrees or branches (REVIEW" && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL eval-run: line $n reason (listing)"; }; done
+echo "$out" | tail -1 | grep -qx '12 call(s) flagged' && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL eval-run count: $(echo "$out" | tail -1)"; }
+$T "$S/t3.jsonl" >/dev/null; eq "$?" 0 "without --eval-run nothing is flagged"
 echo "pass=$pass fail=$fail"; [ $fail = 0 ]

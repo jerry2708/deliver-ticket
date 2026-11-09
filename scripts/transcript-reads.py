@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Check a Claude Code session transcript against the intake rule "repo notes are not searched for the ticket".
 
-usage: transcript-reads.py <session.jsonl> [--under PREFIX ...] [--ticket ID [--title WORD ...]] [--code-root DIR ...]
+usage: transcript-reads.py <session.jsonl> [--under PREFIX ...] [--ticket ID [--title WORD ...]] [--code-root DIR ...] [--eval-run HOME]
   --under PREFIX   list every Read / Grep / Glob / Bash call that mentions the path, with or without a trailing slash
                    (default `docs`; a multi-segment prefix such as node_modules/next/dist/docs is matched as written).
                    Exclusions do not count: `':!docs'`, `--exclude-dir=docs`, `-g '!docs'`.
@@ -12,6 +12,12 @@ usage: transcript-reads.py <session.jsonl> [--under PREFIX ...] [--ticket ID [--
                    server client scripts), or a whole-repo search whose exclusions cover every --under prefix. A search with no
                    path (the cwd), `.` or a directory that is none of those can reach it. Targets that hold a $VAR are counted in
                    a separate line and not listed. `git log --grep` and a grep that filters stdin are not file searches.
+  --eval-run HOME  eval-run hygiene (phase 6): also list every call that mentions a path under `deliver-ticket-eval/` other than HOME
+                   (another run's home, `inputs/`, `runs/`, the eval root itself), and every call that mentions the skill's `evals/`
+                   directory or its answer-key files (`sample-tiers`, `truth.json`); every call that mentions `.claude/worktrees` (also
+                   `git -C <it>`) or a `<type>/retro-N` branch name (finished tickets of the test project are visible from the main
+                   checkout). A plain `git worktree list` / `git branch` is listed too, as REVIEW only (the scorer does not invalidate the
+                   run for it). `~`, `$HOME` and `${HOME}` are expanded.
 Calls whose tool_result is an error (is_error) did not run and are not counted; the ones that would have been flagged are named in one line as attempts. Only tool calls are read, never their
 results. Exit 0 = nothing listed, 1 = at least one call listed (read it: technical docs by API / symbol and knowledge sources opened by
 path are allowed), 2 = bad input.
@@ -227,6 +233,46 @@ def ticket_search(name, inp, terms, roots, under, under_raw):
     return None, False
 
 
+EVAL_DIR = "deliver-ticket-eval"
+EVAL_TOKEN = re.compile(r"[^\s'\"`;|&()<>=,]*%s[^\s'\"`;|&()<>=,]*" % EVAL_DIR)
+WORKTREES = re.compile(r"\.claude/worktrees")
+RETRO_BRANCH = re.compile(r"(?i)\b(?:fix|work|feat|chore|hotfix)/retro-\d")
+GIT_LIST = re.compile(r"\bgit\s+(?:-C\s+\S+\s+)?(?:worktree\s+list\b|branch\b(?!\s+--show-current))")
+ANSWER_KEY = re.compile(r"""(?:deliver-ticket/evals\b|(?:^|[\s'"=:(])\.{0,2}/?evals/|sample-tiers|\btruth\.json)""")
+
+
+def expand_home(tok, home):
+    for h in ("${HOME}", "$HOME", "~"):
+        if tok.startswith(h):
+            return home + tok[len(h):]
+    return tok
+
+
+def eval_leak(text, own_home):
+    """-> reason string or None. Mentions of deliver-ticket-eval/ outside the run's own home, or of the answer key."""
+    import os
+    home = os.path.expanduser("~")
+    own = os.path.normpath(expand_home(own_home, home))
+    for tok in EVAL_TOKEN.findall(text.replace("\\/", "/")):
+        p = os.path.normpath(expand_home(tok, home))
+        if p == own or p.startswith(own + os.sep):
+            continue
+        return "reads outside this run's home (%s): ...%s..." % (own_home, tok[:80])
+    m = ANSWER_KEY.search(text)
+    if m:
+        return "touches the answer key (evals/): ...%s..." % text[max(0, m.start() - 8):m.end() + 14]
+    m = WORKTREES.search(text)
+    if m:
+        return "reads a ticket worktree (.claude/worktrees/ holds finished tickets): ...%s..." % text[max(0, m.start() - 20):m.end() + 14]
+    m = RETRO_BRANCH.search(text)
+    if m:
+        return "references a finished ticket's branch (<type>/retro-N): ...%s..." % text[max(0, m.start() - 8):m.end() + 14]
+    m = GIT_LIST.search(text)
+    if m:
+        return "lists worktrees or branches (REVIEW, not invalid: the output shows other tickets' branches): ...%s..." % text[m.start():m.end() + 10]
+    return None
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("transcript")
@@ -234,6 +280,7 @@ def main():
     ap.add_argument("--ticket")
     ap.add_argument("--title", action="append", default=[])
     ap.add_argument("--code-root", action="append", default=None)
+    ap.add_argument("--eval-run", default=None)
     a = ap.parse_args()
     under_raw = a.under or ["docs"]
     under = [prefix_regex(p) for p in under_raw]
@@ -268,6 +315,10 @@ def main():
                 if m:
                     why.append("touches %s: ...%s..." % (raw, hay[max(0, m.start() - 8):m.end() + 14]))
                     break
+            if a.eval_run:
+                leak = eval_leak(text, a.eval_run)
+                if leak:
+                    why.append(leak)
             if terms:
                 r, unres = ticket_search(name, inp, terms, roots, under, under_raw)
                 if unres:
