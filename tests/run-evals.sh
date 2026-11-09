@@ -82,9 +82,19 @@ if not dor and verdict != "split":
     ticket += "Provisional tier **%s**.\n" % tier
 open("%s/%s/tickets/%s.md" % (home, key, tid), "w").write(ticket)
 if dor:
-    final = "Verdict: stop (DoR)\n# Questions for the owner - ticket %s (draft, not sent)\n" % tid
+    vi = os.environ.get("FAKE_LANG") == "vi"
+    q = "# %s %s\n" % ("Câu hỏi cho chủ ticket - ticket" if vi else "Questions for the owner - ticket", tid)
     for i in (1, 2, 3):
-        final += "**%d. What is the goal, the expected and actual result, the repro steps and a testable acceptance criterion %d?**\nWhy it matters: build.\nReference: %s, AC1.\nOptions:\n- A (recommended): x\n- B: y\n" % (i, i, tid)
+        if vi:
+            q += "**%d. Mục tiêu, kết quả mong đợi và thực tế, bước tái hiện và tiêu chí chấp nhận kiểm thử được %d là gì?**\nVì sao: build.\nTham chiếu: %s, AC1.\nLựa chọn:\n- A (khuyến nghị): x\n- B: y\n" % (i, i, tid)
+        else:
+            q += "**%d. What is the goal, the expected and actual result, the repro steps and a testable acceptance criterion %d?**\nWhy it matters: build.\nReference: %s, AC1.\nOptions:\n- A (recommended): x\n- B: y\n" % (i, i, tid)
+    if os.environ.get("FAKE_MANYQ"):
+        q += "".join("**%d. extra question\nWhy: x\nReference: y\nOptions:\n- A (r): x\n- B: y\n" % k for k in (4, 5, 6))
+    if not os.environ.get("FAKE_NOQFILE"):
+        open("%s/%s/tickets/%s-questions.md" % (home, key, tid), "w").write(q)
+    # the gate itself is numbered 1-7: those numbers are not questions
+    final = "".join("**%d. Gate section %d**\n" % (k, k) for k in range(1, 8)) + ("Verdict: stop (DoR)\n")
     if os.environ.get("FAKE_NAMETIER"):
         final += "Provisional tier B\n"
 elif verdict == "split":
@@ -96,7 +106,7 @@ os.makedirs(proj, exist_ok=True)
 with open("%s/%s.jsonl" % (proj, sid), "w") as f:
     f.write(json.dumps({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "a", "name": "Read", "input": {"file_path": "%s/%s/tickets/%s.md" % (home, key, tid)}}]}}) + "\n")
     if os.environ.get("FAKE_LEAK"):
-        f.write(json.dumps({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "b", "name": "Bash", "input": {"command": "cat %s/../../r9-other.a1/home/x" % home.replace("/home", "") + "/../deliver-ticket-eval/x"}}]}}) + "\n")
+        f.write(json.dumps({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "b", "name": "Bash", "input": {"command": "cat %s/../../r9-other.a1/home/x" % home.replace("/home", "") + "/../dt-runs/x"}}]}}) + "\n")
 if os.environ.get("FAKE_WTREAD") or os.environ.get("FAKE_BRANCH") or os.environ.get("FAKE_WTLIST"):
     cmd = {"FAKE_WTREAD": "git -C /r/.claude/worktrees/RETRO-5 log", "FAKE_BRANCH": "git log fix/retro-5-x", "FAKE_WTLIST": "git worktree list"}
     k = [x for x in cmd if os.environ.get(x)][0]
@@ -175,11 +185,17 @@ eq "$(sc | field r1-RETRO-5-intake "r['status']")" "review" "DoR run awaits the 
 has "$(sc | field r1-RETRO-5-intake "r['review']")" "rubric not graded" "review says why"
 $SCORE grade $PJ --eval-root $DT_EVAL_ROOT --claude $DT_EVAL_CLAUDE >/dev/null; eq "$?" 0 "grade rc"
 [ -f "$DT_EVAL_ROOT/runs/r1-RETRO-5-intake.a1/grade.json" ] && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL grade.json not written"; }
-eq "$(sc | field r1-RETRO-5-intake "r['status'],r['verdict'],r['tier'],r['ac_unmarked'],r['questions']['questions']")" "ok stop (DoR) None 0 3" "DoR run ok after grading"
+eq "$(sc | field r1-RETRO-5-intake "r['status'],r['verdict'],r['tier'],r['ac_unmarked'],r['questions']['questions']")" "ok stop (DoR) None 0 3" "DoR run ok after grading (the 7 numbered gate sections are not counted as questions)"
 # a grade that says not covered fails; a disagreement with the keyword check is listed
 echo '{"covers_all": false, "missing": ["goal"], "superfluous": [], "notes": "x"}' > "$DT_EVAL_ROOT/runs/r1-RETRO-5-intake.a1/grade.json"
 eq "$(sc | field r1-RETRO-5-intake "r['status']")" "fail" "rubric not covered -> fail"
 has "$(sc | field r1-RETRO-5-intake "r['review']")" "disagree" "grader vs keywords disagreement is a review item"
+scen y; FAKE_LANG=vi $RUN run $PJ $COMMON >/dev/null; $SCORE grade $PJ --eval-root $DT_EVAL_ROOT --claude $DT_EVAL_CLAUDE >/dev/null
+eq "$(sc | field r1-RETRO-5-intake "r['status'],r['questions']['questions'],r['questions']['with_recommended'],r['questions']['with_options'],r['keyword_check']")" "ok 3 3 3 skipped" "Vietnamese question file: same shape check, keyword cross-check skipped"
+scen z1; FAKE_MANYQ=1 $RUN run $PJ $COMMON >/dev/null; $SCORE grade $PJ --eval-root $DT_EVAL_ROOT --claude $DT_EVAL_CLAUDE >/dev/null
+has "$(sc | field r1-RETRO-5-intake "r['fails']")" "6 questions in the draft" "more than 5 questions fails"
+scen z2; FAKE_NOQFILE=1 $RUN run $PJ $COMMON >/dev/null; $SCORE grade $PJ --eval-root $DT_EVAL_ROOT --claude $DT_EVAL_CLAUDE >/dev/null
+has "$(sc | field r1-RETRO-5-intake "r['review']")" "no tickets/RETRO-5-questions.md" "no questions file -> review, not a pass"
 scen l; FAKE_TIER=A $RUN run $PJ --only WL-02 $COMMON >/dev/null
 has "$(sc | field r1-WL-02-intake "r['fails']")" "HARD FAIL: tier A below B" "tier below the truth = hard fail"
 scen m; FAKE_TIER=C $RUN run $PJ $COMMON >/dev/null
@@ -218,6 +234,8 @@ out=$($RUN list $COMMON); has "$out" "45 job(s)" "default scope: 45 jobs"; hasnt
 out=$($RUN list --scope 6b $COMMON); has "$out" "18 job(s)" "6b scope: 6 WL rows x 3 rounds"; hasnt "$out" "RETRO" "6b scope has no retro job"
 out=$($SCORE score --json --eval-root $DT_EVAL_ROOT --projects $FAKE_PROJECTS); eq "$(echo "$out" | python3 -c "import json,sys;print(json.load(sys.stdin)['summary']['rows_required'])")" 8 "verdict threshold is 8 rows in v0.1 scope"
 out=$($SCORE score --scope all --json --eval-root $DT_EVAL_ROOT --projects $FAKE_PROJECTS); eq "$(echo "$out" | python3 -c "import json,sys;print(json.load(sys.stdin)['summary']['rows_required'])")" 14 "14 rows with --scope all"
+out=$($SCORE score --json --eval-root $DT_EVAL_ROOT --projects $FAKE_PROJECTS); eq "$(echo "$out" | python3 -c "import json,sys;print(json.load(sys.stdin)['summary']['max_above'])")" 1 "over-tier threshold 1 of 8"
+out=$($SCORE score --scope all --json --eval-root $DT_EVAL_ROOT --projects $FAKE_PROJECTS); eq "$(echo "$out" | python3 -c "import json,sys;print(json.load(sys.stdin)['summary']['max_above'])")" 2 "over-tier threshold 2 of 14"
 out=$($SCORE score --eval-root $DT_EVAL_ROOT --projects $FAKE_PROJECTS); has "$out" "^scope: v0.1 (the 8 retro rows; the 6 WL rows are phase 6b" "the report states the scope"
 echo "# the template state copy was never touched"
 after=$(cd "$S/state" && find . -type f | sort | xargs shasum | shasum)

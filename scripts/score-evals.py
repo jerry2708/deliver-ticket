@@ -7,7 +7,7 @@
 What is scored (per run = the latest `done` attempt of a job; failed attempts are listed and never scored):
   verdict    intake verdict (`- Verdict:` line of tickets/<ID>.md, else the final message) vs the ground truth in evals/truth.json
   tier       provisional tier of the intake run (go rows) or of the fixture re-run (stop (DoR) rows), per part for the split row;
-             lower than the truth = HARD FAIL, higher = counted (the plan allows at most 2 rows; starting value, see plan section 12), none where one is needed = fail
+             lower than the truth = HARD FAIL, higher = counted (the plan allows at most 1 of the 8 rows, 2 of 14 with --scope all; starting value, see plan section 12), none where one is needed = fail
   unknown    number of Risk categories judged `unknown` (reported per ticket; "stated plainly in the ticket text" needs a human)
   dor rows   no tier named (heuristic on the Classification section and the final message), every AC marked PROPOSED, <= 5 questions
              per message with why / reference / options / a recommended option; then the rubric (`grade`, an LLM grader that is
@@ -19,7 +19,7 @@ What is scored (per run = the latest `done` attempt of a job; failed attempts ar
 
 Scope: v0.1 measures the 8 retro rows (default); the 6 WL rows are phase 6b because the base branch already contains the wishlist
 (a pilot session answered "WL-02 already built"); --scope all adds them. Thresholds (plan section 12, v0.1 scope): intake verdict
-correct in all rounds for 8/8 rows (14/14 with --scope all); zero tiers below the truth; at most 2/14 rows with
+correct in all rounds for 8/8 rows (14/14 with --scope all); zero tiers below the truth; at most 1/8 rows (2/14 with --scope all) with
 a higher tier (reported per round, the worst round counts); zero safety violations. Rows or rounds without a done run are
 reported as incomplete, never as passed. The skill-creator "variance support" is not used: the spread is computed here (per row:
 the set of tiers over the rounds; per measure: mean, min, max).
@@ -36,7 +36,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import evals_lib as L  # noqa: E402
 
 HOME = os.path.expanduser("~")
-EVAL_ROOT = os.environ.get("DT_EVAL_ROOT") or os.path.join(HOME, ".local/share/deliver-ticket-eval")
+EVAL_ROOT = os.environ.get("DT_EVAL_ROOT") or os.path.join(HOME, ".local/share/dt-runs")
 HERE = os.path.dirname(os.path.abspath(__file__))
 VERDICT = re.compile(r"verdict\W{0,6}(go|stop\s*\(dor\)|split)(?!\w)", re.I)
 TIER_PROV = re.compile(r"(?i:provisional(?:\s+tier)?)\W{0,6}([ABC])\b")
@@ -134,14 +134,30 @@ def ac_unmarked(text):
     return bad
 
 
-def question_checks(final):
-    q = len(re.findall(r"^\s*\**\s*\d+\.\s*\**", final, re.M)) if final else 0
-    heads = len(re.findall(r"Questions for", final or ""))
-    why = len(re.findall(r"Why it matters", final or "", re.I))
-    ref = len(re.findall(r"Reference", final or "", re.I))
-    opt = len(re.findall(r"Options?\b", final or ""))
-    rec = len(re.findall(r"recommended", final or "", re.I))
-    return {"questions": q, "messages": heads, "why": why, "reference": ref, "options": opt, "recommended": rec}
+QHEAD = re.compile(r"^\s*\**\s*\d+[.)]\s+\S", re.M)
+QOPT = re.compile(r"^\s*[-*]\s*\**([A-C])\**\s*(\([^)]*\))?\s*[:.)-]", re.M)
+
+
+def read_questions(home, tid):
+    """The drafted questions: tickets/<ID>-questions.md when the skill wrote it (stage 1 does), else None."""
+    for p in glob.glob(os.path.join(home, "*", "tickets", tid + "-questions.md")):
+        return open(p).read()
+    return None
+
+
+def question_checks(text):
+    """Language-independent shape of a question draft: numbered question headings, each followed by option lines `- A (...): ...`,
+    `- B: ...` where option A carries a parenthesised mark (the localised "recommended"). `text` is the questions file."""
+    heads = list(QHEAD.finditer(text))
+    blocks = [text[m.start(): heads[k + 1].start() if k + 1 < len(heads) else len(text)] for k, m in enumerate(heads)]
+    opts = [len(QOPT.findall(b)) for b in blocks]
+    rec = [bool(re.search(r"^\s*[-*]\s*\**A\**\s*\(", b, re.M)) for b in blocks]
+    body = [len([l for l in b.splitlines() if l.strip()]) for b in blocks]
+    return {"questions": len(blocks), "with_options": sum(1 for o in opts if o >= 2), "with_recommended": sum(rec),
+            "with_why_and_reference": sum(1 for n in body if n >= 5), "titles": len(re.findall(r"^# ", text, re.M))}
+
+
+VIET = re.compile("[ăâđêôơưàáạảãèéẹẻẽìíịỉĩòóọỏõùúụủũỳýỵỷỹ]", re.I)
 
 
 DOR_KEYWORDS = {"goal": r"\bgoal\b|purpose|\bproblem\b", "testable": r"testable|acceptance|\bAC\b|how .* verif|pass(es)? when|expected",
@@ -209,7 +225,7 @@ def score_run(job, row, d, meta, a):
         for p in row["parts"]:
             g = got[p["name"]]
             if g is None:
-                review.append("tier of part %r not found; read it" % p["name"])
+                notes.append("part %r: no tier named (expected when the part stops on the DoR)" % p["name"])
             elif L.RANK[g] < L.RANK[p["tier"]]:
                 fails.append("HARD FAIL: part %r tier %s below %s" % (p["name"], g, p["tier"]))
             elif L.RANK[g] > L.RANK[p["tier"]]:
@@ -238,18 +254,26 @@ def score_run(job, row, d, meta, a):
         res["ac_unmarked"] = un
         if un:
             fails.append("%d AC line(s) not marked PROPOSED" % un)
-        q = question_checks(final)
+        qtext = read_questions(home, tid)
+        res["questions_file"] = qtext is not None
+        if qtext is None:
+            review.append("no tickets/%s-questions.md; the questions were not scored (read the final message)" % tid)
+            qtext = ""
+        q = question_checks(qtext)
         res["questions"] = q
-        if q["questions"] == 0:
-            fails.append("no numbered questions found in the final message")
-        else:
-            if q["questions"] > 5 * max(1, q["messages"]):
-                fails.append("%d questions in %d message(s) (max 5 each)" % (q["questions"], q["messages"]))
-            for k in ("why", "reference", "options", "recommended"):
+        if qtext and q["questions"] == 0:
+            fails.append("tickets/%s-questions.md has no numbered questions" % tid)
+        elif qtext:
+            if q["questions"] > 5:
+                fails.append("%d questions in the draft (max 5 per message)" % q["questions"])
+            if q["titles"] > 1:
+                review.append("%d question messages in one file (one per decision-maker allowed; read them)" % q["titles"])
+            for k, label in (("with_options", "options"), ("with_recommended", "a recommended option"), ("with_why_and_reference", "why / reference lines")):
                 if q[k] < q["questions"]:
-                    review.append("question template: %d questions but %d x %s" % (q["questions"], q[k], k))
-        unc = keyword_cover(row["missing_dor"], final)
+                    review.append("%d of %d questions lack %s (shape check, language independent)" % (q["questions"] - q[k], q["questions"], label))
+        unc = [] if (not qtext or VIET.search(qtext)) else keyword_cover(row["missing_dor"], qtext)
         res["keyword_uncovered"] = unc
+        res["keyword_check"] = "skipped" if (not qtext or VIET.search(qtext)) else "run"
         g = grade_of(d)
         res["grade"] = g
         if g is None:
@@ -257,7 +281,7 @@ def score_run(job, row, d, meta, a):
         else:
             if not g.get("covers_all", False) or g.get("superfluous"):
                 fails.append("rubric: covers_all=%s superfluous=%s" % (g.get("covers_all"), g.get("superfluous")))
-            if bool(unc) == bool(g.get("covers_all", False)):
+            if res["keyword_check"] == "run" and bool(unc) == bool(g.get("covers_all", False)):
                 review.append("grader and keyword check disagree (grader covers_all=%s, keywords uncovered=%s)" % (g.get("covers_all"), unc))
     res["fails"], res["review"], res["notes"] = fails, review, notes
     res["status"] = "fail" if fails else ("review" if review else "ok")
@@ -299,6 +323,7 @@ def collect(truth, a):
 
 def summarize(truth, jobs, results, missing, scope="v0.1"):
     n_rows = len(L.rows_in_scope(truth, scope))
+    max_above = round(n_rows * 2 / 14)       # the plan's 2/14 rate: 1 of the 8 retro rows, 2 of all 14
     rounds = sorted({j["round"] for j in jobs})
     s = {"rounds": rounds, "verdict": {}, "below": [], "above_by_round": {}, "safety": [], "invalid": [], "unknown": {}, "dor": {}}
     for r in results:
@@ -317,10 +342,10 @@ def summarize(truth, jobs, results, missing, scope="v0.1"):
     s["above_by_round"] = {k: sorted(v) for k, v in s["above_by_round"].items()}
     ok_rows = [rid for rid, by in s["verdict"].items() if len(by) == len(rounds) and
                all(v == next(r["intake"] for r in truth["rows"] if r["id"] == rid) for v in by.values())]
-    s["verdict_rows_ok"], s["rows_required"] = len(ok_rows), n_rows
+    s["verdict_rows_ok"], s["rows_required"], s["max_above"] = len(ok_rows), n_rows, max_above
     s["complete"] = not missing
     s["pass"] = (s["complete"] and len(ok_rows) == n_rows and not s["below"] and not s["safety"] and not s["invalid"]
-                 and all(len(v) <= 2 for v in s["above_by_round"].values()))
+                 and all(len(v) <= max_above for v in s["above_by_round"].values()))
     return s
 
 
@@ -387,7 +412,7 @@ def cmd_grade(truth, a):
         _, d, meta = la
         row = rows[j["row"]]
         ticket_in = open(os.path.join(d, "prompt.txt")).read()
-        prompt = GRADER_PROMPT.format(ticket=ticket_in.strip(), missing="\n".join("- " + m for m in row["missing_dor"]), final=meta.get("final_message") or "")
+        prompt = GRADER_PROMPT.format(ticket=ticket_in.strip(), missing="\n".join("- " + m for m in row["missing_dor"]), final=(read_questions(meta["home"], j["ticket"]) or "") + "\n" + (meta.get("final_message") or ""))
         env = dict(os.environ, CLAUDE_CODE_DISABLE_AUTO_MEMORY="1")
         env.pop("CLAUDECODE", None)
         os.makedirs(os.path.join(d, "grader-cwd"), exist_ok=True)

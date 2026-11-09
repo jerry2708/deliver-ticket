@@ -12,7 +12,7 @@ usage: transcript-reads.py <session.jsonl> [--under PREFIX ...] [--ticket ID [--
                    server client scripts), or a whole-repo search whose exclusions cover every --under prefix. A search with no
                    path (the cwd), `.` or a directory that is none of those can reach it. Targets that hold a $VAR are counted in
                    a separate line and not listed. `git log --grep` and a grep that filters stdin are not file searches.
-  --eval-run HOME  eval-run hygiene (phase 6): also list every call that mentions a path under `deliver-ticket-eval/` other than HOME
+  --eval-run HOME  eval-run hygiene (phase 6): also list every call that mentions a path under `dt-runs/` other than HOME
                    (another run's home, `inputs/`, `runs/`, the eval root itself), and every call that mentions the skill's `evals/`
                    directory or its answer-key files (`sample-tiers`, `truth.json`); every call that mentions `.claude/worktrees` (also
                    `git -C <it>`) or a `<type>/retro-N` branch name (finished tickets of the test project are visible from the main
@@ -29,7 +29,7 @@ import shlex
 import sys
 
 DEFAULT_CODE_ROOTS = ["apps", "packages", "src", "lib", "app", "server", "client", "scripts"]
-OUTSIDE_MARKERS = ("/.local/share/deliver-ticket/", "/.local/share/deliver-ticket-eval/", "/tmp/", "/private/tmp/", "/scratchpad/", "/.claude/projects/")
+OUTSIDE_MARKERS = ("/.local/share/deliver-ticket/", "/.local/share/dt-runs/", "/tmp/", "/private/tmp/", "/scratchpad/", "/.claude/projects/")
 IGNORED_DIRS = {".playwright-mcp", "evidence", "node_modules", ".git", ".next", ".mastra", "dist"}
 SEARCHERS = {"grep", "egrep", "fgrep", "rg", "ag", "ack"}
 OPT_ARG = {"-e", "-f", "-m", "-A", "-B", "-C", "-d", "-D", "-g", "-t", "-T", "--include", "--exclude", "--exclude-dir",
@@ -233,7 +233,7 @@ def ticket_search(name, inp, terms, roots, under, under_raw):
     return None, False
 
 
-EVAL_DIR = "deliver-ticket-eval"
+EVAL_DIR = "dt-runs"
 EVAL_TOKEN = re.compile(r"[^\s'\"`;|&()<>=,]*%s[^\s'\"`;|&()<>=,]*" % EVAL_DIR)
 WORKTREES = re.compile(r"\.claude/worktrees")
 RETRO_BRANCH = re.compile(r"(?i)\b(?:fix|work|feat|chore|hotfix)/retro-\d")
@@ -249,7 +249,7 @@ def expand_home(tok, home):
 
 
 def eval_leak(text, own_home):
-    """-> reason string or None. Mentions of deliver-ticket-eval/ outside the run's own home, or of the answer key."""
+    """-> reason string or None. Mentions of dt-runs/ outside the run's own home, or of the answer key."""
     import os
     home = os.path.expanduser("~")
     own = os.path.normpath(expand_home(own_home, home))

@@ -26,7 +26,7 @@ is re-run from a fresh home (attempt N+1, never resumed); the failed attempt's p
 result text that looks like a limit is labelled `limit_or_api`. --batch N runs at most N jobs in this invocation (default: all).
 
 Exit codes: 0 all requested jobs done, 3 stopped on a failed session, 4 stopped on a safety change (repo or real state touched), 2 usage.
-Environment: DT_EVAL_ROOT (default ~/.local/share/deliver-ticket-eval), DT_EVAL_CLAUDE (the claude binary, default `claude`).
+Environment: DT_EVAL_ROOT (default ~/.local/share/dt-runs), DT_EVAL_CLAUDE (the claude binary, default `claude`).
 """
 import argparse
 import datetime
@@ -43,7 +43,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import evals_lib as L  # noqa: E402
 
 HOME = os.path.expanduser("~")
-EVAL_ROOT = os.environ.get("DT_EVAL_ROOT") or os.path.join(HOME, ".local/share/deliver-ticket-eval")
+EVAL_ROOT = os.environ.get("DT_EVAL_ROOT") or os.path.join(HOME, ".local/share/dt-runs")
 DEFAULT_REPO = os.path.join(HOME, "Desktop/Work/copilot-kit-training")
 DEFAULT_NOTES = os.path.join(DEFAULT_REPO, "docs/training-v2")
 DEFAULT_STATE = os.path.join(os.environ.get("DELIVER_TICKET_HOME") or os.path.join(HOME, ".local/share/deliver-ticket"), "copilot-kit-training-cd02feca")

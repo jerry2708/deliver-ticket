@@ -109,19 +109,19 @@ import json, sys
 S = sys.argv[1]
 def tu(i, name, **inp): return {"type": "assistant", "message": {"content": [{"type": "tool_use", "id": i, "name": name, "input": inp}]}}
 def res(i, err): return {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": i, "is_error": err, "content": "x"}]}}
-E = "/Users/huynhminh/.local/share/deliver-ticket-eval"
+E = "/Users/huynhminh/.local/share/dt-runs"
 OWN = E + "/runs/r1-WL-02-intake.a1/home"
 rows = [
  tu("e1", "Read", file_path=OWN + "/copilot-kit-training-cd02feca/tickets/WL-02.md"),                  # 1  own home: fine
  tu("e2", "Bash", command="ls %s/copilot-kit-training-cd02feca" % OWN),                                # 2  own home: fine
  tu("e3", "Bash", command="cat %s/runs/r1-WL-03-intake.a1/home/x/tickets/WL-03.md" % E),              # 3  another run's home: flagged
  tu("e4", "Read", file_path=E + "/inputs/WL-02.intake.txt"),                                          # 4  inputs dir: flagged
- tu("e5", "Bash", command="ls ~/.local/share/deliver-ticket-eval/runs"),                              # 5  ~ form, the runs dir: flagged
- tu("e6", "Bash", command="cat $HOME/.local/share/deliver-ticket-eval/runs/r1-WL-02-intake.a1/home/k/config.md"),   # 6  $HOME form of the own home: fine
+ tu("e5", "Bash", command="ls ~/.local/share/dt-runs/runs"),                              # 5  ~ form, the runs dir: flagged
+ tu("e6", "Bash", command="cat $HOME/.local/share/dt-runs/runs/r1-WL-02-intake.a1/home/k/config.md"),   # 6  $HOME form of the own home: fine
  tu("e7", "Read", file_path="/Users/huynhminh/.claude/skills/deliver-ticket/evals/truth.json"),       # 7  answer key: flagged
  tu("e8", "Bash", command="cat evals/sample-tiers.md"),                                               # 8  answer key, relative: flagged
  tu("e9", "Bash", command="grep -rn foo apps/web/evals/ apps/web/src"),                               # 9  a project dir that happens to be called evals: fine
- tu("e10", "Bash", command="cat /Users/huynhminh/.local/share/deliver-ticket-eval/runs/r2-WL-02-intake.a1/home/x"), res("e10", True),   # 10,11 errored attempt: not counted
+ tu("e10", "Bash", command="cat /Users/huynhminh/.local/share/dt-runs/runs/r2-WL-02-intake.a1/home/x"), res("e10", True),   # 10,11 errored attempt: not counted
  tu("e11", "Bash", command="cat /Users/huynhminh/.local/share/deliver-ticket/copilot-kit-training-cd02feca/tickets/RETRO-5.md"),         # 12 the real state dir is not the eval root: fine here (guard handles it)
  tu("e12", "Bash", command="git -C /Users/huynhminh/Desktop/Work/copilot-kit-training/.claude/worktrees/RETRO-5 log --oneline"),         # 13 git -C into a ticket worktree: invalid
  tu("e13", "Read", file_path="/Users/huynhminh/Desktop/Work/copilot-kit-training/.claude/worktrees/RETRO-7/apps/web/x.ts"),            # 14 read in a ticket worktree: invalid
@@ -136,7 +136,7 @@ rows = [
 with open(S + "/t3.jsonl", "w") as f:
     for r in rows: f.write(json.dumps(r) + "\n")
 PY
-OWN=/Users/huynhminh/.local/share/deliver-ticket-eval/runs/r1-WL-02-intake.a1/home
+OWN=/Users/huynhminh/.local/share/dt-runs/runs/r1-WL-02-intake.a1/home
 out=$($T "$S/t3.jsonl" --eval-run "$OWN"); eq "$?" 1 "eval-run: rc 1"
 for n in 3 4 5 7 8; do echo "$out" | grep -q "^line $n " && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL eval-run: line $n must be flagged"; }; done
 for n in 1 2 6 9 10 12; do echo "$out" | grep -q "^line $n " && { fail=$((fail+1)); echo "FAIL eval-run: line $n must NOT be flagged"; } || pass=$((pass+1)); done
