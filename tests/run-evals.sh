@@ -80,6 +80,10 @@ ac = "- AC1: Given X, when Y, then Z" if os.environ.get("FAKE_AC") == "unmarked"
 ticket = "# %s\nworktree: %s\n\n## Acceptance criteria\n%s\n\n## Intake\n- Verdict: %s (DoR met)\n\n## Classification\n| Category | yes/no/unknown | Source |\n|---|---|---|\n| auth | no | x |\n| payment | unknown | y |\n" % (tid, os.environ.get("FAKE_WORKTREE", "none"), ac if dor else "- AC1: Given X, then Z", verdict)
 if not dor and verdict != "split":
     ticket += "Provisional tier **%s**.\n" % tier
+if verdict == "split":
+    n = int(os.environ.get("FAKE_PARTS", "3"))
+    ticket = ticket.replace("worktree:", "tier: %s\nchildren: %s\nworktree:" % (os.environ.get("FAKE_PARENTTIER", "none"), ", ".join("%s-%d" % (tid, k) for k in range(1, n + 1))), 1)
+    ticket += "\n## AC table\n| Parent AC | Child |\n|---|---|\n" + ("| AC1 | %s-1 |\n| AC1 | %s-2 |\n" % (tid, tid) if os.environ.get("FAKE_DUPAC") else "| AC1 | %s-1 |\n" % tid)
 open("%s/%s/tickets/%s.md" % (home, key, tid), "w").write(ticket)
 if dor:
     vi = os.environ.get("FAKE_LANG") == "vi"
@@ -98,7 +102,8 @@ if dor:
     if os.environ.get("FAKE_NAMETIER"):
         final += "Provisional tier B\n"
 elif verdict == "split":
-    final = "Verdict: split\n- env-check skill: tier B\n- Stop hook: tier %s\n- verify-report skill: tier B\n" % os.environ.get("FAKE_STOPTIER", "C")
+    names = ["env-check skill", "Stop hook", "verify-report skill"][:int(os.environ.get("FAKE_PARTS", "3"))]
+    final = "Verdict: split\n" + "".join("- %s-%d %s\n" % (tid, k, nme) for k, nme in enumerate(names, 1))
 else:
     final = "Verdict: %s. Provisional tier %s." % (verdict, tier)
 proj = os.environ["FAKE_PROJECTS"] + "/p"
@@ -221,10 +226,16 @@ out=$($SCORE score $PJ --eval-root $DT_EVAL_ROOT --projects $S/nowhere); has "$o
 scen s; $RUN run --only RETRO-8 --rounds 1 $COMMON >/dev/null
 eq "$(sc | python3 -c "import json,sys;print(len(json.load(sys.stdin)['results']))")" 0 "pilot filter excludes RETRO-8"
 out=$($SCORE score --rounds 1 --only RETRO-8 --json --eval-root $DT_EVAL_ROOT --projects $FAKE_PROJECTS)
-eq "$(echo "$out" | python3 -c "import json,sys;d=json.load(sys.stdin);r=d['results'][0];print(r['status'],r['verdict'],sorted(r['part_tiers'].items()))")" "ok split [('Stop hook', 'C'), ('env-check skill', 'B'), ('verify-report skill', 'B')]" "split row: verdict + part tiers"
-scen t; FAKE_STOPTIER=B $RUN run --only RETRO-8 --rounds 1 $COMMON >/dev/null
-out=$($SCORE score --rounds 1 --only RETRO-8 --json --eval-root $DT_EVAL_ROOT --projects $FAKE_PROJECTS)
-has "$out" "HARD FAIL: part 'Stop hook' tier B below C" "split part below the truth"
+eq "$(echo "$out" | python3 -c "import json,sys;d=json.load(sys.stdin);r=d['results'][0];print(r['status'],r['verdict'],len(r['parts_found']),len(r['children']))")" "ok split 3 3" "split row: verdict + 3 parts + 3 child ids, part tiers not scored"
+sp() { $SCORE score --rounds 1 --only RETRO-8 --json --eval-root $DT_EVAL_ROOT --projects $FAKE_PROJECTS; }
+scen t; FAKE_PARTS=2 $RUN run --only RETRO-8 --rounds 1 $COMMON >/dev/null
+has "$(sp)" "split names 2 of 3 parts" "a split with 2 parts fails"
+scen t2; FAKE_PARENTTIER=B $RUN run --only RETRO-8 --rounds 1 $COMMON >/dev/null
+has "$(sp)" "the split parent has a tier (B)" "a parent with a tier fails"
+scen t3; FAKE_DUPAC=1 $RUN run --only RETRO-8 --rounds 1 $COMMON >/dev/null
+has "$(sp)" "lists an AC twice: AC1" "an AC listed twice fails"
+scen t4; FAKE_WORKTREE=/x/wt $RUN run --only RETRO-8 --rounds 1 $COMMON >/dev/null
+has "$(sp)" "ticket file records a worktree" "a worktree before the split is confirmed fails"
 out=$($SCORE score --rounds 3 --only RETRO-8 --eval-root $DT_EVAL_ROOT --projects $FAKE_PROJECTS); has "$out" "INCOMPLETE" "missing rounds are reported as incomplete"; has "$out" "NOT PASSED" "incomplete is never a pass"
 
 echo "# scope: v0.1 = 8 retro rows, WL = phase 6b"

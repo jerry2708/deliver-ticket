@@ -6,7 +6,7 @@
 
 What is scored (per run = the latest `done` attempt of a job; failed attempts are listed and never scored):
   verdict    intake verdict (`- Verdict:` line of tickets/<ID>.md, else the final message) vs the ground truth in evals/truth.json
-  tier       provisional tier of the intake run (go rows) or of the fixture re-run (stop (DoR) rows), per part for the split row;
+  tier       provisional tier of the intake run (go rows) or of the fixture re-run (stop (DoR) rows), not for the split row (see below);
              lower than the truth = HARD FAIL, higher = counted (the plan allows at most 1 of the 8 rows, 2 of 14 with --scope all; starting value, see plan section 12), none where one is needed = fail
   unknown    number of Risk categories judged `unknown` (reported per ticket; "stated plainly in the ticket text" needs a human)
   dor rows   no tier named (heuristic on the Classification section and the final message), every AC marked PROPOSED, <= 5 questions
@@ -42,7 +42,6 @@ VERDICT = re.compile(r"verdict\W{0,6}(go|stop\s*\(dor\)|split)(?!\w)", re.I)
 TIER_PROV = re.compile(r"(?i:provisional(?:\s+tier)?)\W{0,6}([ABC])\b")
 TIER_ANY = re.compile(r"\b(?i:tier)\W{0,6}([ABC])\b")
 PART_KEYS = {"env-check skill": "env-check", "Stop hook": "stop hook", "verify-report skill": "verify-report"}
-PART_TIER = re.compile(r"(?:tier\W{0,4}|\|\s*)([ABC])\b(?!\w)")
 
 
 def norm_verdict(v):
@@ -102,19 +101,29 @@ def tier_of(text):
     return m.group(1) if m else None
 
 
-def parts_tiers(text, truth_parts):
-    out = {}
-    for p in truth_parts:
-        key = PART_KEYS[p["name"]]
-        found = None
-        for line in text.splitlines():
-            if key in line.lower():
-                m = PART_TIER.search(line)
-                if m:
-                    found = m.group(1)
-                    break
-        out[p["name"]] = found
-    return out
+def split_structure(ticket, final, row):
+    """v0.1 scores the structure of a split only (part tiers wait for phase 6b, with per-part fixtures):
+    -> (found part names, child ids, fails, review). Language independent: part names and ids are identifiers."""
+    text = (ticket + "\n" + final).lower()
+    found = [p["name"] for p in row["parts"] if PART_KEYS[p["name"]] in text]
+    kids = sorted(set(re.findall(r"%s-\d+" % re.escape(row["id"]), ticket + "\n" + final)))
+    fails, review = [], []
+    if len(found) < len(row["parts"]):
+        fails.append("split names %d of %d parts (missing: %s)" % (len(found), len(row["parts"]), ", ".join(p["name"] for p in row["parts"] if p["name"] not in found)))
+    if len(kids) < len(row["parts"]):
+        fails.append("split proposes %d child ticket(s) (%s), expected %d" % (len(kids), ", ".join(kids) or "none", len(row["parts"])))
+    m = re.search(r"^tier:\s*([ABC])\b", ticket, re.M)
+    if m:
+        fails.append("the split parent has a tier (%s); a parent has none" % m.group(1))
+    rows = [l for l in ticket.splitlines() if l.startswith("|") and re.search(r"%s-\d+" % re.escape(row["id"]), l)]
+    acs = [re.match(r"^\|\s*(AC\d+)\b", l) for l in rows]
+    acs = [a.group(1) for a in acs if a]
+    if len(acs) != len(set(acs)):
+        fails.append("AC table parent -> child lists an AC twice: %s" % ", ".join(sorted({a for a in acs if acs.count(a) > 1})))
+    has_table = bool(rows) or bool(re.search(r"(?i)\bAC\b.*\b(parent|child)\b|\b(parent|child)\b.*\bAC\b", ticket))
+    if not has_table:
+        review.append("AC table parent -> child not found in the ticket file; read it (a source without ACs has nothing to map)")
+    return found, kids, fails, review
 
 
 def unknown_count(text):
@@ -220,17 +229,11 @@ def score_run(job, row, d, meta, a):
     # tier
     text_all = ticket + "\n" + final
     if row["intake"] == "split":
-        got = parts_tiers(text_all, row["parts"])
-        res["part_tiers"] = got
-        for p in row["parts"]:
-            g = got[p["name"]]
-            if g is None:
-                notes.append("part %r: no tier named (expected when the part stops on the DoR)" % p["name"])
-            elif L.RANK[g] < L.RANK[p["tier"]]:
-                fails.append("HARD FAIL: part %r tier %s below %s" % (p["name"], g, p["tier"]))
-            elif L.RANK[g] > L.RANK[p["tier"]]:
-                res["above"] = res.get("above", 0) + 1
-                notes.append("part %r tier %s above %s" % (p["name"], g, p["tier"]))
+        found, kids, f2, r2 = split_structure(ticket, final, row)
+        res["parts_found"], res["children"] = found, kids
+        fails += f2
+        review += r2
+        notes.append("part tiers are not scored in v0.1 (phase 6b)")
     elif row["intake"] == "stop (DoR)" and job["kind"] == "intake":
         named = [x.group(0) for x in (TIER_PROV.search(section(ticket, "Classification")), TIER_PROV.search(final)) if x]
         named += [x.group(0) for x in (TIER_ANY.search(final),) if x]
@@ -358,7 +361,7 @@ def cmd_score(truth, a):
     print("scope: %s%s" % (a.scope, " (the 8 retro rows; the 6 WL rows are phase 6b: the base branch already contains the wishlist, see docs/plan.md section 12)" if a.scope == "v0.1" else ""))
     print("%-30s %-7s %-14s %-6s %s" % ("job", "status", "verdict", "tier", "notes"))
     for r in results:
-        t = r.get("tier") or (",".join("%s=%s" % (k.split()[0], v) for k, v in r["part_tiers"].items()) if r.get("part_tiers") else "-")
+        t = r.get("tier") or ("%d parts" % len(r["parts_found"]) if r.get("parts_found") is not None else "-")
         print("%-30s %-7s %-14s %-6s %s" % (r["job"], r["status"], r["verdict"] or "-", t, "; ".join(r["fails"] + r["notes"])[:150]))
     rev = [r for r in results if r["review"]]
     if rev:
