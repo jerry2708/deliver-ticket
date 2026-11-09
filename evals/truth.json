@@ -14,7 +14,8 @@
       "parts": null,
       "reason": "creates a new authenticated per-user server API/store (IDOR risk: user id must come from the verified token); changed from B after discussion",
       "missing_dor": [],
-      "fixture": null
+      "fixture": null,
+      "scope": "6b"
     },
     {
       "row": 2,
@@ -28,7 +29,8 @@
       "parts": null,
       "reason": "small feature",
       "missing_dor": [],
-      "fixture": null
+      "fixture": null,
+      "scope": "6b"
     },
     {
       "row": 3,
@@ -42,7 +44,8 @@
       "parts": null,
       "reason": "small feature",
       "missing_dor": [],
-      "fixture": null
+      "fixture": null,
+      "scope": "6b"
     },
     {
       "row": 4,
@@ -56,7 +59,8 @@
       "parts": null,
       "reason": "AI agent changes saved wishlist/cart data on the user's behalf",
       "missing_dor": [],
-      "fixture": null
+      "fixture": null,
+      "scope": "6b"
     },
     {
       "row": 5,
@@ -70,7 +74,8 @@
       "parts": null,
       "reason": "AI agent changes saved wishlist/cart data on the user's behalf",
       "missing_dor": [],
-      "fixture": null
+      "fixture": null,
+      "scope": "6b"
     },
     {
       "row": 6,
@@ -84,7 +89,8 @@
       "parts": null,
       "reason": "small feature",
       "missing_dor": [],
-      "fixture": null
+      "fixture": null,
+      "scope": "6b"
     },
     {
       "row": 7,
@@ -109,7 +115,8 @@
           "AC1: Given a save toggle on product X is pending, when the assistant saves product Y and the wishlist refreshes, then after the toggle completes the wishlist holds both the toggle's result for X and Y."
         ],
         "note": null
-      }
+      },
+      "scope": "v0.1"
     },
     {
       "row": 8,
@@ -135,7 +142,8 @@
           "AC2: Given an item is no longer in the wishlist, when the move reaches it, then it is skipped and reported, and nothing else changes."
         ],
         "note": null
-      }
+      },
+      "scope": "v0.1"
     },
     {
       "row": 9,
@@ -159,7 +167,8 @@
           "AC2: Every product shows the same in-stock status as before the change (today 41/41 consistent)."
         ],
         "note": "Open question: which field becomes the source of truth."
-      }
+      },
+      "scope": "v0.1"
     },
     {
       "row": 10,
@@ -184,7 +193,8 @@
           "AC2: Another user's threads are never returned."
         ],
         "note": null
-      }
+      },
+      "scope": "v0.1"
     },
     {
       "row": 11,
@@ -210,7 +220,8 @@
           "AC2: Given a result with `checkout`, the card renders as today."
         ],
         "note": null
-      }
+      },
+      "scope": "v0.1"
     },
     {
       "row": 12,
@@ -235,7 +246,8 @@
           "AC1: Given a recommended product shows \"Added\", when it is removed from the cart elsewhere (cart panel or chat), then the card no longer shows \"Added\"."
         ],
         "note": null
-      }
+      },
+      "scope": "v0.1"
     },
     {
       "row": 13,
@@ -259,7 +271,8 @@
           "AC2: Given two wishlist items with similar names, when I ask to move one of them by name, then exactly that item is moved, or the assistant asks which one."
         ],
         "note": null
-      }
+      },
+      "scope": "v0.1"
     },
     {
       "row": 14,
@@ -286,7 +299,8 @@
       ],
       "reason": "three unrelated changes → separate tickets; hook/settings = infra config",
       "missing_dor": [],
-      "fixture": null
+      "fixture": null,
+      "scope": "v0.1"
     }
   ]
 }

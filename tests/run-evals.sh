@@ -12,6 +12,7 @@ eq() { [ "$1" = "$2" ] && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL $3:
 has() { printf '%s' "$1" | grep -q -- "$2" && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL $3: missing [$2] in: $(printf '%s' "$1" | head -c 400)"; }; }
 hasnt() { printf '%s' "$1" | grep -q -- "$2" && { fail=$((fail+1)); echo "FAIL $3: unexpected [$2]"; } || pass=$((pass+1)); }
 NOTES=/Users/huynhminh/Desktop/Work/copilot-kit-training/docs/training-v2
+PJ="--jobs r1-WL-02-intake,r1-RETRO-5-intake --scope all"      # the old pilot pair: one go row (WL-02) and one stop (DoR) row
 RUN="python3 $SK/scripts/run-evals.py"
 SCORE="python3 $SK/scripts/score-evals.py"
 
@@ -26,8 +27,9 @@ t = L.load_truth()
 ok = lambda c, m: print("PASS" if c else "FAIL lib: " + m)
 rows = {r["id"]: r for r in t["rows"]}
 ok(len(t["rows"]) == 14, "14 rows")
-ok(len(L.jobs_for(t, 3)) == 63, "63 jobs for 3 rounds")
-ok([j["id"] for j in L.jobs_for(t, 1) if j["id"] in L.PILOT] == L.PILOT, "pilot ids exist")
+ok(len(L.jobs_for(t, 3)) == 45 and len(L.jobs_for(t, 3, scope="all")) == 63, "45 jobs for 3 rounds in v0.1 scope, 63 with all")
+ok(not any(j["ticket"].startswith("WL") for j in L.jobs_for(t, 3)) and all(j["ticket"].startswith("WL") for j in L.jobs_for(t, 3, scope="6b")), "WL rows are phase 6b only")
+ok([j["id"] for j in L.select_jobs(t, 1, pilot=True)] == L.PILOT == ["r1-RETRO-5-intake", "r1-RETRO-8-intake"], "pilot = RETRO-5 intake + RETRO-8 intake")
 ok(sum(1 for r in t["rows"] if r["intake"] == "stop (DoR)") == 7 and rows["RETRO-8"]["intake"] == "split", "7 DoR rows, 1 split")
 ok(rows["RETRO-7"]["tier"] == "C" and rows["RETRO-5"]["tier"] == "B" and rows["WL-01"]["tier"] == "C", "tiers of rows 13, 11, 1")
 ok({p["name"]: p["tier"] for p in rows["RETRO-8"]["parts"]} == {"env-check skill": "B", "Stop hook": "C", "verify-report skill": "B"}, "split parts")
@@ -116,7 +118,7 @@ before=$(cd "$S/state" && find . -type f | sort | xargs shasum | shasum)
 
 echo "# runner: pilot, isolation, seeding"
 scen a
-out=$($RUN run --pilot $COMMON); eq "$?" 0 "pilot run rc"
+out=$($RUN run $PJ $COMMON); eq "$?" 0 "pilot run rc"
 has "$out" "running 2 (serial)" "2 pilot jobs"
 eq "$(ls "$DT_EVAL_ROOT/runs" | sort | tr '\n' ' ')" "r1-RETRO-5-intake.a1 r1-WL-02-intake.a1 " "attempt dirs"
 H=$DT_EVAL_ROOT/runs/r1-WL-02-intake.a1/home
@@ -128,78 +130,78 @@ has "$l" "^$H|1|$REPO|-p --permission-mode auto --output-format stream-json --ve
 has "$(cat $DT_EVAL_ROOT/runs/r1-WL-02-intake.a1/prompt.txt)" '^/deliver-ticket WL-02 ## WL-02' "WL prompt = ID + section"
 has "$(cat $DT_EVAL_ROOT/runs/r1-RETRO-5-intake.a1/prompt.txt)" '^/deliver-ticket RETRO-5 Retro #5 - `purchase-plan-card` crashes when the result has no `checkout`$' "retro prompt = ID + title only"
 eq "$(python3 -c "import json;m=json.load(open('$DT_EVAL_ROOT/runs/r1-WL-02-intake.a1/meta.json'));print(m['status'],m['attempt'],m['safety'],m['result']['usage']['output_tokens'])")" "done 1 [] 50" "meta of a done run"
-out=$($RUN run --pilot $COMMON); has "$out" "0 not done" "second run does nothing"; eq "$(ls "$DT_EVAL_ROOT/runs" | wc -l | tr -d ' ')" 2 "no new attempt dir"
-out=$($RUN status --pilot $COMMON); has "$out" "done 2, failed 0, pending 0" "status"; has "$out" "cost reported by claude: \$1.00" "status cost"
+out=$($RUN run $PJ $COMMON); has "$out" "0 not done" "second run does nothing"; eq "$(ls "$DT_EVAL_ROOT/runs" | wc -l | tr -d ' ')" 2 "no new attempt dir"
+out=$($RUN status $PJ $COMMON); has "$out" "done 2, failed 0, pending 0" "status"; has "$out" "cost reported by claude: \$1.00" "status cost"
 [ -f "$DT_EVAL_ROOT/inputs/RETRO-5.fixture.txt" ] && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL prepare did not write the fixture input"; }
 
 echo "# runner: failure stops the queue; the next call continues from a fresh home"
 scen b
-out=$(FAKE_MODE=fail_exit $RUN run --pilot $COMMON); eq "$?" 3 "failed session -> rc 3"
+out=$(FAKE_MODE=fail_exit $RUN run $PJ $COMMON); eq "$?" 3 "failed session -> rc 3"
 has "$out" "STOPPED: r1-WL-02-intake failed" "stopped on the first failure"
 [ ! -e "$DT_EVAL_ROOT/runs/r1-RETRO-5-intake.a1" ] && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL the queue went on after a failure"; }
 has "$(cat $DT_EVAL_ROOT/runs/r1-WL-02-intake.a1/meta.json)" '"status": "failed"' "attempt 1 failed"
 has "$(cat $DT_EVAL_ROOT/runs/r1-WL-02-intake.a1/meta.json)" 'exit code 1' "reason recorded"
-out=$($RUN run --pilot $COMMON); eq "$?" 0 "continue -> rc 0"
+out=$($RUN run $PJ $COMMON); eq "$?" 0 "continue -> rc 0"
 eq "$(ls "$DT_EVAL_ROOT/runs" | sort | tr '\n' ' ')" "r1-RETRO-5-intake.a1 r1-WL-02-intake.a1 r1-WL-02-intake.a2 " "a1 kept, a2 added from a fresh home"
 [ -d "$DT_EVAL_ROOT/runs/r1-WL-02-intake.a1/home" ] && [ -f "$DT_EVAL_ROOT/runs/r1-WL-02-intake.a1/stream.jsonl" ] && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL partial output of a1 not kept"; }
 eq "$(ls "$DT_EVAL_ROOT/runs/r1-WL-02-intake.a2/home/proj-key/tickets" | tr '\n' ' ')" "WL-02.md " "a2 home holds only its own ticket"
-out=$($SCORE score --pilot --eval-root $DT_EVAL_ROOT --projects $FAKE_PROJECTS); has "$out" "FAILED attempts (partial output kept, never scored)" "scorer lists the failed attempt"; has "$out" "r1-WL-02-intake a1: exit code 1" "failed attempt named"
+out=$($SCORE score $PJ --eval-root $DT_EVAL_ROOT --projects $FAKE_PROJECTS); has "$out" "FAILED attempts (partial output kept, never scored)" "scorer lists the failed attempt"; has "$out" "r1-WL-02-intake a1: exit code 1" "failed attempt named"
 scen c
-out=$(FAKE_MODE=limit $RUN run --pilot $COMMON); eq "$?" 3 "limit -> rc 3"; has "$(cat $DT_EVAL_ROOT/runs/r1-WL-02-intake.a1/meta.json)" 'limit_or_api' "limit-like text labelled"
+out=$(FAKE_MODE=limit $RUN run $PJ $COMMON); eq "$?" 3 "limit -> rc 3"; has "$(cat $DT_EVAL_ROOT/runs/r1-WL-02-intake.a1/meta.json)" 'limit_or_api' "limit-like text labelled"
 scen d
-FAKE_MODE=noresult $RUN run --pilot $COMMON >/dev/null; eq "$?" 3 "no result event -> rc 3"; has "$(cat $DT_EVAL_ROOT/runs/r1-WL-02-intake.a1/meta.json)" 'no result event' "reason: no result event"
+FAKE_MODE=noresult $RUN run $PJ $COMMON >/dev/null; eq "$?" 3 "no result event -> rc 3"; has "$(cat $DT_EVAL_ROOT/runs/r1-WL-02-intake.a1/meta.json)" 'no result event' "reason: no result event"
 scen e
-t0=$(date +%s); FAKE_MODE=hang $RUN run --pilot --timeout 2 $COMMON >/dev/null; eq "$?" 3 "timeout -> rc 3"; t1=$(date +%s)
+t0=$(date +%s); FAKE_MODE=hang $RUN run $PJ --timeout 2 $COMMON >/dev/null; eq "$?" 3 "timeout -> rc 3"; t1=$(date +%s)
 [ $((t1-t0)) -lt 30 ] && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL timeout did not kill the session ($((t1-t0))s)"; }
 has "$(cat $DT_EVAL_ROOT/runs/r1-WL-02-intake.a1/meta.json)" 'timeout after 2s' "reason: timeout"
 scen f
-$RUN run --pilot --batch 1 $COMMON >/dev/null; eq "$?" 0 "batch 1 rc"; eq "$(ls "$DT_EVAL_ROOT/runs" | wc -l | tr -d ' ')" 1 "batch 1 ran one job"
-$RUN run --pilot --batch 1 $COMMON >/dev/null; eq "$(ls "$DT_EVAL_ROOT/runs" | wc -l | tr -d ' ')" 2 "the next call continued with the second job"
+$RUN run $PJ --batch 1 $COMMON >/dev/null; eq "$?" 0 "batch 1 rc"; eq "$(ls "$DT_EVAL_ROOT/runs" | wc -l | tr -d ' ')" 1 "batch 1 ran one job"
+$RUN run $PJ --batch 1 $COMMON >/dev/null; eq "$(ls "$DT_EVAL_ROOT/runs" | wc -l | tr -d ' ')" 2 "the next call continued with the second job"
 
 echo "# runner: safety changes stop the queue"
-scen g; FAKE_MODE=touchrepo $RUN run --pilot $COMMON >/dev/null; eq "$?" 4 "main checkout touched -> rc 4"
+scen g; FAKE_MODE=touchrepo $RUN run $PJ $COMMON >/dev/null; eq "$?" 4 "main checkout touched -> rc 4"
 has "$(cat $DT_EVAL_ROOT/runs/r1-WL-02-intake.a1/meta.json)" 'main checkout changed' "repo change recorded"
-scen h; FAKE_MODE=realstate $RUN run --pilot $COMMON >/dev/null; eq "$?" 4 "real project state touched -> rc 4"
-scen i; FAKE_MODE=bound $RUN run --pilot $COMMON >/dev/null; eq "$?" 4 "session bound in the real state root -> rc 4"
-scen j; export DT_EVAL_ROOT=$S/state_j/inside; $RUN list --pilot $COMMON >/dev/null 2>&1; eq "$?" 2 "eval root inside the real state root refused"
+scen h; FAKE_MODE=realstate $RUN run $PJ $COMMON >/dev/null; eq "$?" 4 "real project state touched -> rc 4"
+scen i; FAKE_MODE=bound $RUN run $PJ $COMMON >/dev/null; eq "$?" 4 "session bound in the real state root -> rc 4"
+scen j; export DT_EVAL_ROOT=$S/state_j/inside; $RUN list $PJ $COMMON >/dev/null 2>&1; eq "$?" 2 "eval root inside the real state root refused"
 
 echo "# scorer: mechanics on fake runs"
-sc() { $SCORE score --pilot --json --eval-root "$DT_EVAL_ROOT" --projects "$FAKE_PROJECTS" 2>/dev/null; }
+sc() { $SCORE score $PJ --json --eval-root "$DT_EVAL_ROOT" --projects "$FAKE_PROJECTS" 2>/dev/null; }
 field() { python3 -c "import json,sys;d=json.load(sys.stdin);r=[x for x in d['results'] if x['job']=='$1'][0];print($2)"; }
 scen k
-$RUN run --pilot $COMMON >/dev/null
+$RUN run $PJ $COMMON >/dev/null
 eq "$(sc | field r1-WL-02-intake "r['status'],r['verdict'],r['tier'],r['unknown']")" "ok go B 1" "WL-02 intake ok"
 eq "$(sc | field r1-RETRO-5-intake "r['status']")" "review" "DoR run awaits the rubric"
 has "$(sc | field r1-RETRO-5-intake "r['review']")" "rubric not graded" "review says why"
-$SCORE grade --pilot --eval-root $DT_EVAL_ROOT --claude $DT_EVAL_CLAUDE >/dev/null; eq "$?" 0 "grade rc"
+$SCORE grade $PJ --eval-root $DT_EVAL_ROOT --claude $DT_EVAL_CLAUDE >/dev/null; eq "$?" 0 "grade rc"
 [ -f "$DT_EVAL_ROOT/runs/r1-RETRO-5-intake.a1/grade.json" ] && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL grade.json not written"; }
 eq "$(sc | field r1-RETRO-5-intake "r['status'],r['verdict'],r['tier'],r['ac_unmarked'],r['questions']['questions']")" "ok stop (DoR) None 0 3" "DoR run ok after grading"
 # a grade that says not covered fails; a disagreement with the keyword check is listed
 echo '{"covers_all": false, "missing": ["goal"], "superfluous": [], "notes": "x"}' > "$DT_EVAL_ROOT/runs/r1-RETRO-5-intake.a1/grade.json"
 eq "$(sc | field r1-RETRO-5-intake "r['status']")" "fail" "rubric not covered -> fail"
 has "$(sc | field r1-RETRO-5-intake "r['review']")" "disagree" "grader vs keywords disagreement is a review item"
-scen l; FAKE_TIER=A $RUN run --pilot --only WL-02 $COMMON >/dev/null
+scen l; FAKE_TIER=A $RUN run $PJ --only WL-02 $COMMON >/dev/null
 has "$(sc | field r1-WL-02-intake "r['fails']")" "HARD FAIL: tier A below B" "tier below the truth = hard fail"
-scen m; FAKE_TIER=C $RUN run --pilot $COMMON >/dev/null
+scen m; FAKE_TIER=C $RUN run $PJ $COMMON >/dev/null
 eq "$(sc | field r1-WL-02-intake "r['status'],r.get('above')")" "ok 1" "tier above the truth is counted, not a fail"
-scen n; FAKE_VERDICT="stop (DoR)" $RUN run --pilot $COMMON >/dev/null
+scen n; FAKE_VERDICT="stop (DoR)" $RUN run $PJ $COMMON >/dev/null
 has "$(sc | field r1-WL-02-intake "r['fails']")" "verdict 'stop (DoR)', expected 'go'" "wrong verdict"
-scen o; FAKE_NAMETIER=1 FAKE_AC=unmarked $RUN run --pilot $COMMON >/dev/null
+scen o; FAKE_NAMETIER=1 FAKE_AC=unmarked $RUN run $PJ $COMMON >/dev/null
 has "$(sc | field r1-RETRO-5-intake "r['fails']")" "tier named on a stop (DoR) run" "tier on a DoR run"
 has "$(sc | field r1-RETRO-5-intake "r['fails']")" "1 AC line(s) not marked PROPOSED" "unmarked AC"
-scen p; FAKE_WORKTREE=/x/wt $RUN run --pilot $COMMON >/dev/null
+scen p; FAKE_WORKTREE=/x/wt $RUN run $PJ $COMMON >/dev/null
 has "$(sc | field r1-WL-02-intake "r['fails']")" "ticket file records a worktree" "worktree in the ticket file"
-scen q; FAKE_LEAK=1 $RUN run --pilot $COMMON >/dev/null
+scen q; FAKE_LEAK=1 $RUN run $PJ $COMMON >/dev/null
 has "$(sc | field r1-WL-02-intake "r['fails']")" "INVALID RUN" "cross-run read invalidates the run"
-scen u; FAKE_WTREAD=1 $RUN run --pilot $COMMON >/dev/null
+scen u; FAKE_WTREAD=1 $RUN run $PJ $COMMON >/dev/null
 has "$(sc | field r1-WL-02-intake "r['fails']")" "INVALID RUN: line 2 .*reads a ticket worktree" "read under .claude/worktrees invalidates the run"
-scen v; FAKE_BRANCH=1 $RUN run --pilot $COMMON >/dev/null
+scen v; FAKE_BRANCH=1 $RUN run $PJ $COMMON >/dev/null
 has "$(sc | field r1-WL-02-intake "r['fails']")" "references a finished ticket" "a fix/retro-N branch name invalidates the run"
-scen w; FAKE_WTLIST=1 $RUN run --pilot $COMMON >/dev/null
+scen w; FAKE_WTLIST=1 $RUN run $PJ $COMMON >/dev/null
 eq "$(sc | field r1-WL-02-intake "r['status'],r['fails']")" "review []" "plain git worktree list is a review item, not invalid"
 has "$(sc | field r1-WL-02-intake "r['review']")" "transcript-reads flagged" "listing shows under review"
-scen r; $RUN run --pilot $COMMON >/dev/null
-out=$($SCORE score --pilot --eval-root $DT_EVAL_ROOT --projects $S/nowhere); has "$out" "transcript not found" "missing transcript is a review item, not a pass"
+scen r; $RUN run $PJ $COMMON >/dev/null
+out=$($SCORE score $PJ --eval-root $DT_EVAL_ROOT --projects $S/nowhere); has "$out" "transcript not found" "missing transcript is a review item, not a pass"
 scen s; $RUN run --only RETRO-8 --rounds 1 $COMMON >/dev/null
 eq "$(sc | python3 -c "import json,sys;print(len(json.load(sys.stdin)['results']))")" 0 "pilot filter excludes RETRO-8"
 out=$($SCORE score --rounds 1 --only RETRO-8 --json --eval-root $DT_EVAL_ROOT --projects $FAKE_PROJECTS)
@@ -209,6 +211,14 @@ out=$($SCORE score --rounds 1 --only RETRO-8 --json --eval-root $DT_EVAL_ROOT --
 has "$out" "HARD FAIL: part 'Stop hook' tier B below C" "split part below the truth"
 out=$($SCORE score --rounds 3 --only RETRO-8 --eval-root $DT_EVAL_ROOT --projects $FAKE_PROJECTS); has "$out" "INCOMPLETE" "missing rounds are reported as incomplete"; has "$out" "NOT PASSED" "incomplete is never a pass"
 
+echo "# scope: v0.1 = 8 retro rows, WL = phase 6b"
+scen x
+out=$($RUN list --jobs r9-NOPE-intake $COMMON 2>&1); eq "$?" 2 "unknown job id -> rc 2"; has "$out" "unknown job id" "message"
+out=$($RUN list $COMMON); has "$out" "45 job(s)" "default scope: 45 jobs"; hasnt "$out" "WL-" "default scope has no WL job"
+out=$($RUN list --scope 6b $COMMON); has "$out" "18 job(s)" "6b scope: 6 WL rows x 3 rounds"; hasnt "$out" "RETRO" "6b scope has no retro job"
+out=$($SCORE score --json --eval-root $DT_EVAL_ROOT --projects $FAKE_PROJECTS); eq "$(echo "$out" | python3 -c "import json,sys;print(json.load(sys.stdin)['summary']['rows_required'])")" 8 "verdict threshold is 8 rows in v0.1 scope"
+out=$($SCORE score --scope all --json --eval-root $DT_EVAL_ROOT --projects $FAKE_PROJECTS); eq "$(echo "$out" | python3 -c "import json,sys;print(json.load(sys.stdin)['summary']['rows_required'])")" 14 "14 rows with --scope all"
+out=$($SCORE score --eval-root $DT_EVAL_ROOT --projects $FAKE_PROJECTS); has "$out" "^scope: v0.1 (the 8 retro rows; the 6 WL rows are phase 6b" "the report states the scope"
 echo "# the template state copy was never touched"
 after=$(cd "$S/state" && find . -type f | sort | xargs shasum | shasum)
 eq "$after" "$before" "template state unchanged"

@@ -1,6 +1,6 @@
 # deliver-ticket (personal skill)
 
-`/deliver-ticket init | <ticket-id|file> | <ID> cancel`. Run it only by typing it. Design rationale: `docs/plan.md`.
+`/deliver-ticket init | <ticket-id|file> | <ID> cancel`. Run it only by typing it. Design rationale: `docs/plan.md`. `<state root>` below = `$DELIVER_TICKET_HOME`, default `~/.local/share/deliver-ticket` (defined in `SKILL.md` section 3).
 
 ## Permission mode: launch in auto mode, no plan mode
 The skill is meant for **auto mode**: the gates are the skill's, the safety is the hooks'. A skill cannot set the mode. In Claude Code 2.1.311 auto is granted only from user or policy settings or the `--permission-mode` flag (a project or local `defaultMode: "auto"` is ignored; verified in the 2.1.311 binary: "only policy/user/flag settings may grant auto mode"). Launch with:
@@ -32,13 +32,13 @@ cp ~/.claude/settings.json.bak-deliver-ticket-<timestamp> ~/.claude/settings.jso
 ~/.claude/skills/deliver-ticket/scripts/install-hooks.sh project-uninstall --repo <main checkout> --confirmed   # backup goes to the project's state dir
 
 # 2d. one session is stuck as "bound" (e.g. a ticket that cannot be closed properly): from a normal terminal, remove that session's map
-#     ~/.local/share/deliver-ticket/sessions/<session id>   (it only records which ticket the session works on)
+#     <state root>/sessions/<session id>   (it only records which ticket the session works on)
 
 # 3. last resort, no scripts: delete the entries whose "command" contains
 #    /.claude/skills/deliver-ticket/hooks/ from ~/.claude/settings.json (and from <repo>/.claude/settings.local.json) by hand
 ```
 
-The hooks do nothing in a repo without delivery state (`~/.local/share/deliver-ticket/<project-key>/guard.json`). To switch them off for one project only, move that project's `guard.json` away (a state dir without `guard.json` counts as "not initialised").
+The hooks do nothing in a repo without delivery state (`<state root>/<project-key>/guard.json`). To switch them off for one project only, move that project's `guard.json` away (a state dir without `guard.json` counts as "not initialised").
 
 ## Change settings
 

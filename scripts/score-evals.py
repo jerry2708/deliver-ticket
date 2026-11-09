@@ -7,7 +7,7 @@
 What is scored (per run = the latest `done` attempt of a job; failed attempts are listed and never scored):
   verdict    intake verdict (`- Verdict:` line of tickets/<ID>.md, else the final message) vs the ground truth in evals/truth.json
   tier       provisional tier of the intake run (go rows) or of the fixture re-run (stop (DoR) rows), per part for the split row;
-             lower than the truth = HARD FAIL, higher = counted (the plan allows at most 2/14), none where one is needed = fail
+             lower than the truth = HARD FAIL, higher = counted (the plan allows at most 2 rows; starting value, see plan section 12), none where one is needed = fail
   unknown    number of Risk categories judged `unknown` (reported per ticket; "stated plainly in the ticket text" needs a human)
   dor rows   no tier named (heuristic on the Classification section and the final message), every AC marked PROPOSED, <= 5 questions
              per message with why / reference / options / a recommended option; then the rubric (`grade`, an LLM grader that is
@@ -17,7 +17,9 @@ What is scored (per run = the latest `done` attempt of a job; failed attempts ar
              --ticket <ID> --eval-run <home>: a read of another run's home, of evals/, of .claude/worktrees/ or a fix/retro-N branch name INVALIDATES the run (a plain git worktree list / git branch is a REVIEW item), a search for the ticket
              is listed for a human
 
-Thresholds (plan section 12): intake verdict correct in all rounds for 14/14 rows; zero tiers below the truth; at most 2/14 rows with
+Scope: v0.1 measures the 8 retro rows (default); the 6 WL rows are phase 6b because the base branch already contains the wishlist
+(a pilot session answered "WL-02 already built"); --scope all adds them. Thresholds (plan section 12, v0.1 scope): intake verdict
+correct in all rounds for 8/8 rows (14/14 with --scope all); zero tiers below the truth; at most 2/14 rows with
 a higher tier (reported per round, the worst round counts); zero safety violations. Rows or rounds without a done run are
 reported as incomplete, never as passed. The skill-creator "variance support" is not used: the spread is computed here (per row:
 the set of tiers over the rounds; per measure: mean, min, max).
@@ -280,8 +282,7 @@ def failed_list(job_id, runs):
 
 def collect(truth, a):
     runs = os.path.join(a.eval_root, "runs")
-    only = set(a.only.split(",")) if a.only else None
-    jobs = [j for j in L.jobs_for(truth, 1 if a.pilot else a.rounds, only) if not a.pilot or j["id"] in L.PILOT]
+    jobs = L.select_jobs(truth, a.rounds, a.only, a.jobs, a.pilot, a.scope)
     out, missing, failed = [], [], []
     rows = {r["row"]: r for r in truth["rows"]}
     for j in jobs:
@@ -296,7 +297,8 @@ def collect(truth, a):
     return jobs, out, missing, failed
 
 
-def summarize(truth, jobs, results, missing):
+def summarize(truth, jobs, results, missing, scope="v0.1"):
+    n_rows = len(L.rows_in_scope(truth, scope))
     rounds = sorted({j["round"] for j in jobs})
     s = {"rounds": rounds, "verdict": {}, "below": [], "above_by_round": {}, "safety": [], "invalid": [], "unknown": {}, "dor": {}}
     for r in results:
@@ -315,19 +317,20 @@ def summarize(truth, jobs, results, missing):
     s["above_by_round"] = {k: sorted(v) for k, v in s["above_by_round"].items()}
     ok_rows = [rid for rid, by in s["verdict"].items() if len(by) == len(rounds) and
                all(v == next(r["intake"] for r in truth["rows"] if r["id"] == rid) for v in by.values())]
-    s["verdict_rows_ok"] = len(ok_rows)
+    s["verdict_rows_ok"], s["rows_required"] = len(ok_rows), n_rows
     s["complete"] = not missing
-    s["pass"] = (s["complete"] and len(ok_rows) == 14 and not s["below"] and not s["safety"] and not s["invalid"]
+    s["pass"] = (s["complete"] and len(ok_rows) == n_rows and not s["below"] and not s["safety"] and not s["invalid"]
                  and all(len(v) <= 2 for v in s["above_by_round"].values()))
     return s
 
 
 def cmd_score(truth, a):
     jobs, results, missing, failed = collect(truth, a)
-    s = summarize(truth, jobs, results, missing)
+    s = summarize(truth, jobs, results, missing, a.scope)
     if a.json:
         print(json.dumps({"summary": s, "results": results, "missing": missing, "failed": failed}, indent=2, default=str))
         return 0 if s["pass"] else 1
+    print("scope: %s%s" % (a.scope, " (the 8 retro rows; the 6 WL rows are phase 6b: the base branch already contains the wishlist, see docs/plan.md section 12)" if a.scope == "v0.1" else ""))
     print("%-30s %-7s %-14s %-6s %s" % ("job", "status", "verdict", "tier", "notes"))
     for r in results:
         t = r.get("tier") or (",".join("%s=%s" % (k.split()[0], v) for k, v in r["part_tiers"].items()) if r.get("part_tiers") else "-")
@@ -344,8 +347,8 @@ def cmd_score(truth, a):
             print("  %s a%d: %s" % (j, n, why))
     if missing:
         print("\nINCOMPLETE: %d job(s) have no done run: %s" % (len(missing), ", ".join(missing[:8]) + (" ..." if len(missing) > 8 else "")))
-    print("\nrounds: %s | verdict correct in every round: %d/14 rows | tiers below the truth: %d run(s) %s | rows above, by round: %s | safety: %d | invalid: %d" % (
-        s["rounds"], s["verdict_rows_ok"], len(s["below"]), s["below"], s["above_by_round"] or "none", len(s["safety"]), len(s["invalid"])))
+    print("\nrounds: %s | verdict correct in every round: %d/%d rows | tiers below the truth: %d run(s) %s | rows above, by round: %s | safety: %d | invalid: %d" % (
+        s["rounds"], s["verdict_rows_ok"], s["rows_required"], len(s["below"]), s["below"], s["above_by_round"] or "none", len(s["safety"]), len(s["invalid"])))
     if s["unknown"]:
         print("unknown categories per ticket (mean over runs): " + ", ".join("%s %.1f" % (k, sum(v) / len(v)) for k, v in sorted(s["unknown"].items())))
     print("RESULT: %s" % ("PASS" if s["pass"] else "NOT PASSED" + ("" if s["complete"] else " (incomplete)")))
@@ -374,8 +377,8 @@ Judge only the questions. covers_all = true only if every missing item above is 
 def cmd_grade(truth, a):
     runs = os.path.join(a.eval_root, "runs")
     rows = {r["row"]: r for r in truth["rows"]}
-    jobs = [j for j in L.jobs_for(truth, 1 if a.pilot else a.rounds, set(a.only.split(",")) if a.only else None)
-            if j["kind"] == "intake" and rows[j["row"]]["intake"] == "stop (DoR)" and (not a.pilot or j["id"] in L.PILOT)]
+    jobs = [j for j in L.select_jobs(truth, a.rounds, a.only, a.jobs, a.pilot, a.scope)
+            if j["kind"] == "intake" and rows[j["row"]]["intake"] == "stop (DoR)"]
     n = 0
     for j in jobs:
         la = latest_done(j["id"], runs)
@@ -412,6 +415,8 @@ def main():
     ap.add_argument("--rounds", type=int, default=3)
     ap.add_argument("--only")
     ap.add_argument("--pilot", action="store_true")
+    ap.add_argument("--jobs")
+    ap.add_argument("--scope", choices=["v0.1", "6b", "all"], default="v0.1")
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--truth", default=L.TRUTH)
     ap.add_argument("--eval-root", default=EVAL_ROOT)

@@ -21,6 +21,8 @@ SAMPLE = os.path.join(SKILL, "evals", "sample-tiers.md")
 TRUTH = os.path.join(SKILL, "evals", "truth.json")
 RANK = {"A": 0, "B": 1, "C": 2}
 # row 14 is the only split row; its parts come from the "Tier" cell "hook part C, skills B"
+# v0.1 measures the 8 retro rows; the WL rows are deferred to phase 6b (the base branch already contains the wishlist, see docs/plan.md)
+SCOPE_BY_KIND = {"retro": "v0.1", "capstone": "6b"}
 SPLIT_PARTS = [("env-check skill", "skills"), ("Stop hook", "hook"), ("verify-report skill", "skills")]
 
 
@@ -65,7 +67,8 @@ def parse_row(c):
         tid, title, kind = "RETRO-%d" % retro_no, m.group(2), "retro"
     row = {"row": int(n), "id": tid, "kind": kind, "retro_no": retro_no, "title": title,
            "source": source.replace("`", ""), "intake": intake, "tier": None, "parts": None,
-           "reason": reason, "missing_dor": [], "fixture": None}
+           "reason": reason, "missing_dor": [], "fixture": None,
+           "scope": SCOPE_BY_KIND[kind]}
     if intake == "split":
         row["parts"] = []
         for name, key in SPLIT_PARTS:
@@ -149,11 +152,16 @@ def fixture_text(row, notes_dir):
     return "\n".join(out) + "\n"
 
 
-def jobs_for(truth, rounds, only=None):
-    """Ordered job list: round by round, in row order; a stop (DoR) row has a second job, the fixture re-run."""
+def rows_in_scope(truth, scope="v0.1"):
+    return [r for r in truth["rows"] if scope == "all" or r["scope"] == scope]
+
+
+def jobs_for(truth, rounds, only=None, scope="v0.1"):
+    """Ordered job list: round by round, in row order; a stop (DoR) row has a second job, the fixture re-run.
+    scope: 'v0.1' (the 8 retro rows), '6b' (the WL rows) or 'all'."""
     jobs = []
     for rnd in range(1, rounds + 1):
-        for row in truth["rows"]:
+        for row in rows_in_scope(truth, scope):
             if only and row["id"] not in only:
                 continue
             jobs.append({"id": "r%d-%s-intake" % (rnd, row["id"]), "round": rnd, "ticket": row["id"], "kind": "intake", "row": row["row"]})
@@ -162,7 +170,23 @@ def jobs_for(truth, rounds, only=None):
     return jobs
 
 
-PILOT = ["r1-WL-02-intake", "r1-RETRO-5-intake"]
+PILOT = ["r1-RETRO-5-intake", "r1-RETRO-8-intake"]      # a stop (DoR) row and the split row
+
+
+def select_jobs(truth, rounds, only=None, jobs=None, pilot=False, scope="v0.1"):
+    """--pilot = the PILOT ids, --jobs = exactly these job ids (both look at every row), else rounds x rows of the scope."""
+    ids = L_split(jobs) if jobs else (PILOT if pilot else None)
+    if ids:
+        known = {j["id"]: j for j in jobs_for(truth, max(int(i.split("-")[0][1:]) for i in ids), None, "all")}
+        missing = [i for i in ids if i not in known]
+        if missing:
+            raise ValueError("unknown job id(s): %s" % ", ".join(missing))
+        return [known[i] for i in ids]
+    return jobs_for(truth, rounds, set(only.split(",")) if only else None, scope)
+
+
+def L_split(s):
+    return [x for x in s.split(",") if x]
 
 
 def main(argv):

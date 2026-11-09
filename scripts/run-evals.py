@@ -1,21 +1,23 @@
 #!/usr/bin/env python3
 """Runner of the phase-6 classification evals (plan section 12). One fresh `claude -p` session per job, serial.
 
-  run-evals.py list    [--rounds 3] [--only ID,...] [--pilot]   what would run and what is already done
+  run-evals.py list    [--rounds 3] [--only ID,...] [--pilot | --jobs ID,...] [--scope v0.1|6b|all]   what would run and what is done
   run-evals.py prepare                                          write the input texts (verbatim from the notes) to <eval root>/inputs/
   run-evals.py run     [--rounds 3] [--only ID,...] [--pilot] [--batch N] [--timeout SEC]
   run-evals.py status  [--rounds 3] [--only ID,...] [--pilot]   done / failed / pending, wall time, cost, tokens
 
-Jobs (63 for 3 rounds): per round and per row one `intake` job (`/deliver-ticket <ID> <ticket text>`; for the retro items the title
-only), and for the 7 stop (DoR) rows a second `fixture` job (a fresh session with the title + the fixed goal / ACs). A session stops
-at the first gate; `claude -p` ends its turn there. --pilot = the two jobs r1-WL-02-intake and r1-RETRO-5-intake.
+Jobs (45 for 3 rounds in the default scope v0.1 = the 8 retro rows; --scope all adds the 6 WL rows = 63): per round and per row one
+`intake` job (`/deliver-ticket <ID> <ticket text>`; for the retro items the title only), and for the 7 stop (DoR) rows a second
+`fixture` job (a fresh session with the title + the fixed goal / ACs). A session stops at the first gate; `claude -p` ends its turn
+there. --pilot = the two jobs r1-RETRO-5-intake and r1-RETRO-8-intake. The WL rows are phase 6b: the base branch already contains the
+wishlist, so a session answers "already built" (pilot, 2026-11-09).
 
 Isolation: every attempt gets its own DELIVER_TICKET_HOME (<eval root>/runs/<job>.a<N>/home), seeded by COPYING config.md,
 config.local.md, guard.json and project.md from the real state dir. The real state dir, RETRO-5 / RETRO-7 and the sessions map are
 not touched; the runner compares a snapshot of the real project state dir and of the main checkout (git status, worktrees, branches,
 HEAD) before and after every job, checks that no `sessions/<session id>` appeared in the real state root, and stops the queue when
 any of these changed (another live ticket session writing to the real project state dir during a run also trips it). Nothing is ever deleted: attempts, partial output and homes stay (list them in
-~/.local/share/deliver-ticket/build-cleanup-list.md and ask before removing).
+<state root>/build-cleanup-list.md and ask before removing).
 
 Interruptions: a job whose session fails (non-zero exit, no `result` event, is_error, a non-success subtype, timeout, Ctrl-C, the
 runner killed) is marked `failed`; the runner STOPS the queue (exit 3). The next invocation continues where it stopped: the failed job
@@ -44,7 +46,7 @@ HOME = os.path.expanduser("~")
 EVAL_ROOT = os.environ.get("DT_EVAL_ROOT") or os.path.join(HOME, ".local/share/deliver-ticket-eval")
 DEFAULT_REPO = os.path.join(HOME, "Desktop/Work/copilot-kit-training")
 DEFAULT_NOTES = os.path.join(DEFAULT_REPO, "docs/training-v2")
-DEFAULT_STATE = os.path.join(HOME, ".local/share/deliver-ticket/copilot-kit-training-cd02feca")
+DEFAULT_STATE = os.path.join(os.environ.get("DELIVER_TICKET_HOME") or os.path.join(HOME, ".local/share/deliver-ticket"), "copilot-kit-training-cd02feca")
 SEED_FILES = ["config.md", "config.local.md", "guard.json", "project.md"]
 LIMIT_WORDS = ("usage limit", "rate limit", "rate_limit", "overloaded", "529", "429", "quota", "credit")
 
@@ -115,10 +117,7 @@ def job_state(job_id):
 
 
 def select_jobs(truth, a):
-    only = set(a.only.split(",")) if a.only else None
-    if a.pilot:
-        return [j for j in L.jobs_for(truth, 1) if j["id"] in L.PILOT]
-    return L.jobs_for(truth, a.rounds, only)
+    return L.select_jobs(truth, a.rounds, a.only, a.jobs, a.pilot, a.scope)
 
 
 def job_text(truth, job, a):
@@ -316,7 +315,9 @@ def main():
     ap.add_argument("cmd", choices=["list", "prepare", "run", "status"])
     ap.add_argument("--rounds", type=int, default=3)
     ap.add_argument("--only")
-    ap.add_argument("--pilot", action="store_true")
+    ap.add_argument("--pilot", action="store_true", help="the two pilot jobs %s" % ", ".join(L.PILOT))
+    ap.add_argument("--jobs", help="exactly these job ids, comma separated (ids as shown by `list --scope all`)")
+    ap.add_argument("--scope", choices=["v0.1", "6b", "all"], default="v0.1", help="rows: v0.1 = the 8 retro rows (default), 6b = the WL rows, all")
     ap.add_argument("--batch", type=int, default=0, help="max jobs in this invocation (default: all)")
     ap.add_argument("--timeout", type=int, default=1800)
     ap.add_argument("--truth", default=L.TRUTH)

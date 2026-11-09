@@ -19,7 +19,7 @@ import sys
 
 HOME = os.path.realpath(os.path.expanduser("~"))
 STATE = os.environ.get("DT_STATE_DIR", "")
-DT_HOME = os.path.realpath(os.environ.get("DT_HOME") or os.path.join(HOME, ".local/share/deliver-ticket"))
+DT_HOME = os.path.realpath(os.environ.get("DT_HOME") or os.environ.get("DELIVER_TICKET_HOME") or os.path.join(HOME, ".local/share/deliver-ticket"))
 SKILL_DIR = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 SKILL_SCRIPTS = os.path.join(SKILL_DIR, "scripts")
 

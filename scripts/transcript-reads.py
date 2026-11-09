@@ -29,7 +29,7 @@ import shlex
 import sys
 
 DEFAULT_CODE_ROOTS = ["apps", "packages", "src", "lib", "app", "server", "client", "scripts"]
-OUTSIDE_MARKERS = ("/.local/share/deliver-ticket/", "/tmp/", "/private/tmp/", "/scratchpad/", "/.claude/projects/")
+OUTSIDE_MARKERS = ("/.local/share/deliver-ticket/", "/.local/share/deliver-ticket-eval/", "/tmp/", "/private/tmp/", "/scratchpad/", "/.claude/projects/")
 IGNORED_DIRS = {".playwright-mcp", "evidence", "node_modules", ".git", ".next", ".mastra", "dist"}
 SEARCHERS = {"grep", "egrep", "fgrep", "rg", "ag", "ack"}
 OPT_ARG = {"-e", "-f", "-m", "-A", "-B", "-C", "-d", "-D", "-g", "-t", "-T", "--include", "--exclude", "--exclude-dir",

@@ -46,4 +46,32 @@ has SKILL.md 'Do not use plan mode'
 has SKILL.md 'which the guard blocks (dry runs 2 and 3)'
 has SKILL.md 'its exit dialog switches the session to default mode'
 has docs/plan.md 'HIGH PRIORITY – permission mode'
+echo "# one state root (eval isolation): the default path is named only where DELIVER_TICKET_HOME is honoured"
+has SKILL.md '${DELIVER_TICKET_HOME:-$HOME/.local/share/deliver-ticket}'
+has SKILL.md 'This is the only place that names the default'
+bad=$(python3 - <<'PY'
+import os, re
+rx = re.compile(r"\.local/share/deliver-ticket(?!-eval)")
+skip_dirs = {".git", "tests", "docs", "evals", "__pycache__"}
+for d, dirs, files in os.walk("."):
+    dirs[:] = [x for x in dirs if x not in skip_dirs]
+    for f in files:
+        if f == "CLAUDE.md":
+            continue
+        p = os.path.join(d, f)
+        try:
+            lines = open(p).read().splitlines()
+        except (UnicodeDecodeError, OSError):
+            continue
+        for n, l in enumerate(lines, 1):
+            if rx.search(l) and "DELIVER_TICKET_HOME" not in l and "OUTSIDE_MARKERS" not in l:
+                print("%s:%d: %s" % (p, n, l.strip()[:100]))
+PY
+)
+[ -z "$bad" ]; ok $? "files hard-code ~/.local/share/deliver-ticket outside a DELIVER_TICKET_HOME definition:
+$bad"
+echo "# phase 6 scope"
+has docs/plan.md 'v0.1 measures the 8 retro rows only'
+has docs/plan.md 'intake verdict \*\*8/8\*\*'
+has docs/plan.md 'phase 6b'
 echo "pass=$pass fail=$fail"; [ $fail = 0 ]
