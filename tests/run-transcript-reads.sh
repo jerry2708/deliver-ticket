@@ -135,6 +135,7 @@ rows = [
  tu("e21", "Bash", command="ls /Users/huynhminh/Desktop/Work/copilot-kit-training/.claude/worktrees 2>&1 | head"),                          # 22 plain listing of the directory: review
  tu("e22", "Bash", command="ls /r/.claude/worktrees/"),                                                                                # 23 ditto with a trailing slash: review
  tu("e23", "Bash", command="ls /r/.claude/worktrees/RETRO-5/apps"),                                                                    # 24 inside a named worktree: invalid
+ tu("e24", "Bash", command="ST=/Users/huynhminh/.local/share/dt-runs/runs/r1-WL-02-intake.a1/home\nls $ST $ST/x\necho done"),                    # 25 multi-line command, only the run's own home: fine
 ]
 with open(S + "/t3.jsonl", "w") as f:
     for r in rows: f.write(json.dumps(r) + "\n")
@@ -147,7 +148,7 @@ echo "$out" | grep -q '^line 3 .*reads outside this run' && pass=$((pass+1)) || 
 echo "$out" | grep -q '^line 7 .*touches the answer key' && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL eval-run: reason for line 7"; }
 echo "$out" | grep -q 'attempts, not counted): line 10 Bash' && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL eval-run: errored attempt line 10 not named: $out"; }
 for n in 13 14 15 16 17 19 21 22 23 24; do echo "$out" | grep -q "^line $n " && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL eval-run: line $n must be flagged"; }; done
-for n in 18 20; do echo "$out" | grep -q "^line $n " && { fail=$((fail+1)); echo "FAIL eval-run: line $n must NOT be flagged"; } || pass=$((pass+1)); done
+for n in 18 20 25; do echo "$out" | grep -q "^line $n " && { fail=$((fail+1)); echo "FAIL eval-run: line $n must NOT be flagged"; } || pass=$((pass+1)); done
 for n in 13 14; do echo "$out" | grep -q "^line $n .*reads a ticket worktree" && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL eval-run: line $n reason (worktree)"; }; done
 for n in 15 21; do echo "$out" | grep -q "^line $n .*references a finished ticket's branch" && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL eval-run: line $n reason (branch)"; }; done
 for n in 22 23; do echo "$out" | grep -q "^line $n .*lists .claude/worktrees (REVIEW" && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL eval-run: line $n reason (directory listing)"; }; done

@@ -259,10 +259,17 @@ t3 = "## Acceptance criteria\n- AC1: Given x, then y.\n## Out of scope\n"
 ok(m.ac_unmarked(t3) == 1, "plain AC without PROPOSED is unmarked")
 final = "**1. Verdict**\n- stop\n**2. Ticket**\n- Goal\n## Draft questions\n1. Should the fix cover moveToCart? **Recommended:** yes.\n2. May the test change?\n3. Repro steps and where seen?\nFile: x\n"
 q = m.question_block(final)
+f, k, fl, rv = m.split_structure("children: R-1, R-2, R-3\n", "- R-1 `env-check` skill\n- R-2 `Stop` hook (lint)\n- R-3 **verify-report** skill\n", {"id": "R", "parts": [{"name": "env-check skill"}, {"name": "Stop hook"}, {"name": "verify-report skill"}]})
+ok(len(f) == 3 and not fl, "part names in backticks or bold are found (got %s %s)" % (f, fl))
+q2 = m.question_block("**1. Gate**\n- x\n- **Q1 (affects AC1): what should the card show?**\n  - Options: (a) null\n- **Q2: where did you see it?**\n  - Need: repro\nNext: rerun.\n")
+ok(m.question_checks(q2)["questions"] == 2, "bullet questions `- **Q1 ...?**` are found, the gate is not (got %d)" % m.question_checks(q2)["questions"])
 ok(m.question_checks(q)["questions"] == 3, "compact numbered questions with '?' are found, gate sections are not (got %d)" % m.question_checks(q)["questions"])
 PY
 )
 pass=$((pass+$(echo "$out" | grep -c '^PASS'))); fail=$((fail+$(echo "$out" | grep -c '^FAIL'))); echo "$out" | grep '^FAIL'
+echo "# scorer: a worktree line with a trailing comment"
+scen wc; FAKE_WORKTREE="none   <!-- see Log: a worktree named RETRO-5 already exists on disk, no -->" $RUN run $PJ $COMMON >/dev/null
+eq "$(sc | field r1-WL-02-intake "r['fails']")" "[]" "worktree: none <!-- comment --> is not a created worktree"
 echo "# scope: v0.1 = 8 retro rows, WL = phase 6b"
 scen x
 out=$($RUN list --jobs r9-NOPE-intake $COMMON 2>&1); eq "$?" 2 "unknown job id -> rc 2"; has "$out" "unknown job id" "message"

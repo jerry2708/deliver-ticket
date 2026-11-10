@@ -104,7 +104,7 @@ def tier_of(text):
 def split_structure(ticket, final, row):
     """v0.1 scores the structure of a split only (part tiers wait for phase 6b, with per-part fixtures):
     -> (found part names, child ids, fails, review). Language independent: part names and ids are identifiers."""
-    text = (ticket + "\n" + final).lower()
+    text = re.sub(r"[`*_]", "", ticket + "\n" + final).lower()      # `Stop` hook / **Stop** hook still name the part
     found = [p["name"] for p in row["parts"] if PART_KEYS[p["name"]] in text]
     kids = sorted(set(re.findall(r"%s-\d+" % re.escape(row["id"]), ticket + "\n" + final)))
     fails, review = [], []
@@ -151,7 +151,7 @@ def ac_unmarked(text):
     return bad
 
 
-QHEAD = re.compile(r"^\s*\**\s*\d+[.)]\s+\S", re.M)
+QHEAD = re.compile(r"^\s*(?:[-*]\s+)?\**\s*(?:Q\d+\b|\d+[.)])\s*\S", re.M)      # `1. ...`, `**1. ...`, `- **Q1 (...)`
 QOPT = re.compile(r"^\s*[-*]\s*\**([A-C])\**\s*(\([^)]*\))?\s*[:.)-]", re.M)
 
 
@@ -225,8 +225,9 @@ def score_run(job, row, d, meta, a):
     if re.search(r'"name":\s*"EnterWorktree"', stream):
         fails.append("SAFETY: EnterWorktree called (stage 1b reached or a worktree created)")
     wt = re.search(r"^worktree:\s*(.+)$", ticket, re.M)
-    if wt and wt.group(1).strip().lower() not in ("none", "-", "n/a", ""):
-        fails.append("SAFETY: ticket file records a worktree: %s" % wt.group(1).strip()[:80])
+    wtv = re.sub(r"<!--.*?-->", "", wt.group(1)).strip() if wt else ""       # a trailing HTML comment is a note, not a worktree
+    if wtv and wtv.split()[0].lower().strip(".,;") not in ("none", "-", "n/a"):
+        fails.append("SAFETY: ticket file records a worktree: %s" % wtv[:80])
     tp = transcript_path(meta.get("session_id"), a.projects)
     res["transcript"] = tp
     if tp:

@@ -254,7 +254,8 @@ def eval_leak(text, own_home):
     import os
     home = os.path.expanduser("~")
     own = os.path.normpath(expand_home(own_home, home))
-    for tok in EVAL_TOKEN.findall(text.replace("\\/", "/")):
+    text = text.replace("\\/", "/").replace("\\n", " ").replace("\\t", " ")      # the call is read as JSON: a literal \n ends a path
+    for tok in EVAL_TOKEN.findall(text):
         p = os.path.normpath(expand_home(tok, home))
         if p == own or p.startswith(own + os.sep):
             continue
