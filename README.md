@@ -12,6 +12,18 @@ CLAUDE_CODE_DISABLE_AUTO_MEMORY=1 claude --permission-mode auto     # eval runs
 
 The skill does not use plan mode (`EnterPlanMode` / `ExitPlanMode`): plan mode writes its plan under `~/.claude/plans/`, which the guard blocks (dry runs 2 and 3); its exit dialog switches the session to default mode; its "approved" came back although the user had seen no plan (dry run 3), so it is never the user's approval. Stage 2 writes the plan into the ticket file and stops at the gate.
 
+## Install on a new machine
+Requirements: Claude Code (tested on **2.1.311**; stage 0 warns below it), `git`, `python3`, `bash`; `glab` is optional (only for stop points that create a GitLab MR).
+
+1. Clone to **exactly** `~/.claude/skills/deliver-ticket` (the hooks and `SKILL.md` use that path): `git clone <this repo's URL> ~/.claude/skills/deliver-ticket` (the clone path matters, not where it comes from).
+2. Run `~/.claude/skills/deliver-ticket/scripts/install.sh`. It checks the tools and the clone path, prints the `~/.claude/settings.json` diff, asks y/n, and only on `y` runs `install-hooks.sh apply --confirmed` (a backup is made) and `install-hooks.sh status`. By hand it is the same three steps: `scripts/install-hooks.sh diff`, then `apply --confirmed`, then `status`.
+3. Per project, in its **main checkout**, start Claude Code (`claude --permission-mode auto`, see above) and run `/deliver-ticket init`. Init asks its questions and writes the project's state under the state root (`<state root>/<project-key>/`), not into this repo and not into the client repo; the per-project `WorktreeCreate` and `UserPromptSubmit` hooks go into `<repo>/.claude/settings.local.json` through `install-hooks.sh project-apply` (diff and your yes first).
+4. The user-level rules that `apply` adds are global: **`glab mr merge` and `gh pr merge` are denied in every project** (merge in the GitLab UI), and pushes / MR creation ask first. See "Global permission rules" below.
+
+Update: `git pull` in the clone, then `scripts/install-hooks.sh status`; it says if the registered hooks or rules differ from this version (then `diff`, your yes, `apply --confirmed`).
+
+**Unverified:** whether copying a project's state dir (`<state root>/<project-key>/`) to another machine works. The key is derived from the main checkout's absolute path and `guard.json` holds absolute paths, so it should only work when the checkout sits at the same path (inference, not tested); otherwise run `/deliver-ticket init` again.
+
 ## Emergency: a hook blocks every session
 
 The hooks are registered in `~/.claude/settings.json` (user level). If a hook bug blocks all work, run these **from a normal terminal** (not from inside Claude Code):
@@ -84,5 +96,6 @@ tests/run-transcript-reads.sh <new scratch dir> # eval rule check: tool calls to
 tests/run-pending-ticket.sh <new scratch dir>  # ticket input saved before init, taken after it
 tests/run-session-ctl.sh <new scratch dir>     # session-map.sh (pause/rebind) and ticket-state.sh (done/cancelled/reopen) + effect on the guard
 tests/run-base-worktree.sh <new scratch dir>   # shared detached _base worktree: acquire / move / lock / dirty / main checkout untouched
+tests/run-install.sh <new scratch dir>         # scripts/install.sh with a fake HOME: n / empty input write nothing, y applies + backup + status, wrong clone path refused
 tests/run-evals.sh <new scratch dir>           # phase-6 eval tooling (truth.json, runner, scorer) against a fake `claude`; starts no real session
 ```

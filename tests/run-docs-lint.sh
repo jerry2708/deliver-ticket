@@ -98,4 +98,12 @@ echo "# eval report"
 has docs/eval-report-v0.1.md 'Round 1 is the baseline'
 has docs/eval-report-v0.1.md 'Eval IDs collide with finished real tickets'
 has docs/eval-report-v0.1.md '\$18.17'
+echo "# install on a new machine"
+has README.md '## Install on a new machine'
+has README.md 'Clone to \*\*exactly\*\* `~/.claude/skills/deliver-ticket`'
+has README.md 'scripts/install.sh'
+has README.md 'denied in every project'
+has README.md 'Unverified:'
+has docs/plan.md 'Package as a Claude Code plugin'
+has docs/plan.md 'CLAUDE_PLUGIN_ROOT'
 echo "pass=$pass fail=$fail"; [ $fail = 0 ]
