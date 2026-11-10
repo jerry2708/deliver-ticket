@@ -94,4 +94,8 @@ has stages/1-intake.md 'Drafts must be confirmed'
 has stages/1-intake.md 'to confirm or correct them'
 has stages/1-intake.md 'ask for them (DoR item 4)'
 has docs/plan.md 'Round 1 is the baseline'
+echo "# eval report"
+has docs/eval-report-v0.1.md 'Round 1 is the baseline'
+has docs/eval-report-v0.1.md 'Eval IDs collide with finished real tickets'
+has docs/eval-report-v0.1.md '\$18.17'
 echo "pass=$pass fail=$fail"; [ $fail = 0 ]
