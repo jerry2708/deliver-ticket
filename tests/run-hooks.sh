@@ -264,6 +264,34 @@ bind nb10 "$R" "$(printf '<command-message>deliver-ticket</command-message>\n<co
 grep -qx 'ticket=RETRO-9' "$DT/sessions/nb10" && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL bind: expanded command form"; }
 out=$(bind nb9 "$R" '/deliver-ticket T2'; echo "rc=$?"); [ "$out" = "rc=0" ] && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL bind must print nothing and exit 0: $out"; }
 echo '{not json' | "$SK/hooks/bind-session.sh"; [ $? = 0 ] && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL bind: malformed payload must not block the prompt"; }
+echo "# C2: .env* names in another case (.ENV is .env on a case-insensitive filesystem): blocked in a ticket session and in an unbound one"
+mkdir -p "$R/sr2" "$R/apps/web"; printf 'K=1\n' > "$R/sr2/.ENV.LOCAL"
+for sid in s1 u1; do
+  for c in 'cat .ENV' 'cat .Env.Local' 'cat .ENV.example' 'cut -d= -f1 .Env.Local' 'grep . .ENV' 'grep -c K .ENV.LOCAL' 'source .ENV' '. .ENV' 'cat < .ENV' 'head -1 apps/web/.ENV.LOCAL' \
+    'cp .ENV x' 'cp x .ENV' 'cp .Env.Local /tmp/zz-c2' 'mv .ENV /tmp/zz-c2' 'git show HEAD:.ENV' 'git show HEAD:apps/web/.Env.Local' 'awk 1 .ENV.sample' 'bash -c "cat .ENV"' 'echo $(cat .ENV)' \
+    'python3 -c "print(open(\".ENV\").read())"' 'node -e "require(\"fs\").readFileSync(\".Env.Local\")"' 'cat .[eE]nv' 'grep -r K sr2' 'rg --hidden K sr2'; do tsid 2 guard.sh $sid "$R" "$c"; done
+  wsid 2 $sid "$R" Write "{\"file_path\":\"$R/.ENV\"}"; wsid 2 $sid "$R" Edit "{\"file_path\":\"$R/apps/web/.Env.Local\"}"
+  wsid 2 $sid "$R" NotebookEdit "{\"notebook_path\":\"$R/.ENV.LOCAL\"}"; wsid 2 $sid "$R" MultiEdit "{\"file_path\":\"$R/.Env.Production\"}"
+  echo "## $sid: names that are not env files stay allowed"
+  for c in 'cat env.txt' 'cat ENV.md' 'cat README.ENV.md' 'ls -la' 'grep -r foo docs'; do tsid 0 guard.sh $sid "$R" "$c"; done
+  wsid 0 $sid "$R" Write "{\"file_path\":\"$W/src/ENV.md\"}"
+done
+echo "## C2b: grep --exclude / rg -g / git pathspec excludes are case-sensitive (probed: '.foo*' still reads .FOO.LOCAL), so an exclude of .env* must not wave a .ENV* file through"
+mkdir -p "$R/sr3"; printf 'K=1\n' > "$R/sr3/.env.local"; git -C "$R" add sr2/.ENV.LOCAL sr3/.env.local
+for sid in s1 u1; do
+  for c in "grep -r --exclude='.env*' K sr2" "grep -r --exclude=.env\\* K sr2" "grep -rn --exclude '.env*' K ." "rg --hidden -g '!.env*' K sr2" "rg -u -u --glob '!.env*' K sr2" \
+    "git grep -n K -- sr2 ':!.env*'" "git grep -n --untracked K -- sr2 ':!.env*'" "git grep -n K -- ':!.env*'"; do tsid 2 guard.sh $sid "$R" "$c"; done
+  for c in "grep -r --exclude='.env*' K sr3" "rg --hidden -g '!.env*' K sr3" "git grep -n K -- sr3 ':!.env*'" "grep -r --exclude='.[eE][nN][vV]*' K sr2" "rg --hidden --iglob '!.env*' K sr2" \
+    "rg --hidden -g '!.[eE][nN][vV]*' K sr2"; do tsid 0 guard.sh $sid "$R" "$c"; done
+done
+python3 - "$SK/hooks" <<'PY' && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL C2 unit: is_env_name"; }
+import sys; sys.path.insert(0, sys.argv[1]); import dtcore
+f = dtcore.is_env_name
+for w in (".env", ".ENV", ".Env.Local", ".ENV.example", "a/b/.Env", "HEAD:.ENV", "x=.ENV", ".[eE]nv", ".?nv"):
+    assert f(w), w
+for w in ("env", "ENV.md", "env.txt", "README.ENV.md", "e.nv"):
+    assert not f(w), w
+PY
 echo "# A2: protected paths are checked in a repo / dir WITHOUT delivery state (prefilter on the state root's name, then core mode nostate)"
 DT=$DELIVER_TICKET_HOME; X=$S/nongit; mkdir -p "$X" "$S/fakehome/.local/share/deliver-ticket/k/closed" "$S/real-root/k/closed" "$S/custom/dtstate/k/closed"
 ln -s "$S/real-root" "$S/link-root"

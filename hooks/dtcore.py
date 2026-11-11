@@ -526,7 +526,7 @@ HOOK_SKIP_ENV = {"HUSKY", "HUSKY_SKIP_HOOKS", "LEFTHOOK", "SKIP"}
 
 def is_env_name(word):
     for piece in re.split(r"[=:]", word):
-        b = os.path.basename(piece.rstrip("/"))
+        b = os.path.basename(piece.rstrip("/")).lower()          # folded always: .ENV is .env on a case-insensitive filesystem
         if b.startswith(".env"):
             return True
         if b.startswith(".") and any(ch in b for ch in "*?[") and fnmatch.fnmatch(".env", b):
@@ -672,19 +672,33 @@ def _exclude_covers_env(glob):
     return fnmatch.fnmatch(".env", g) and fnmatch.fnmatch(".env.example", g) and fnmatch.fnmatch(".env.local", g)
 
 
-def _env_files_under(dirs):
-    """First .env* file found under the given dirs (files are checked too); (path|None, overflow)."""
+def _excluded(name, pats):
+    """True when one of the exclude patterns [(glob, case_insensitive)] matches the real file name. grep --exclude, rg -g and
+    git pathspec excludes are case-sensitive (probed 2026-11-11: `--exclude='.foo*'` still reads .FOO.LOCAL; git too with
+    core.ignorecase=true), so an exclude of `.env*` does not exclude `.ENV.LOCAL`; only rg --iglob folds case."""
+    for g, ci in pats:
+        g = g[1:] if g.startswith("!") else g
+        while g.startswith("**/"):
+            g = g[3:]
+        if (fnmatch.fnmatch(name.lower(), g.lower()) if ci else fnmatch.fnmatchcase(name, g)):
+            return True
+    return False
+
+
+def _env_files_under(dirs, excl=()):
+    """First .env* file (any case) found under the given dirs (files are checked too) that no exclude pattern really
+    excludes; (path|None, overflow)."""
     seen = 0
     for d in dirs:
         if os.path.isfile(d):
-            if os.path.basename(d).startswith(".env"):
+            if os.path.basename(d).lower().startswith(".env") and not _excluded(os.path.basename(d), excl):
                 return d, False
             continue
         for root, dnames, fnames in os.walk(d, followlinks=False):
             dnames[:] = [x for x in dnames if x != ".git"]
             for f in fnames:
                 seen += 1
-                if f.startswith(".env"):
+                if f.lower().startswith(".env") and not _excluded(f, excl):
                     return os.path.join(root, f), False
             seen += len(dnames)
             if seen > WALK_CAP:
@@ -783,8 +797,8 @@ def check_search(c, prog):
                         break
         if not rec:
             return
-        if any(_exclude_covers_env(x) for x in excl):
-            return
+        covers = any(_exclude_covers_env(x) for x in excl)
+        skip = [(x, False) for x in excl]
         words = pos if haspat else pos[1:]
         targets = _search_targets(cwd, words) if words else [cwd]
         what = "%s -r" % prog
@@ -804,10 +818,10 @@ def check_search(c, prog):
                 elif name == "unrestricted":
                     u += 1
                 elif name in ("glob", "iglob"):
-                    if eq:
-                        globs.append(val)
-                    elif i < len(a):
-                        globs.append(a[i]); i += 1
+                    if not eq and i < len(a):
+                        val = a[i]; i += 1
+                    if val:
+                        globs.append((val, name == "iglob"))
                 elif name in ("regexp", "file"):
                     haspat = True
                     i += 0 if eq else 1
@@ -823,7 +837,7 @@ def check_search(c, prog):
                         rest = t[2 + k:]
                         val = rest or (a[i] if i < len(a) else "")
                         if ch == "g":
-                            globs.append(val)
+                            globs.append((val, False))
                         if ch in "ef":
                             haspat = True
                         if not rest:
@@ -831,8 +845,9 @@ def check_search(c, prog):
                         break
         if not (hidden or u >= 2):
             return                      # ripgrep skips dotfiles by default
-        if any(g.startswith("!") and _exclude_covers_env(g) for g in globs):
-            return
+        neg = [(g, ci) for g, ci in globs if g.startswith("!")]
+        covers = any(_exclude_covers_env(g) for g, _ in neg)
+        skip = neg
         words = pos if haspat else pos[1:]
         targets = _search_targets(cwd, words) if words else [cwd]
         what = "rg with hidden files enabled"
@@ -844,8 +859,10 @@ def check_search(c, prog):
         specs = []
         if "--" in rest:
             specs = rest[rest.index("--") + 1:]
-        if any(sp.startswith((":!", ":^", ":(exclude")) and ".env" in sp for sp in specs):
-            return
+        skip = []
+        for sp in specs:
+            if re.match(r":(!|\^|\(exclude\))", sp):
+                skip.append(((sp[sp.index(")") + 1:] if sp.startswith(":(") else sp[2:]), False))
         plain = [sp for sp in specs if not sp.startswith(":")]
         untracked = any(t in ("--untracked", "--no-index") for t in rest)
         env, over_cap = None, False
@@ -854,20 +871,22 @@ def check_search(c, prog):
         except (OSError, subprocess.SubprocessError):
             ls = []
         for f in ls:
-            if os.path.basename(f).startswith(".env") and (
+            if os.path.basename(f).lower().startswith(".env") and not _excluded(os.path.basename(f), skip) and (
                     not plain or any(f == sp.rstrip("/") or f.startswith(sp.rstrip("/") + "/") or fnmatch.fnmatch(f, sp) for sp in plain)):
                 env = f
                 break
         if env is None and untracked:
-            env, over_cap = _env_files_under(_search_targets(base, plain) if plain else [base])
+            env, over_cap = _env_files_under(_search_targets(base, plain) if plain else [base], skip)
         if env or over_cap:
             block("git grep could read %s - %s" % (env or "more than %d files" % WALK_CAP, SEARCH_FIX))
         return
     else:
         return
     if targets is None:
+        if covers:
+            return                      # an exclude that covers .env* and a target the hook cannot resolve: allowed, as before
         block("%s with a target the hook cannot resolve ($VAR / substitution) could read .env* - %s" % (what, SEARCH_FIX))
-    env, over_cap = _env_files_under(targets)
+    env, over_cap = _env_files_under(targets, skip)
     if env or over_cap:
         block("%s could read %s - %s" % (what, env or "more than %d files" % WALK_CAP, SEARCH_FIX))
 
@@ -892,7 +911,7 @@ def check_cmd(c, g, payload, all_cmds=()):
             if SUBST not in w and is_env_name(w):
                 block("%r touches a .env* file - key names only, via scripts/env-keys.sh" % w)
         if prog in ("python", "python3", "node", "ruby", "perl") and any(
-                re.search(r"\.env(?![A-Za-z_])", w) for w in a[1:]):
+                re.search(r"\.env(?![A-Za-z_])", w, re.I) for w in a[1:]):
             block("interpreter code mentions .env* - key names only, via scripts/env-keys.sh")
 
     # --- recursive searches that could cover .env*
