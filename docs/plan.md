@@ -656,10 +656,39 @@ Open (unverified, user's phase-5 checklist): subagent session ids vs binding; a 
     | `denyWrite` globs `<root>/sessions`, `<root>/*/closed`, `*/guard.json`, `*/delivery.log` | the four paths denied, `evidence/` writable, also a key dir created later | globs work on macOS (docs: Linux/WSL2 only a trailing `/**`) |
     | `mv`/`rm` a denied file, `mv new guard.json`, write through a symlink | exit 1, files unchanged | blocked |
     | `ln guard.json hl.json` | exit 1 | hard link not created |
-    | `mv <root>/keyA <root>/keyA.moved` | **succeeded** | **inconclusive: run under `/tmp`.** The real root `~/.local/share/deliver-ticket` is outside the default write set, so renaming its key dir should fail unless the root is added to `allowWrite`; re-run in V7c |
+    | `mv <root>/keyA <root>/keyA.moved` | **succeeded** | **inconclusive under `/tmp`** (writable by default); **resolved by V7c below: denied for a root outside `/tmp`, unless the root is in `allowWrite`** |
     | `git branch -m a b` from a linked worktree | `fatal: branch is renamed, but update of config-file failed` (`could not lock config file …/.git/config`) | `.git/config` and `hooks/` are protected paths: stage 1b step 2c fails sandboxed |
     | `git commit`, `checkout -b`, `worktree add` from a linked worktree | ran | work |
-  - **Decision (2026-11-11): milestone 1d goes via the Bash sandbox, before 1c (the hook lock for Write/Edit). Branch A (frontmatter `allowed-tools`) is dropped: the grant lasts one turn and a ticket has many.** The sandbox serves both goals: fewer non-gate prompts (auto-allow) and an OS-level Bash lock. Write/Edit are not sandboxed and stay with the hooks (1c). Write set: allowlist style (only the needed subdirs of the state root in `allowWrite`, the root itself unwritable), plus the `denyWrite` globs, because a deny always wins. Excluded skill scripts split into two groups: bookkeeping (`session-map.sh`, `pending-ticket.sh`, `project-map-stale.sh`: `excludedCommands` + allow rule, no prompt) and gate actions (`guard-write.sh apply`, `ticket-state.sh done|cancelled|reopen`, `approve-plan` in 1c: `excludedCommands` without an allow rule, so the harness prompts every time and the prompt is the user's yes). Sandbox enabled per project (`<repo>/.claude/settings.local.json`); user level only `allowUnsandboxedCommands: false`, `denyWrite` and `denyRead`.
+  - **V7c – allowlist-style writes, root OUTSIDE `/tmp`** (`~/.cache/dt-probes/v7c/root`, cwd in the scratchpad; `allowWrite` `keyA/evidence` and `keyA/tickets`, plus the `denyWrite` globs):
+
+    | Command | Result | On disk | Verdict |
+    |---|---|---|---|
+    | `echo x > keyA/evidence/f1.txt`, `keyA/tickets/T9.md` | ok | exist | allowed |
+    | `echo x > keyA/guard.json`, `keyA/newfile`; `rm keyA/project.md`; `rm keyA/closed/T1`; `mv keyA/evidence keyA/ev2` | exit 1 | unchanged | denied |
+    | `mv keyA keyA.moved`, `mv root root.moved`, `echo x > root/zz` | exit 1 | nothing moved or created | denied: the ancestor-rename hole of V7 is closed outside `/tmp` |
+
+    **`allowWrite` takes literal paths only in this run**: `["<root>/*/evidence", "<root>/*/tickets"]` and the `/**` forms denied even `evidence/`, the literal paths worked (the docs say wildcards work in all four lists on macOS; `denyWrite` globs did work in V7). So each project lists its own key dir in its project settings.
+  - **V8 – real network, dev server, CLIs, gate prompts** (same setup; `gh` is not installed here):
+
+    | Case | Result | Verdict |
+    |---|---|---|
+    | `pnpm install`, only `registry.npmjs.org` allowed | resolved, added `left-pad@1.3.0` | works. The real pnpm store was not modified (`find ~/Library/pnpm/store -newer package.json`: 0 files); **where pnpm wrote its store: not located** |
+    | second `pnpm install --store-dir <scratch>` | `ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY` | pnpm's TTY check, not the sandbox |
+    | `node` listen on 127.0.0.1, no `allowLocalBinding` / with it | `listen-error:EPERM` / `got:ok` | `network.allowLocalBinding: true` needed (macOS) |
+    | `glab api version`, `gitlab.com` allowed | `tls: failed to verify certificate: x509: OSStatus -26276` | Go TLS fails in the sandbox |
+    | same + `enableWeakerNetworkIsolation: true` | `401 Unauthorized` (no credentials sent) | reaches the host; the key weakens isolation, not adopted |
+    | excluded script, no allow rule: default / `acceptEdits` | `This command requires approval` | prompts |
+    | same, `--permission-mode auto` (init: `permissionMode=auto`) | ran, output returned | **the auto-mode classifier approves an excluded command without a prompt** |
+    | excluded script + `permissions.ask` on its path, auto / default | `you haven't granted it yet` | prompts, also in auto |
+    | excluded + allow rule | ran | no prompt |
+
+    Only `guard-write.sh verify` (read-only) was run as the gate script; re-run with a real gate action once built.
+  - **Design decisions from V7c / V8 (2026-11-11):**
+    - **Gate actions are separate entry scripts** (`scripts/guard-apply.sh`, `scripts/ticket-close.sh` for done|cancelled|reopen, `approve-plan.sh` in 1c): `excludedCommands` plus `permissions.ask` on the full absolute script path (an ask rule on `guard-write.sh apply *` would not match `guard-write.sh --repo R apply …`, inference from prefix matching, untested). `diff`/`verify` and the bookkeeping scripts (`session-map.sh`, `pending-ticket.sh`, `project-map-stale.sh`) keep excluded + allow rule. A `bash <gate script>` call is not excluded, runs sandboxed and fails with EPERM (fail-closed; a test).
+    - **Write set:** literal `allowWrite` per project key, minimal per audit: `<root>/<key>/evidence` (stages 3 and 4 save check output there with Bash redirects); the ticket file, `lessons.md`, `config.md`, `mr.md` are file-tool edits and `project.md` goes through a script, so `tickets/` is not added unless the audit finds a Bash writer. `evidence/` must exist before the first sandboxed write (init creates it). `denyWrite` globs stay (deny always wins).
+    - **`glab` / `gh` via `excludedCommands`, not `enableWeakerNetworkIsolation`.** Allow rules only for narrow read commands (`glab mr view *`, `glab mr list *`); never `glab api *` (it can POST); `mr create` and anything that writes stays on the ask list.
+    - `network.allowLocalBinding: true` for dev servers (macOS); `allowedDomains` per project from init (registry host first).
+  - **Decision (2026-11-11): milestone 1d goes via the Bash sandbox, before 1c (the hook lock for Write/Edit). Branch A (frontmatter `allowed-tools`) is dropped: the grant lasts one turn and a ticket has many.** The sandbox serves both goals: fewer non-gate prompts (auto-allow) and an OS-level Bash lock. Write/Edit are not sandboxed and stay with the hooks (1c). Write set: allowlist style (only the needed subdirs of the state root in `allowWrite`, the root itself unwritable), plus the `denyWrite` globs, because a deny always wins. Excluded skill scripts split into two groups: bookkeeping (`session-map.sh`, `pending-ticket.sh`, `project-map-stale.sh`: `excludedCommands` + allow rule, no prompt) and gate actions as separate entry scripts (`guard-apply.sh`, `ticket-close.sh`, `approve-plan.sh` in 1c: `excludedCommands` + `permissions.ask` on the full path, because auto mode runs an excluded command without an allow rule unprompted – V8 d4/d5). Sandbox enabled per project (`<repo>/.claude/settings.local.json`); user level only `allowUnsandboxedCommands: false`, `denyWrite` and `denyRead`.
   - Scratch transcripts (not copied): `<scratchpad>/probes/out/v1-*`, `v5*`, `v6-*`, `v7-*` (`.jsonl`, `.summary`, `.err`) and the projects `probes/v1ctl`, `v1skill`, `v5a`, `v5b`, `v6`, `v7`, where `<scratchpad>` is the 2026-11-11 session scratchpad.
 - *Stage write lock:*
   - **Keyed on the path and the marker, in every session:** any tool write under `<repo>/.claude/worktrees/<ID>/` is blocked while ticket `<ID>` is open and has no valid marker. Not keyed on the session's binding (A1) and never on the ticket file's `stage:` field (Claude writes it). State dir and ticket file stay writable. A non-ticket session of mine is held to the same rule for that worktree.
