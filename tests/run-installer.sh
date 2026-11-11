@@ -45,6 +45,43 @@ import json, sys
 a, b = (json.load(open(x)) for x in sys.argv[1:3])
 assert a == b, (a, b)
 PY
+# --- user-level sandbox keys: allowUnsandboxedCommands false + denyWrite for the protected state; uninstall restores the old values exactly
+export DELIVER_TICKET_HOME="$D/sbhome"
+python3 -I - "$D/sb1.json" <<'PY'
+import json, sys
+json.dump({"theme": "dark", "sandbox": {"enabled": False, "allowUnsandboxedCommands": True, "filesystem": {"denyWrite": ["/x/y"], "allowWrite": ["/a"]}}}, open(sys.argv[1], "w"), indent=2)
+PY
+cp "$D/sb1.json" "$D/sb1-orig.json"
+DT_SETTINGS="$D/sb1.json" "$SK/scripts/install-hooks.sh" apply --confirmed >/dev/null 2>&1 && echo "ok apply with existing sandbox keys" || { fail=1; echo "FAIL apply with existing sandbox keys"; }
+python3 -I - "$D/sb1.json" "$DELIVER_TICKET_HOME" <<'PY' && echo "ok sandbox keys after apply" || { fail=1; echo "FAIL sandbox keys after apply"; }
+import json, os, sys
+d = json.load(open(sys.argv[1])); r = os.path.realpath(sys.argv[2]); sb = d["sandbox"]
+assert sb["allowUnsandboxedCommands"] is False and sb["enabled"] is False and sb["filesystem"]["allowWrite"] == ["/a"]
+assert sb["filesystem"]["denyWrite"] == ["/x/y", r + "/sessions", r + "/*/closed", r + "/*/guard.json", r + "/*/delivery.log"], sb["filesystem"]["denyWrite"]
+PY
+DT_SETTINGS="$D/sb1.json" "$SK/scripts/install-hooks.sh" status >/dev/null 2>&1 && echo "ok status with sandbox keys" || { fail=1; echo "FAIL status with sandbox keys"; }
+DT_SETTINGS="$D/sb1.json" "$SK/scripts/install-hooks.sh" apply --confirmed 2>&1 | grep -q "already installed" && echo "ok apply is idempotent" || { fail=1; echo "FAIL apply is not idempotent"; }
+python3 -I - "$D/sb1.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1])); d["sandbox"]["allowUnsandboxedCommands"] = True
+json.dump(d, open(sys.argv[1], "w"), indent=2)
+PY
+DT_SETTINGS="$D/sb1.json" "$SK/scripts/install-hooks.sh" status 2>&1 | grep -q "allowUnsandboxedCommands must be false" && echo "ok status flags allowUnsandboxedCommands true" || { fail=1; echo "FAIL status misses allowUnsandboxedCommands true"; }
+DT_SETTINGS="$D/sb1.json" "$SK/scripts/install-hooks.sh" apply --confirmed >/dev/null 2>&1
+DT_SETTINGS="$D/sb1.json" "$SK/scripts/install-hooks.sh" uninstall --confirmed >/dev/null 2>&1 && echo "ok uninstall with sandbox keys" || { fail=1; echo "FAIL uninstall with sandbox keys"; }
+python3 -I - "$D/sb1.json" <<'PY' && echo "ok old sandbox values restored" || { fail=1; echo "FAIL old sandbox values not restored"; }
+import json, sys
+sb = json.load(open(sys.argv[1]))["sandbox"]
+assert sb["allowUnsandboxedCommands"] is True, sb
+assert sb["filesystem"] == {"denyWrite": ["/x/y"], "allowWrite": ["/a"]}, sb
+PY
+# without any sandbox key: created by apply, gone after uninstall (byte-identical)
+printf '{\n  "theme": "dark"\n}\n' > "$D/sb2.json"; cp "$D/sb2.json" "$D/sb2-orig.json"
+DT_SETTINGS="$D/sb2.json" "$SK/scripts/install-hooks.sh" apply --confirmed >/dev/null 2>&1
+python3 -I -c "import json,sys; d=json.load(open(sys.argv[1])); assert d['sandbox']['allowUnsandboxedCommands'] is False and len(d['sandbox']['filesystem']['denyWrite'])==4" "$D/sb2.json" && echo "ok sandbox block created" || { fail=1; echo "FAIL sandbox block not created"; }
+DT_SETTINGS="$D/sb2.json" "$SK/scripts/install-hooks.sh" uninstall --confirmed >/dev/null 2>&1
+cmp -s "$D/sb2-orig.json" "$D/sb2.json" && echo "ok byte-identical after uninstall (no sandbox keys before)" || { fail=1; echo "FAIL not restored (no sandbox keys before)"; }
+unset DELIVER_TICKET_HOME
 # the user's own global gitignore must not decide these cases: isolate git's global/system config and XDG ignore
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null XDG_CONFIG_HOME="$D/xdg"
 # --- project level: apply / status / uninstall round trip on a scratch repo, backup lands in the state dir

@@ -49,6 +49,17 @@ PROJECT_SPECS = [("WorktreeCreate", None, "worktree-create.sh", 900, False),
 RETIRED_USER = {"worktree-create.sh"}   # earlier versions registered these at user level; apply removes them
 
 
+def state_root():
+    return os.path.realpath(os.environ.get("DELIVER_TICKET_HOME") or os.path.expanduser("~/.local/share/deliver-ticket"))
+
+
+def sandbox_deny():
+    """User-level sandbox denyWrite entries: the protected state (hooks/dtcore.py protected_state), for every project key.
+    Globs work for denyWrite on macOS (probe V7; on Linux only a trailing /** does). A deny always wins over an allowWrite."""
+    r = state_root()
+    return [r + "/sessions", r + "/*/closed", r + "/*/guard.json", r + "/*/delivery.log"]
+
+
 def entry(script, timeout, block):
     e = {"type": "command", "command": os.path.join(HOOKS, script), "timeout": timeout}
     if block:
@@ -104,6 +115,14 @@ def desired(cur):
         for r in rules:
             if r not in lst:
                 lst.append(r)
+    # sandbox keys that matter whichever project turns the sandbox on: no unsandboxed retry (a user-level false holds over a
+    # project true, docs), and the protected state is not writable by sandboxed Bash
+    sb = new.setdefault("sandbox", {})
+    sb["allowUnsandboxedCommands"] = False
+    dw = sb.setdefault("filesystem", {}).setdefault("denyWrite", [])
+    for e in sandbox_deny():
+        if e not in dw:
+            dw.append(e)
     return new
 
 
@@ -133,6 +152,18 @@ def build_manifest(cur, old_manifest):
         for r in rules:
             if r not in (have or []) and r not in m["perm_added"][key]:
                 m["perm_added"][key].append(r)
+    if "sandbox" not in m:
+        sb = cur.get("sandbox")
+        fs = (sb or {}).get("filesystem")
+        have = (fs or {}).get("denyWrite")
+        m["sandbox"] = {"created": sb is None, "fs_created": fs is None, "dw_created": have is None,
+                        "aud_prev": (sb or {}).get("allowUnsandboxedCommands", "__absent__"),
+                        "deny_added": [e for e in sandbox_deny() if e not in (have or [])]}
+    else:
+        have = ((cur.get("sandbox") or {}).get("filesystem") or {}).get("denyWrite") or []
+        for e in sandbox_deny():
+            if e not in have and e not in m["sandbox"]["deny_added"]:
+                m["sandbox"]["deny_added"].append(e)
     for ev, *_ in HOOK_SPECS:
         if ev not in cur.get("hooks", {}) and ev not in m["events_created"]:
             m["events_created"].append(ev)
@@ -161,6 +192,26 @@ def removed(cur, m):
                 del perms[key]
     if "permissions" in new and not new["permissions"] and (m is None or m["permissions_created"]):
         del new["permissions"]
+    sb = new.get("sandbox")
+    if isinstance(sb, dict):
+        ms = (m or {}).get("sandbox")
+        drop = ms["deny_added"] if ms else sandbox_deny()
+        fs = sb.get("filesystem")
+        if isinstance(fs, dict) and "denyWrite" in fs:
+            fs["denyWrite"] = [e for e in fs["denyWrite"] if e not in drop]
+            if not fs["denyWrite"] and (ms is None or ms["dw_created"]):
+                del fs["denyWrite"]
+            if not fs and (ms is None or ms["fs_created"]):
+                del sb["filesystem"]
+        if ms:
+            if ms["aud_prev"] == "__absent__":
+                sb.pop("allowUnsandboxedCommands", None)
+            else:
+                sb["allowUnsandboxedCommands"] = ms["aud_prev"]
+        elif sb.get("allowUnsandboxedCommands") is False:
+            del sb["allowUnsandboxedCommands"]
+        if not sb and (ms is None or ms["created"]):
+            del new["sandbox"]
     return new
 
 
@@ -189,13 +240,21 @@ def problems(cur):
         for r in rules:
             if r not in perms.get(key, []):
                 out.append("missing permission %s: %s" % (key, r))
+    sb = cur.get("sandbox") if isinstance(cur.get("sandbox"), dict) else {}
+    if sb.get("allowUnsandboxedCommands") is not False:
+        out.append("sandbox.allowUnsandboxedCommands must be false (is %r)" % (sb.get("allowUnsandboxedCommands", "unset"),))
+    have = ((sb.get("filesystem") or {}).get("denyWrite")) or []
+    for e in sandbox_deny():
+        if e not in have:
+            out.append("missing sandbox.filesystem.denyWrite: %s" % e)
     return out
 
 
 def cmd_status():
     p = problems(load())
     if not p:
-        print("ok: all %d hooks and %d permission rules registered in %s" % (len(HOOK_SPECS), len(ASK) + len(DENY), SETTINGS))
+        print("ok: all %d hooks and %d permission rules registered, sandbox.allowUnsandboxedCommands false and %d denyWrite entries, in %s"
+              % (len(HOOK_SPECS), len(ASK) + len(DENY), len(sandbox_deny()), SETTINGS))
         return 0
     print("not installed in %s:" % SETTINGS)
     for x in p:
@@ -273,7 +332,7 @@ def cmd_uninstall(args):
     os.replace(tmp, SETTINGS)
     if os.path.exists(MANIFEST):
         os.replace(MANIFEST, MANIFEST + ".removed")
-    left = [x for x in problems(load()) if not x.startswith("missing")]
+    left = [x for x in problems(load()) if not x.startswith(("missing", "sandbox."))]
     print("removed; backup: %s%s" % (bak, "" if not left else "  WARNING leftovers: %s" % left))
     return 0
 
