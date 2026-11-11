@@ -62,7 +62,8 @@ def write_map(home, sid, lines):
 def log(state, sid, ticket, action, detail):
     os.makedirs(state, exist_ok=True)
     with open(os.path.join(state, "delivery.log"), "a") as f:
-        f.write("%s | session=%s | ticket=%s | %s | %s\n" % (time.strftime("%Y-%m-%dT%H:%M:%S"), sid, ticket, action, detail.replace("\n", " ")))
+        # "|" is the field separator (guard-write.sh verify parses these lines): it cannot appear inside a field
+        f.write("%s | session=%s | ticket=%s | %s | %s\n" % tuple([time.strftime("%Y-%m-%dT%H:%M:%S")] + [str(x).replace("\n", " ").replace("|", "/") for x in (sid, ticket, action, detail)]))
 
 
 def ticket_text(state, tid):

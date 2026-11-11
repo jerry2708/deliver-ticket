@@ -17,7 +17,7 @@
 
 1. Inside a git repo, in the **main checkout**. Inside a ticket worktree (`.claude/worktrees/`) -> stop and say so.
 2. Compute the project key (`SKILL.md` section 3). Print it and the state dir.
-3. State dir already has `config.md` -> **re-run mode**: show current values, change only the groups I name, then regenerate `guard.json` (step 2) and re-run steps 3-4 (step 3 only detects).
+3. State dir already has `config.md` -> **re-run mode**: show current values, change only the groups I name, then regenerate `guard.json` (step 2, through `scripts/guard-write.sh`: candidate, diff, my yes, apply) and re-run steps 3-4 (step 3 only detects).
 4. If CLAUDE.md or `.claude/rules/` names risk paths, protected files or forbidden actions, collect them now (they feed the Risk group).
 5. **Profile (hints only).** Look for a manifest in the repo root and its apps (`package.json`, ...). A match in `profiles/` (today: `profiles/node.md`) -> read it and use its "where to look" and "watch globs" as hints for the groups below; show each value it proposes as a finding like any other and wait for my confirmation. No match -> no profile, ask every group as written. A profile never sets a value by itself.
 
@@ -81,7 +81,7 @@ Only after step 1 is confirmed. Create the state dir and, in this order:
 | `max_parallel` `{tier_bc, total}` | Workspace | stage 0 |
 | `risk` `{categories, labels, personal_data_fields, thresholds, exclude}` | Risk group | `classify.py` |
 
-   Write it as JSON with no comments, then validate: `python3 <skill>/scripts/validate-guard.py <state>/guard.json`. Exit code must be 0. **Never leave an invalid `guard.json`** - hooks treat an unreadable state as "block everything in this repo". Fix and re-validate, or delete only your own half-written file after asking me.
+   **`guard.json` is protected state: the hooks block every write to it** (Write / Edit and shell routes, also when it is broken), because it holds the remotes, stop points and `verify.on_push`, which the hooks run. Write the content as JSON with no comments to the **candidate** `<state>/guard.candidate.json` (the state dir stays writable even when `guard.json` is unreadable), then `<skill>/scripts/guard-write.sh diff <state>/guard.candidate.json --repo <main checkout>`: it validates the candidate (same checks as `validate-guard.py`, `repo_root` and `project_key` must be this project's) and prints the diff against the current file. Show me the **whole diff**, ask for my yes, then `<skill>/scripts/guard-write.sh apply <state>/guard.candidate.json --repo <main checkout> --session <id> --confirmed`. It keeps a backup (`guard.json.prev-<ts>`), writes atomically, logs the sha256 in `delivery.log` and renames the candidate to `guard.candidate.applied-<ts>.json` so a stale one cannot be applied again. Never pass `--confirmed` without my yes to the diff just shown, and never write `guard.json` any other way. **Never leave an invalid `guard.json`** - hooks treat an unreadable state as "block everything in this repo"; a broken one is replaced the same way (candidate, diff, my yes, apply). Nothing is deleted: backups and applied candidates stay.
 4. Show me a summary: every `<ASK>` still open, every conflict with CLAUDE.md, every tool-config gap.
 
 ## Step 3 - hooks and permissions (once per machine)

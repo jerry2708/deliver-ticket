@@ -43,7 +43,7 @@ for c in 'git push -f mirror main' 'git push --force mirror main' 'git push orig
   'git push' 'git push https://x.invalid/r.git main' 'git push mirror :old' 'git push --delete mirror old' 'git push --mirror mirror' \
   'git push mirror main --no-verify' 'git commit -n -m x' 'git commit -nm x' 'git commit --no-verify -m x' 'git -c core.hooksPath=/dev/null commit -m x' \
   'HUSKY=0 git commit -m x' 'bash -c "git push -f mirror main"' 'echo $(git push -f mirror main)' 'eval git push -f mirror' \
-  'glab mr merge 5' 'gh pr merge 5' 'glab mr update 5 -d -' 'glab mr update 5 --description=-' 'git config alias.p "push -f"'; do t 2 guard.sh "$W" "$c"; done
+  '/usr/bin/env git push -f mirror main' '/usr/bin/nice git push --force mirror main' '/usr/bin/env HUSKY=0 git commit -m x' 'glab mr merge 5' 'gh pr merge 5' 'glab mr update 5 -d -' 'glab mr update 5 --description=-' 'git config alias.p "push -f"'; do t 2 guard.sh "$W" "$c"; done
 echo "# push allowed through guard (rc 0)"
 for c in 'git push mirror feat-T1' 'git push -u mirror feat-T1' 'git push -n mirror feat-T1' 'git status' 'git commit -m "fix: n"' 'git commit -am msg' 'ls -la' 'npm test'; do t 0 guard.sh "$W" "$c"; done
 echo "# git merge: only on a ticket branch"
@@ -417,11 +417,62 @@ assert not dtcore.under("/a/B/c", "/a/b") and dtcore.under("/a/b/c", "/a/b")
 dtcore._CI.clear(); dtcore.fs_ci = lambda root: True
 assert dtcore.under("/a/B/c", "/a/b") and dtcore.under("/A/b", "/a/B") and not dtcore.under("/a/bc", "/a/b")
 PY
+echo "# B1: guard.json is protected state (written only by scripts/guard-write.sh); deleting / moving / linking the state is blocked too"
+G=$DT/$key/guard.json; GU=$DT/$key/GUARD.JSON; GM=$DT/$key/Guard.Json; GO=$DT/other-12345678/guard.json
+# gx <expect-rc> <tool> <path-or-command>: the same call in six contexts - a ticket session and a session without a ticket in the initialised repo,
+# and, in a git repo without state and in a non-git dir, a session without a ticket and one with an open ticket in its map
+gx() { local exp=$1 tool=$2 arg=$3 kf=file_path cwd
+  if [ "$tool" = Bash ]; then
+    tsid $exp guard.sh s1 "$R" "$arg"; tsid $exp guard.sh u1 "$R" "$arg"
+    for NSSID in nsu tk; do for cwd in "$nostate" "$X"; do nsr $exp guard.sh "$cwd" Bash "$arg"; done; done
+  else
+    [ "$tool" = NotebookEdit ] && kf=notebook_path
+    wsid $exp s1 "$R" $tool "{\"$kf\":\"$arg\"}"; wsid $exp u1 "$R" $tool "{\"$kf\":\"$arg\"}"
+    for NSSID in nsu tk; do for cwd in "$nostate" "$X"; do nsr $exp worktree-guard.sh "$cwd" $tool "$arg"; done; done
+  fi; NSSID=nsu; }
+echo "## edit tools onto guard.json (also another project's, and upper / mixed case where the filesystem folds it)"
+for tool in Write Edit NotebookEdit MultiEdit; do gx 2 $tool "$G"; gx 2 $tool "$GO"; gx $SCI $tool "$GU"; gx $SCI $tool "$GM"; done
+echo "## shell routes onto guard.json"
+for c in "echo x > $G" "echo x >> $G" ": > $G" "tee $G" "touch $G" "cp /dev/null $G" "mv /tmp/zz-b1 $G" "mv $G /tmp/zz-b1" "rm $G" "rm -f $G" "unlink $G" \
+  "truncate -s0 $G" "shred -u $G" "sed -i '' s/a/b/ $G" "dd if=/dev/null of=$G" "ln -sf /tmp/zz-b1 $G" "install /dev/null $G" "curl -o $G http://x.invalid" \
+  "chmod 000 $G" "link /tmp/zz-b1 $G" "echo x > $GO" "rm $GO"; do gx 2 Bash "$c"; done
+for c in "echo x > $GU" "rm -f $GU" "mv /tmp/zz-b1 $GM" "truncate -s0 $GM"; do gx $SCI Bash "$c"; done
+echo "## hard links to protected state (a write through the link edits the same file); symlinks are not hard links"
+for c in "ln $G /tmp/zz-hl" "ln -f $G /tmp/zz-hl" "link $G /tmp/zz-hl" "cp -l $G /tmp/zz-hl" "cp --link $G /tmp/zz-hl" "cp -al $G /tmp/zz-hl" "cp -lr $DT/$key/closed/T1 /tmp/zz-hl" \
+  "ln $DT/sessions/s1 /tmp/zz-hl" "ln $DT/$key/delivery.log /tmp/zz-hl" "ln -t /tmp $G"; do gx 2 Bash "$c"; done
+echo "## removing or moving the state root, a parent of it, a project state dir or sessions/ - with a specific reason"
+for c in "rm -r $DT/$key" "rm -rf $DT/$key/" "mv $DT/$key /tmp/zz-key" "rmdir $DT/$key" "rm -rf $DT" "rm -rf $DT/sessions" "mv $DT/sessions /tmp/zz-s" "unlink $DT/sessions" "shred $DT/$key" \
+  "rm -rf $S" "mv $S /tmp/zz-S" "cd $DT && rm -rf $key" "cd $DT/$key && rm -rf ." "cd $DT/$key && rm -rf ../$key" "cd $DT && rm -rf ." "cd $S && rm -rf state"; do gx 2 Bash "$c"; done
+echo "## globs: block only when the glob can match the next component toward protected state"
+for c in "rm -rf $DT/*" "rm -rf $DT/$key/*" "rm -f $DT/$key/guard.*" "rm -f $DT/$key/guard.js*" "rm -rf $DT/sessions/*" "rm $DT/*/closed/*" "rm -rf $DT/$key/clo*" "touch $DT/$key/guard.js*" "rm -rf $DT/se*" "rm -rf $DT/re*" "rm -rf $S/*" "rm -rf $S/sta*"; do gx 2 Bash "$c"; done
+for c in "rm -rf $S/foo*" "rm -rf $DT/$key/evidence/*" "rm -rf $DT/zz*" "rm -rf $S/foo/*"; do gx 0 Bash "$c"; done
+echo "## ~/.local/share/deliver-ticket under a fake HOME: every parent, and globs toward it"
+H=$S/fakehome
+for c in 'rm -rf ~/.local/share' 'rm -rf ~/.local' 'mv ~/.local /tmp/zz-x' 'rm -rf ~' 'rm -rf $HOME' 'rm -rf ~/.local/share/*' 'rm -rf ~/.local/share/deliver-*' 'rm -rf ~/.local/*' 'rm -rf ~/.local/share/deliver-ticket' 'rm -rf ~/*' \
+  'rm -rf ~/.local/share/deliver-ticket/k' 'rm -rf ~/.local/share/deliver-ticket/*'; do nsr 2 guard.sh "$nostate" Bash "$c" -u DELIVER_TICKET_HOME HOME=$H; nsr 2 guard.sh "$H" Bash "$c" -u DELIVER_TICKET_HOME HOME=$H; done
+nsr 2 guard.sh "$H" Bash 'cd .local/share && rm -rf deliver-ticket' -u DELIVER_TICKET_HOME HOME=$H
+nsr 2 guard.sh "$H/.local" Bash 'rm -rf share' -u DELIVER_TICKET_HOME HOME=$H
+for c in 'rm -rf ~/.local/share/foo*' 'rm -rf ~/.local/share/foo' 'rm -rf ~/.local/zz*' 'rm -rf ~/.cache' 'rm -rf ~/.local/share/deliver-ticket/k/evidence' 'cat ~/.local/share/deliver-ticket/k/guard.json'; do nsr 0 guard.sh "$nostate" Bash "$c" -u DELIVER_TICKET_HOME HOME=$H; done
+echo "## a root whose name the payload does not spell: the delete / move verb alone triggers the check (resolvable targets only)"
+mkdir -p "$S/zqroot/k"
+for c in "rm -rf $S" "mv $S /tmp/zz-S" "rm -rf $S/*" "rm -rf $S/zq*" "unlink $S" "rmdir $S" "rm -rf $S/zqroot/k" "cd $S && rm -rf ."; do nsr 2 guard.sh "$nostate" Bash "$c" $MISS; nsr 2 guard.sh "$X" Bash "$c" $MISS; done
+for c in "/bin/rm -rf $S" "/usr/bin/rm -rf $S" "\\rm -rf $S" "command rm -rf $S" "/bin/mv $S /tmp/zz-S" "/usr/bin/env rm -rf $S" "$(printf 'rm\t-rf %s' "$S")" "$(printf 'cd /tmp\n/bin/rm -rf %s' "$S")" "echo x;/bin/rm -rf $S"; do nsr 2 guard.sh "$nostate" Bash "$c" $MISS; done
+for c in "rm -rf /tmp/zz-b1-dir" "rm -rf \$UNSET_B1/x" "cd \$UNSET_B1 && rm -rf x" "rm -rf $S/other" "mv /tmp/zz-b1 /tmp/zz-b2" "echo 'unterminated rm -rf x"; do nsr 0 guard.sh "$nostate" Bash "$c" $MISS; nsr 0 guard.sh "$X" Bash "$c" $MISS; done
+msg=$(payload "$R" Bash "rm -rf $DT/$key" u1 | "$SK/hooks/guard.sh" 2>&1); echo "$msg" | grep -q 'disable every guard' && echo "$msg" | grep -q 'project state dir' && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL specific reason for deleting the state: $msg"; }
+msg=$(payload "$R" Bash "ln $G /tmp/zz-hl" u1 | "$SK/hooks/guard.sh" 2>&1); echo "$msg" | grep -q 'hard link' && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL specific reason for a hard link: $msg"; }
+echo "## still allowed (rc 0) in all six contexts: reads, the candidate, other state files, symlinks, deleting something that is not an ancestor"
+for c in "cat $G" "jq . $G" "grep key $G" "touch $DT/$key/guard.candidate.json" "echo x > $DT/$key/guard.candidate.json" "rm $DT/$key/evidence/x" "rm -rf /tmp/zz-b1-dir" "ln -s $G /tmp/zz-sl" "rm -rf $S/other" \
+  "cd $DT/$key && cat guard.json" "ls $DT" "mv /tmp/zz-b1 /tmp/zz-b2"; do gx 0 Bash "$c"; done
+for tool in Write Edit; do gx 0 $tool "$DT/$key/guard.candidate.json"; done
+echo "## skill scripts stay allowed, also with a corrupt guard.json (the repair path)"
+for c in "$SK/scripts/guard-write.sh diff $DT/$key/guard.candidate.json --repo $R" "bash $SK/scripts/guard-write.sh verify --repo $R"; do gx 0 Bash "$c"; done
 echo "# corrupt guard.json with state => block (except skill scripts)"
 echo '{broken' > "$DELIVER_TICKET_HOME/$key/guard.json"
 t 2 guard.sh "$W" 'ls'
 tsid 2 guard.sh u1 "$R" 'ls'                                  # an unbound session is fail-closed too
 t 0 guard.sh "$W" "python3 $SK/scripts/validate-guard.py $DELIVER_TICKET_HOME/$key/guard.json"
 w 2 Write "{\"file_path\":\"$W/a\"}"
-w 0 Write "{\"file_path\":\"$DELIVER_TICKET_HOME/$key/guard.json\"}"
+w 2 Write "{\"file_path\":\"$DELIVER_TICKET_HOME/$key/guard.json\"}"              # B1: protected even when it is broken; the repair is scripts/guard-write.sh
+w 0 Write "{\"file_path\":\"$DELIVER_TICKET_HOME/$key/guard.candidate.json\"}"
+t 0 guard.sh "$W" "$SK/scripts/guard-write.sh verify --repo $R"
 echo "pass=$pass fail=$fail"; [ $fail = 0 ]

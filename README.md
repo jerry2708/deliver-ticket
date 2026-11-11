@@ -50,7 +50,9 @@ cp ~/.claude/settings.json.bak-deliver-ticket-<timestamp> ~/.claude/settings.jso
 #    /.claude/skills/deliver-ticket/hooks/ from ~/.claude/settings.json (and from <repo>/.claude/settings.local.json) by hand
 ```
 
-The hooks do nothing in a repo without delivery state (`<state root>/<project-key>/guard.json`), except that a Write / Edit or shell write whose text names the state root's directory name is still checked against the protected state (`sessions/`, `closed/`, `delivery.log`); known limits: globs, paths built without the root's name, symlinks made earlier, interpreters. To switch them off for one project only, move that project's `guard.json` away (a state dir without `guard.json` counts as "not initialised").
+The hooks do nothing in a repo without delivery state (`<state root>/<project-key>/guard.json`), except that a Write / Edit or shell write whose text names the state root's directory name is still checked against the protected state (`sessions/`, `closed/`, `delivery.log`); known limits: globs, paths built without the root's name, symlinks made earlier, interpreters. A delete / move verb (`rm`, `rmdir`, `unlink`, `shred`, `mv`) also starts that check, so deleting a parent of the state root is caught there too.
+
+**Protected state (every session, every repo and cwd):** `<state root>/sessions/`, `<project>/closed/`, `<project>/delivery.log` and `<project>/guard.json`. `guard.json` is written only by `scripts/guard-write.sh` (candidate `<project>/guard.candidate.json`, `diff`, my yes, `apply --confirmed`); the hooks also block removing or moving the state root, any parent of it, a project state dir or `sessions/` (with a reason that says so), and hard-linking protected files (`ln`, `link`, `cp -l`). Stage 0 runs `guard-write.sh verify`. Known limits of this protection: a skill script is exempt from the hooks, so `--confirmed` is a convention plus a log line, not a lock; interpreters (`python3 -c`), `tar -x -C <state dir>` and other directory-level copies, `find -delete`, `rsync --link-dest` and `xargs rm` are not stopped; **A2b:** in a directory without delivery state the `~/.claude` rule does not run, so the hooks, the skill's scripts and `settings.json` are writable as far as these hooks go (the harness permission prompt is the only backstop there; blocking it would also block building the skill from its own repo). To switch them off for one project only, move that project's `guard.json` away (a state dir without `guard.json` counts as "not initialised").
 
 ## Change settings
 
@@ -95,6 +97,7 @@ tests/run-docs-lint.sh                         # static checks that the skill's 
 tests/run-transcript-reads.sh <new scratch dir> # eval rule check: tool calls touching docs (with/without slash) + searches for the ticket outside code paths (real dry-run commands as cases)
 tests/run-pending-ticket.sh <new scratch dir>  # ticket input saved before init, taken after it
 tests/run-session-ctl.sh <new scratch dir>     # session-map.sh (pause/rebind) and ticket-state.sh (done/cancelled/reopen) + effect on the guard
+tests/run-guard-write.sh <new scratch dir>     # guard-write.sh (diff/apply/verify): --confirmed, backup, log line, candidate renamed, v0.1 file adoption, hooks let only the script write guard.json
 tests/run-base-worktree.sh <new scratch dir>   # shared detached _base worktree: acquire / move / lock / dirty / main checkout untouched
 tests/run-install.sh <new scratch dir>         # scripts/install.sh with a fake HOME: n / empty input write nothing, y applies + backup + status, wrong clone path refused
 tests/run-evals.sh <new scratch dir>           # phase-6 eval tooling (truth.json, runner, scorer) against a fake `claude`; starts no real session

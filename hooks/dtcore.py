@@ -19,6 +19,7 @@ import sys
 
 HOME = os.path.realpath(os.path.expanduser("~"))
 STATE = os.environ.get("DT_STATE_DIR", "")
+NAMED = os.environ.get("DT_NAMED") == "1"      # mode nostate: the payload names the state root (else only a delete / move verb triggered it)
 DT_HOME = os.path.realpath(os.environ.get("DT_HOME") or os.environ.get("DELIVER_TICKET_HOME") or os.path.join(HOME, ".local/share/deliver-ticket"))
 SKILL_DIR = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 SKILL_SCRIPTS = os.path.join(SKILL_DIR, "scripts")
@@ -53,6 +54,7 @@ def load_guard():
 
 KEYWORDS = {"!", "{", "}", "do", "then", "else", "elif", "if", "while", "until", "time",
             "nohup", "exec", "command", "builtin", "sudo", "env", "nice", "xargs"}
+WRAPPERS = {"time", "nohup", "exec", "command", "builtin", "sudo", "env", "nice", "xargs"}   # also when written as /usr/bin/env ...
 SHELLS = {"bash", "sh", "zsh", "dash"}
 ENV_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 SUBST = "\x00SUBST\x00"
@@ -286,7 +288,7 @@ def analyze(text, cwd, depth=0):
                 continue
             if not argv and ENV_RE.match(v):
                 assigns.append(v)
-            elif not argv and v in KEYWORDS:
+            elif not argv and (v in KEYWORDS or ("/" in v and os.path.basename(v) in WRAPPERS)):
                 pass
             elif not argv and v == "export":
                 argv.append(v)
@@ -459,10 +461,114 @@ def session_bound(payload, g, cwd):
 
 
 def protected_state(rp):
-    """Written only by the bind hook and the skill's own scripts, in every session."""
+    """Written only by the bind hook and the skill's own scripts, in every session (guard.json: scripts/guard-write.sh)."""
     if under(rp, os.path.join(DT_HOME, "sessions")):
         return True
-    return bool(re.match(re.escape(DT_HOME) + r"/[^/]+/(closed(/|$)|delivery\.log$)", rp, re.I if fs_ci(DT_HOME) else 0))
+    return bool(re.match(re.escape(DT_HOME) + r"/[^/]+/(closed(/|$)|delivery\.log$|guard\.json$)", rp, re.I if fs_ci(DT_HOME) else 0))
+
+
+DESTRUCTIVE = {"rm", "rmdir", "unlink", "shred", "mv"}
+_GLOB = re.compile(r"[*?\[]")
+STATE_WHY = ("%s the delivery state (%s) - that would disable every guard; state files change only through the skill's "
+             "scripts (scripts/guard-write.sh, scripts/session-map.sh, scripts/ticket-state.sh)")
+
+
+def _comps(p):
+    return [c for c in p.split("/") if c]
+
+
+def _cmatch(pat, name, ci):
+    return fnmatch.fnmatch(name.lower(), pat.lower()) if ci else fnmatch.fnmatchcase(name, pat)
+
+
+def state_reason(prog, t, cwd):
+    """A reason when write target `t` of `prog` removes or moves the delivery state: the state root, any ancestor of it,
+    a project state dir or sessions/ (rm, rmdir, unlink, shred, mv), or - written with a glob - could match one of those
+    or a protected name (guard.json, delivery.log, closed/, sessions/). A glob component counts only if it can match the
+    next component on the way to the root (`~/.local/share/*` yes, `~/.local/share/foo*` no). None when it is fine or the
+    path cannot be resolved here (the callers' own rules handle that)."""
+    p = resolve_vars(os.path.expanduser(t))
+    if SUBST in p or "$" in p:
+        return None
+    if not os.path.isabs(p):
+        if cwd is None:
+            return None
+        p = os.path.join(cwd, p)
+    ci = fs_ci(DT_HOME)
+    root = _comps(DT_HOME)
+    n = len(root)
+    destructive = prog in DESTRUCTIVE
+    if not _GLOB.search(p):
+        if not destructive:
+            return None
+        rp = real(p)
+        if under(DT_HOME, rp):
+            return STATE_WHY % ("%s %s" % (prog, "removes or moves"), "the state root or a parent of it")
+        if under(rp, DT_HOME) and len(_comps(rp)) == n + 1 and os.path.isdir(rp):
+            return STATE_WHY % ("%s %s" % (prog, "removes or moves"), "a project state dir or sessions/")
+        return None
+    parts = _comps(os.path.normpath(p))
+    k = 0
+    while k < len(parts) and not _GLOB.search(parts[k]):
+        k += 1
+    tc = _comps(real("/" + "/".join(parts[:k]))) + parts[k:]
+    for i in range(min(len(tc), n)):
+        if not _cmatch(tc[i], root[i], ci):
+            return None
+    try:
+        kids = [d for d in os.listdir(DT_HOME) if os.path.isdir(os.path.join(DT_HOME, d))]
+    except OSError:
+        kids = []
+    if len(tc) <= n:
+        if destructive:
+            return STATE_WHY % ("%s with a glob %s" % (prog, "removes or moves"), "the state root or a parent of it")
+        return None
+    if len(tc) == n + 1:
+        if destructive and any(_cmatch(tc[n], d, ci) for d in kids):
+            return STATE_WHY % ("%s with a glob %s" % (prog, "removes or moves"), "project state dirs or sessions/")
+        return None
+    if not any(_cmatch(tc[n], d, ci) for d in kids):
+        return None
+    sess = _cmatch(tc[n], "sessions", ci)
+    if len(tc) == n + 2 and (sess or any(_cmatch(tc[n + 1], x, ci) for x in ("guard.json", "delivery.log", "closed"))):
+        return STATE_WHY % ("a glob in the target of %s could match" % prog, "a protected file")
+    if len(tc) > n + 2 and (sess or _cmatch(tc[n + 1], "closed", ci)):
+        return STATE_WHY % ("a glob in the target of %s could match" % prog, "a protected file")
+    return None
+
+
+def hardlink_sources(a, prog):
+    """Source arguments of a command that makes a hard link (ln without -s, link, cp -l / --link). Writing through the
+    link edits the same file, so a protected source must not be linked."""
+    flags = [t for t in a[1:] if t.startswith("-") and t != "-"]
+    pos = [t for t in a[1:] if not t.startswith("-") or t == "-"]
+    if prog == "link":
+        return pos[:1]
+    if prog == "ln":
+        if any(f == "--symbolic" or (not f.startswith("--") and "s" in f[1:]) for f in flags):
+            return []
+    elif prog == "cp":
+        if not any(f == "--link" or (not f.startswith("--") and "l" in f[1:]) for f in flags):
+            return []
+    else:
+        return []
+    tflag = "-t" in a or any(f.startswith("--target-directory") for f in flags)
+    return pos if tflag else (pos[:-1] if len(pos) > 1 else pos)
+
+
+def hardlink_reason(src, cwd):
+    p = resolve_vars(os.path.expanduser(src))
+    if SUBST in p or "$" in p:
+        return None
+    if not os.path.isabs(p):
+        if cwd is None:
+            return None
+        p = os.path.join(cwd, p)
+    rp = real(p)
+    if protected_state(rp):
+        return ("%s is protected state: a hard link to it would let a later write edit it through the link - "
+                "state files change only through the skill's scripts" % rp)
+    return None
 
 
 def path_ok(p, g, payload, cwd):
@@ -974,7 +1080,15 @@ def check_cmd(c, g, payload, all_cmds=()):
         targets = [t for _, t in c.redirs]
     else:
         targets = [t for op, t in c.redirs if op != "<" and op != "<>"] + write_targets(a, prog, c)
+    if not exempt:
+        for src in hardlink_sources(a, prog):
+            why = hardlink_reason(src, c.cwd)
+            if why:
+                block("hard link blocked: %s" % why)
     for t in targets:
+        why = state_reason(prog, t, c.cwd) if not exempt else None
+        if why:
+            block("write blocked: %s" % why)
         why = path_ok(t, g, payload, c.cwd)
         if why:
             block("write blocked: %s" % why)
@@ -999,6 +1113,8 @@ def write_targets(a, prog, c):
             out = [pos[-1]]
     elif prog == "mv":
         out = pos
+    elif prog == "link":
+        out = pos[1:2]
     elif prog == "dd":
         out = [t[3:] for t in a[1:] if t.startswith("of=")]
     elif prog in ("sed", "gsed", "perl"):
@@ -1110,7 +1226,11 @@ def mode_wguard(payload, g):
     if is_env_name(p):
         block("%s on a .env* file - not allowed; tell me which key to add and I do it" % tool)
     if g is None:
-        if under(real(os.path.join(cwd or "/", p)), DT_HOME):
+        rp = real(os.path.join(cwd or "/", p))
+        if protected_state(rp):
+            block("%s is protected state - a broken guard.json is replaced with scripts/guard-write.sh (candidate: "
+                  "<state>/guard.candidate.json)" % rp)
+        if under(rp, DT_HOME):
             return
         block("guard.json is unreadable - only the state dir may be written until it is fixed")
     why = path_ok(p, g, payload, cwd)
@@ -1123,10 +1243,14 @@ def nostate_path(p, cwd):
     cannot resolve (the text already mentions the root)."""
     p = resolve_vars(os.path.expanduser(p))
     if SUBST in p or "$" in p:
+        if not NAMED:
+            return
         block("write target %r has a variable or command substitution and the command names the state root - "
               "use a literal absolute path" % p)
     if not os.path.isabs(p):
         if cwd is None:
+            if not NAMED:
+                return
             block("relative path %r after a cd that cannot be resolved and the command names the state root - "
                   "use an absolute path" % p)
         p = os.path.join(cwd, p)
@@ -1154,6 +1278,8 @@ def mode_nostate(payload):
         try:
             cmds = analyze(cmd, cwd)
         except ParseError as e:
+            if not NAMED:
+                return
             block("cannot parse the command (%s) and it names the state root - blocked, rewrite it more simply" % e)
         for c in cmds:
             a = c.argv
@@ -1162,7 +1288,15 @@ def mode_nostate(payload):
                 targets = [t for _, t in c.redirs]
             else:
                 targets = [t for op, t in c.redirs if op not in ("<", "<>")] + write_targets(a, prog, c)
+            if not is_skill_script(c):
+                for src in hardlink_sources(a, prog):
+                    why = hardlink_reason(src, c.cwd)
+                    if why:
+                        block("hard link blocked: %s" % why)
             for t in targets:
+                why = state_reason(prog, t, c.cwd) if not is_skill_script(c) else None
+                if why:
+                    block("write blocked: %s" % why)
                 nostate_path(t, c.cwd)
 
 
