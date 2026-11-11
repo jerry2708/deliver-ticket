@@ -264,6 +264,91 @@ bind nb10 "$R" "$(printf '<command-message>deliver-ticket</command-message>\n<co
 grep -qx 'ticket=RETRO-9' "$DT/sessions/nb10" && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL bind: expanded command form"; }
 out=$(bind nb9 "$R" '/deliver-ticket T2'; echo "rc=$?"); [ "$out" = "rc=0" ] && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL bind must print nothing and exit 0: $out"; }
 echo '{not json' | "$SK/hooks/bind-session.sh"; [ $? = 0 ] && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL bind: malformed payload must not block the prompt"; }
+echo "# A2: protected paths are checked in a repo / dir WITHOUT delivery state (prefilter on the state root's name, then core mode nostate)"
+DT=$DELIVER_TICKET_HOME; X=$S/nongit; mkdir -p "$X" "$S/fakehome/.local/share/deliver-ticket/k/closed" "$S/real-root/k/closed" "$S/custom/dtstate/k/closed"
+ln -s "$S/real-root" "$S/link-root"
+printf 'project=other-00000000\nticket=T1\n' > "$DT/sessions/tk"          # a session with an open ticket (of another project), cwd in a no-state dir
+PC=$DT/$key/closed/T1; PS=$DT/sessions/zz; PL=$DT/$key/delivery.log
+NSSID=nsu
+# nsr <expect-rc> <hook> <cwd> <tool> <path-or-command> [env args...]
+nsr() { local exp=$1 hook=$2 cwd=$3 tool=$4 arg=$5 pl rc kf=file_path; shift 5
+  case "$tool" in
+    Bash) pl=$(payload "$cwd" Bash "$arg" "$NSSID") ;;
+    *) [ "$tool" = NotebookEdit ] && kf=notebook_path
+       pl=$(jq -nc --arg cwd "$cwd" --arg tool "$tool" --arg f "$arg" --arg k "$kf" --arg sid "$NSSID" '{session_id:$sid,cwd:$cwd,hook_event_name:"PreToolUse",tool_name:$tool,tool_input:{($k):$f}}') ;;
+  esac
+  printf '%s' "$pl" | env "$@" "$SK/hooks/$hook" >/dev/null 2>&1; rc=$?
+  if [ "$rc" = "$exp" ]; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL nostate rc=$rc want=$exp sid=$NSSID cwd=${cwd##*/} $tool $arg $*"; fi; }
+for NSSID in nsu tk; do                                       # nsu: no open ticket; tk: an open ticket in the map
+  for cwd in "$nostate" "$X"; do
+    for p in "$PC" "$PS" "$PL"; do
+      for tool in Write Edit NotebookEdit MultiEdit; do nsr 2 worktree-guard.sh "$cwd" $tool "$p"; done
+      for c in "echo x > $p" "echo x >> $p" "tee $p" "cp /dev/null $p" "sed -i '' s/a/b/ $p" "touch $p"; do nsr 2 guard.sh "$cwd" Bash "$c"; done
+    done
+    echo "## $NSSID / ${cwd##*/}: unprotected targets and reads stay allowed (rc 0), also when they name the state root"
+    nsr 0 worktree-guard.sh "$cwd" Write "$DT/lessons.md"
+    nsr 0 worktree-guard.sh "$cwd" Write "$cwd/a.txt"
+    nsr 0 guard.sh "$cwd" Bash "echo x > $cwd/b.txt"
+    nsr 0 guard.sh "$cwd" Bash "echo x > /tmp/zz-a2"
+    nsr 0 guard.sh "$cwd" Bash "echo $DT"
+    nsr 0 guard.sh "$cwd" Bash "cat $PC"
+    nsr 0 guard.sh "$cwd" Bash "python3 $SK/scripts/validate-guard.py $DT/$key/guard.json"       # a skill script naming the root
+  done
+done
+NSSID=nsu
+echo "## custom root (not under HOME, not the default name), symlinked root, physical path of a symlinked root"
+nsr 2 worktree-guard.sh "$nostate" Write "$S/custom/dtstate/k/closed/T1" DELIVER_TICKET_HOME=$S/custom/dtstate
+nsr 2 guard.sh "$nostate" Bash "echo x > $S/custom/dtstate/k/closed/T1" DELIVER_TICKET_HOME=$S/custom/dtstate
+nsr 2 guard.sh "$X" Bash "cd $S/custom/dtstate/k && echo x > closed/T1" DELIVER_TICKET_HOME=$S/custom/dtstate
+nsr 2 worktree-guard.sh "$nostate" Write "$S/link-root/k/closed/T1" DELIVER_TICKET_HOME=$S/link-root
+nsr 2 worktree-guard.sh "$nostate" Write "$S/real-root/k/closed/T1" DELIVER_TICKET_HOME=$S/link-root
+nsr 0 worktree-guard.sh "$nostate" Write "$S/custom/dtstate/k/closed/T1"                       # the default root is $DT here, so another root's path is not protected
+echo "## default root under HOME: ~ / \$HOME / \${HOME} forms and relative spellings from a parent cwd"
+H=$S/fakehome; D='.local/share/deliver-ticket'
+nsr 2 guard.sh "$nostate" Bash "echo x > ~/$D/k/closed/T1" -u DELIVER_TICKET_HOME HOME=$H
+nsr 2 guard.sh "$nostate" Bash "echo x > \$HOME/$D/k/closed/T1" -u DELIVER_TICKET_HOME HOME=$H
+nsr 2 guard.sh "$nostate" Bash "echo x > \${HOME}/$D/k/closed/T1" -u DELIVER_TICKET_HOME HOME=$H
+nsr 2 guard.sh "$nostate" Bash "cd ~/$D && echo x > k/closed/T1" -u DELIVER_TICKET_HOME HOME=$H
+nsr 2 guard.sh "$H" Bash "echo x > $D/k/closed/T1" -u DELIVER_TICKET_HOME HOME=$H                  # relative path, cwd = the parent of the root
+nsr 2 guard.sh "$H" Bash "cd .local/share && cd deliver-ticket && echo x > k/closed/T1" -u DELIVER_TICKET_HOME HOME=$H
+nsr 2 worktree-guard.sh "$H" Write "$D/k/closed/T1" -u DELIVER_TICKET_HOME HOME=$H                 # relative Write path
+nsr 2 guard.sh "$DT/$key" Bash "echo x > closed/T1"                                                 # cwd inside the root: the payload's cwd names it
+nsr 2 guard.sh "$H/$D/k" Bash "echo x > closed/T1" -u DELIVER_TICKET_HOME HOME=$H
+echo "## the skill dir's own path is not a hit (its name is the default root's name); a ../.. spelling out of it still is"
+nsr 0 guard.sh "$SK" Bash "echo x > \$UNSET_A2/y" -u DELIVER_TICKET_HOME HOME=$H
+nsr 0 guard.sh "$nostate" Bash "bash $SK/scripts/session-map.sh show" -u DELIVER_TICKET_HOME HOME=$H
+nsr 2 guard.sh "$SK" Bash "cat $SK/../../../.local/share/deliver-ticket/x; echo x > \$UNSET_A2/y" -u DELIVER_TICKET_HOME HOME=$H   # hit -> the unresolvable target blocks
+nsr 2 guard.sh "$SK" Bash "echo x > $SK/../../../.local/share/deliver-ticket/k/closed/T1" -u DELIVER_TICKET_HOME HOME=$(dirname "$(dirname "$(dirname "$SK")")")    # the real default root of this machine's HOME, reached through the skill dir
+echo "## on a hit an unresolvable target blocks; on a miss it does not"
+nsr 2 guard.sh "$nostate" Bash "cat $DT/lessons.md; echo x > \$UNSET_A2/y"
+nsr 2 guard.sh "$nostate" Bash "echo x > \$(echo $DT)/k/closed/T1"
+nsr 2 guard.sh "$nostate" Bash "cd \$UNSET_A2 && echo $DT >/dev/null; echo x > rel.txt"
+nsr 2 guard.sh "$nostate" Bash "echo $DT; echo 'unterminated"                                       # unparsable on a hit
+MISS=DELIVER_TICKET_HOME=$S/zqroot                             # a root whose name appears nowhere in the payloads below (the harness root is called "state", which "nostate" contains)
+nsr 0 guard.sh "$nostate" Bash "echo x > \$UNSET_A2/y" $MISS
+nsr 0 guard.sh "$nostate" Bash "echo 'unterminated" $MISS
+echo "## fail-closed when python3 is missing or crashes (hit); no python at all on a miss"
+NB=$S/bin-nopy; NS=$S/bin-stub; mkdir -p "$NB" "$NS"
+for t in git sed head cut shasum dirname basename cat touch; do ln -sf "$(command -v $t)" "$NB/$t"; ln -sf "$(command -v $t)" "$NS/$t"; done
+printf '#!/bin/sh\ntouch "%s/stub-called"\nexit 1\n' "$S" > "$NS/python3"; chmod +x "$NS/python3"
+nsr 0 guard.sh "$nostate" Bash "echo hi" PATH="$NS" $MISS
+nsr 0 worktree-guard.sh "$nostate" Write "$nostate/a.txt" PATH="$NS" $MISS
+nsr 0 guard.sh "$nostate" Bash "echo hi" PATH="$NB" $MISS
+[ ! -e "$S/stub-called" ] && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL nostate: python3 was started on a miss"; }
+nsr 2 guard.sh "$nostate" Bash "echo x > $PC" PATH="$NB"
+nsr 2 worktree-guard.sh "$nostate" Write "$PC" PATH="$NB"
+nsr 2 guard.sh "$nostate" Bash "echo x > $PC" PATH="$NS"
+[ -e "$S/stub-called" ] && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL nostate: the stub python3 should have been called on a hit"; }
+echo "## nostate reuses protected_state (so what protected_state covers later, e.g. guard.json, is covered here too)"
+python3 - "$SK/hooks" <<'PY' && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL nostate does not go through protected_state"; }
+import sys; sys.path.insert(0, sys.argv[1]); import dtcore
+dtcore.protected_state = lambda rp: rp.endswith("/MARK")
+try:
+    dtcore.nostate_path("/x/MARK", None); sys.exit(1)
+except dtcore.Block:
+    pass
+dtcore.nostate_path("/x/OK", None)
+PY
 echo "# corrupt guard.json with state => block (except skill scripts)"
 echo '{broken' > "$DELIVER_TICKET_HOME/$key/guard.json"
 t 2 guard.sh "$W" 'ls'

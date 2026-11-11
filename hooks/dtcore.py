@@ -1060,6 +1060,54 @@ def mode_wguard(payload, g):
         block("%s blocked: %s" % (tool, why))
 
 
+def nostate_path(p, cwd):
+    """Repo without delivery state, payload names the state root: only protected_state applies. Blocks on a target it
+    cannot resolve (the text already mentions the root)."""
+    p = resolve_vars(os.path.expanduser(p))
+    if SUBST in p or "$" in p:
+        block("write target %r has a variable or command substitution and the command names the state root - "
+              "use a literal absolute path" % p)
+    if not os.path.isabs(p):
+        if cwd is None:
+            block("relative path %r after a cd that cannot be resolved and the command names the state root - "
+                  "use an absolute path" % p)
+        p = os.path.join(cwd, p)
+    rp = real(p)
+    if protected_state(rp):
+        block("%s is session / ticket-state bookkeeping: written only by the bind hook and scripts/session-map.sh, "
+              "scripts/ticket-state.sh" % rp)
+
+
+def mode_nostate(payload):
+    """Called by hooks/lib.sh dt_nostate in a repo with no guard.json (or no git repo), only when the payload names the
+    state root. Does not read guard.json and does not depend on STATE."""
+    tool = payload.get("tool_name")
+    cwd = payload.get("cwd") if isinstance(payload.get("cwd"), str) else None
+    ti = payload.get("tool_input") or {}
+    if tool in ("Edit", "Write", "NotebookEdit", "MultiEdit"):
+        p = ti.get("file_path") or ti.get("notebook_path")
+        if not isinstance(p, str) or not p:
+            block("%s without file_path / notebook_path - blocked (fail-closed)" % tool)
+        nostate_path(p, cwd)
+    elif tool == "Bash":
+        cmd = ti.get("command")
+        if not isinstance(cmd, str):
+            block("Bash payload without a command string - blocked (fail-closed)")
+        try:
+            cmds = analyze(cmd, cwd)
+        except ParseError as e:
+            block("cannot parse the command (%s) and it names the state root - blocked, rewrite it more simply" % e)
+        for c in cmds:
+            a = c.argv
+            prog = os.path.basename(a[0]) if a else ""
+            if is_skill_script(c):
+                targets = [t for _, t in c.redirs]
+            else:
+                targets = [t for op, t in c.redirs if op not in ("<", "<>")] + write_targets(a, prog, c)
+            for t in targets:
+                nostate_path(t, c.cwd)
+
+
 def find_key(obj, names):
     if isinstance(obj, dict):
         for k, v in obj.items():
@@ -1230,6 +1278,9 @@ def main():
             if mode in ("session", "bind"):
                 return 0
             block("payload is not valid JSON - blocked (fail-closed)")
+        if mode == "nostate":
+            mode_nostate(payload)
+            return 0
         g = load_guard()
         {"guard": mode_guard, "verify": mode_verify, "wguard": mode_wguard,
          "session": mode_session, "bind": mode_bind}[mode](payload, g)

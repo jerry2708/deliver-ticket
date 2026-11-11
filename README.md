@@ -50,7 +50,7 @@ cp ~/.claude/settings.json.bak-deliver-ticket-<timestamp> ~/.claude/settings.jso
 #    /.claude/skills/deliver-ticket/hooks/ from ~/.claude/settings.json (and from <repo>/.claude/settings.local.json) by hand
 ```
 
-The hooks do nothing in a repo without delivery state (`<state root>/<project-key>/guard.json`). To switch them off for one project only, move that project's `guard.json` away (a state dir without `guard.json` counts as "not initialised").
+The hooks do nothing in a repo without delivery state (`<state root>/<project-key>/guard.json`), except that a Write / Edit or shell write whose text names the state root's directory name is still checked against the protected state (`sessions/`, `closed/`, `delivery.log`); known limits: globs, paths built without the root's name, symlinks made earlier, interpreters. To switch them off for one project only, move that project's `guard.json` away (a state dir without `guard.json` counts as "not initialised").
 
 ## Change settings
 
