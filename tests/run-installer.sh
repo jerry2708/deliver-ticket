@@ -30,6 +30,21 @@ DT_SETTINGS="$D/legacy.json" "$SK/scripts/install-hooks.sh" apply --confirmed >/
 grep -q 'worktree-create.sh' "$D/legacy.json" && { fail=1; echo "FAIL WorktreeCreate still registered at user level"; } || echo "ok user-level WorktreeCreate removed"
 grep -q 'other-hook.sh' "$D/legacy.json" && echo "ok foreign hook kept" || { fail=1; echo "FAIL foreign hook lost"; }
 DT_SETTINGS="$D/legacy.json" "$SK/scripts/install-hooks.sh" status >/dev/null 2>&1 && echo "ok status after apply" || { fail=1; echo "FAIL status after apply"; }
+# --- a second apply must not forget what the first one added (the old manifest was truncated before it was read): uninstall leaves nothing behind
+cp "$D/orig.json" "$D/again.json"
+DT_SETTINGS="$D/again.json" "$SK/scripts/install-hooks.sh" apply --confirmed >/dev/null 2>&1
+python3 -I - "$D/again.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1])); d["permissions"]["ask"].remove("Bash(gh pr create:*)")
+json.dump(d, open(sys.argv[1], "w"), indent=2)
+PY
+DT_SETTINGS="$D/again.json" "$SK/scripts/install-hooks.sh" apply --confirmed >/dev/null 2>&1 && echo "ok second apply re-adds the removed rule" || { fail=1; echo "FAIL second apply"; }
+DT_SETTINGS="$D/again.json" "$SK/scripts/install-hooks.sh" uninstall --confirmed >/dev/null 2>&1
+python3 -I - "$D/orig.json" "$D/again.json" <<'PY' && echo "ok apply, apply, uninstall leaves nothing behind" || { fail=1; echo "FAIL second apply then uninstall left entries behind"; }
+import json, sys
+a, b = (json.load(open(x)) for x in sys.argv[1:3])
+assert a == b, (a, b)
+PY
 # the user's own global gitignore must not decide these cases: isolate git's global/system config and XDG ignore
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null XDG_CONFIG_HOME="$D/xdg"
 # --- project level: apply / status / uninstall round trip on a scratch repo, backup lands in the state dir

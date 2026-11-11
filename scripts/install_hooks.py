@@ -236,8 +236,9 @@ def cmd_apply(args):
     if os.path.exists(SETTINGS):
         shutil.copymode(SETTINGS, tmp)
     os.replace(tmp, SETTINGS)
+    mf = build_manifest(cur, load_manifest())      # read the old manifest BEFORE open(..., "w") truncates it
     with open(MANIFEST, "w") as f:
-        json.dump(build_manifest(cur, load_manifest()), f, indent=2)
+        json.dump(mf, f, indent=2)
     if problems(load()):
         print("written file does not verify - restore from %s" % bak, file=sys.stderr)
         return 1
