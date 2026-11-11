@@ -264,6 +264,35 @@ bind nb10 "$R" "$(printf '<command-message>deliver-ticket</command-message>\n<co
 grep -qx 'ticket=RETRO-9' "$DT/sessions/nb10" && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL bind: expanded command form"; }
 out=$(bind nb9 "$R" '/deliver-ticket T2'; echo "rc=$?"); [ "$out" = "rc=0" ] && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL bind must print nothing and exit 0: $out"; }
 echo '{not json' | "$SK/hooks/bind-session.sh"; [ $? = 0 ] && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL bind: malformed payload must not block the prompt"; }
+echo "# S1: gated commands only in the spelling their ask rule matches (git push, gh / glab writes); a bound and an unbound session"
+for sid in s1 u1; do
+  for c in 'git -C . push mirror feat-T1' '/usr/bin/git push mirror feat-T1' 'env git push mirror feat-T1' '/usr/bin/env git push mirror feat-T1' 'FOO=1 git push mirror feat-T1' \
+    'command git push mirror feat-T1' 'git -c user.name=x push mirror feat-T1' 'git --git-dir=.git push mirror feat-T1' 'git --no-pager push mirror feat-T1' \
+    'bash -c "git push mirror feat-T1"' "sh -c 'git push mirror feat-T1'" 'echo $(git push mirror feat-T1)' 'eval "git push mirror feat-T1"' 'echo mirror | xargs git push' \
+    'nohup git push mirror feat-T1' 'time git push mirror feat-T1' 'cd . && FOO=1 git push mirror feat-T1' \
+    'gh pr --repo o/r edit 1' 'glab mr --repo o/r update 1' 'FOO=1 gh pr edit 1' 'GH_REPO=o/r gh pr edit 1' 'command gh pr edit 1' '/usr/bin/gh pr edit 1' 'gh --hostname h.example pr edit 1' \
+    'gh --repo=o/r pr edit 1' 'bash -c "gh pr edit 1"' 'FOO=1 gh pr create -t x' 'gh pr -t x create' '/usr/bin/gh api /x' 'env glab api /x' 'gh --hostname h api /x' 'FOO=1 glab mr note 1' \
+    'gh pr -t x reopen 1'; do tsid 2 guard.sh $sid "$W" "$c"; done
+  for c in 'git push mirror feat-T1' 'git push -u mirror feat-T1' 'cd . && git push mirror feat-T1' 'git status' 'git -C . status' 'FOO=1 git status' \
+    'gh pr edit 1' 'gh pr create -t x' 'gh pr comment 1 -b x' 'gh -R o/r pr edit 1' 'gh --repo o/r pr edit 1' 'glab -R o/r mr update 1' 'glab mr note 1' 'gh api /x' 'glab api /x' 'gh auth status' \
+    'glab release --repo o/r create x' 'gh pr view 1' 'gh pr list' 'gh pr --repo o/r view 1' 'gh --hostname h pr view 1' 'FOO=1 gh pr view 1' 'glab mr view 1' 'glab mr list' 'echo gh pr edit'; do tsid 0 guard.sh $sid "$W" "$c"; done
+done
+python3 - "$SK/hooks" "$SK/scripts" <<'PY' && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL S1 unit: analyze prefix / nested, GATED_CLI vs CLI_ASK"; }
+import os, sys
+sys.path.insert(0, sys.argv[1]); sys.path.insert(0, sys.argv[2]); os.environ["DT_SETTINGS"] = "/nonexistent"
+import dtcore, install_hooks as ih
+c = dtcore.analyze("FOO=1 /usr/bin/env git push mirror x", "/tmp")[0]
+assert c.argv[0] == "git" and c.prefix == ["/usr/bin/env"] and c.assigns == ["FOO=1"] and not c.nested, (c.argv, c.prefix, c.assigns)
+assert not dtcore.analyze("git push mirror x", "/tmp")[0].prefix
+n = [x for x in dtcore.analyze('bash -c "git push mirror x"', "/tmp") if x.argv[:2] == ["git", "push"]]
+assert n and all(x.nested for x in n)
+assert [x for x in dtcore.analyze("echo $(git push mirror x)", "/tmp") if x.argv[:2] == ["git", "push"]][0].nested
+# the hook's list and the installed ask rules say the same (create is a user-level rule, merge is denied)
+ask = {tuple(r[len("Bash("):-len(" *)")].split()) for r in ["Bash(%s)" % x for x in ih.CLI_ASK]}
+hook = {(p,) + pat for p, pats in dtcore.GATED_CLI.items() for pat in pats if pat[-1] != "create"}
+ask = {t for t in ask if t[1:] not in (("-R",), ("--repo",))}
+assert ask == hook, (ask ^ hook)
+PY
 echo "# C2: .env* names in another case (.ENV is .env on a case-insensitive filesystem): blocked in a ticket session and in an unbound one"
 mkdir -p "$R/sr2" "$R/apps/web"; printf 'K=1\n' > "$R/sr2/.ENV.LOCAL"
 for sid in s1 u1; do
@@ -445,7 +474,10 @@ for c in "rm -r $DT/$key" "rm -rf $DT/$key/" "mv $DT/$key /tmp/zz-key" "rmdir $D
   "rm -rf $S" "mv $S /tmp/zz-S" "cd $DT && rm -rf $key" "cd $DT/$key && rm -rf ." "cd $DT/$key && rm -rf ../$key" "cd $DT && rm -rf ." "cd $S && rm -rf state"; do gx 2 Bash "$c"; done
 echo "## globs: block only when the glob can match the next component toward protected state"
 for c in "rm -rf $DT/*" "rm -rf $DT/$key/*" "rm -f $DT/$key/guard.*" "rm -f $DT/$key/guard.js*" "rm -rf $DT/sessions/*" "rm $DT/*/closed/*" "rm -rf $DT/$key/clo*" "touch $DT/$key/guard.js*" "rm -rf $DT/se*" "rm -rf $DT/re*" "rm -rf $S/*" "rm -rf $S/sta*"; do gx 2 Bash "$c"; done
-for c in "rm -rf $S/foo*" "rm -rf $DT/$key/evidence/*" "rm -rf $DT/zz*" "rm -rf $S/foo/*"; do gx 0 Bash "$c"; done
+# a path next to the state root is outside a bound session's write allowlist when the scratch dir is not under /tmp (the hook then says so, rc 2, for s1 only)
+gxS() { case "$S" in /tmp/*|/private/tmp/*) gx 0 Bash "$1" ;; *) tsid 2 guard.sh s1 "$R" "$1"; tsid 0 guard.sh u1 "$R" "$1"; for NSSID in nsu tk; do for cwd in "$nostate" "$X"; do nsr 0 guard.sh "$cwd" Bash "$1"; done; done; NSSID=nsu ;; esac; }
+for c in "rm -rf $DT/$key/evidence/*" "rm -rf $DT/zz*"; do gx 0 Bash "$c"; done
+for c in "rm -rf $S/foo*" "rm -rf $S/foo/*"; do gxS "$c"; done
 echo "## ~/.local/share/deliver-ticket under a fake HOME: every parent, and globs toward it"
 H=$S/fakehome
 for c in 'rm -rf ~/.local/share' 'rm -rf ~/.local' 'mv ~/.local /tmp/zz-x' 'rm -rf ~' 'rm -rf $HOME' 'rm -rf ~/.local/share/*' 'rm -rf ~/.local/share/deliver-*' 'rm -rf ~/.local/*' 'rm -rf ~/.local/share/deliver-ticket' 'rm -rf ~/*' \
@@ -461,9 +493,10 @@ for c in "rm -rf /tmp/zz-b1-dir" "rm -rf \$UNSET_B1/x" "cd \$UNSET_B1 && rm -rf 
 msg=$(payload "$R" Bash "rm -rf $DT/$key" u1 | "$SK/hooks/guard.sh" 2>&1); echo "$msg" | grep -q 'disable every guard' && echo "$msg" | grep -q 'project state dir' && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL specific reason for deleting the state: $msg"; }
 msg=$(payload "$R" Bash "ln $G /tmp/zz-hl" u1 | "$SK/hooks/guard.sh" 2>&1); echo "$msg" | grep -q 'hard link' && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL specific reason for a hard link: $msg"; }
 echo "## still allowed (rc 0) in all six contexts: reads, the candidate, other state files, symlinks, deleting something that is not an ancestor"
-for c in "cat $G" "jq . $G" "grep key $G" "touch $DT/$key/guard.candidate.json" "echo x > $DT/$key/guard.candidate.json" "rm $DT/$key/evidence/x" "rm -rf /tmp/zz-b1-dir" "ln -s $G /tmp/zz-sl" "rm -rf $S/other" \
+for c in "cat $G" "jq . $G" "grep key $G" "touch $DT/$key/guard.candidate.json" "echo x > $DT/$key/guard.candidate.json" "rm $DT/$key/evidence/x" "rm -rf /tmp/zz-b1-dir" "ln -s $G /tmp/zz-sl" \
   "cd $DT/$key && cat guard.json" "ls $DT" "mv /tmp/zz-b1 /tmp/zz-b2"; do gx 0 Bash "$c"; done
 for tool in Write Edit; do gx 0 $tool "$DT/$key/guard.candidate.json"; done
+gxS "rm -rf $S/other"
 echo "## skill scripts stay allowed, also with a corrupt guard.json (the repair path)"
 for c in "$SK/scripts/guard-write.sh diff $DT/$key/guard.candidate.json --repo $R" "bash $SK/scripts/guard-write.sh verify --repo $R"; do gx 0 Bash "$c"; done
 echo "# corrupt guard.json with state => block (except skill scripts)"

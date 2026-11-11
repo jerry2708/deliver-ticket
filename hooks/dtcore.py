@@ -259,8 +259,10 @@ def resolve_vars(p):
 
 
 class Cmd:
-    def __init__(self, argv, redirs, cwd, assigns):
+    def __init__(self, argv, redirs, cwd, assigns, prefix=(), nested=False):
         self.argv, self.redirs, self.cwd, self.assigns = argv, redirs, cwd, assigns
+        self.prefix = list(prefix)      # wrapper words stripped in front of argv[0] (env, command, xargs, /usr/bin/env ...)
+        self.nested = nested            # found inside bash -c, eval or $( ): the harness sees the outer text, not this command
 
 
 def analyze(text, cwd, depth=0):
@@ -273,7 +275,7 @@ def analyze(text, cwd, depth=0):
     for inner in subs:
         out += analyze(inner, cwd, depth + 1)
     for seg in segs:
-        argv, redirs, assigns = [], [], []
+        argv, redirs, assigns, prefix = [], [], [], []
         k = 0
         while k < len(seg):
             kind, v = seg[k]
@@ -289,7 +291,7 @@ def analyze(text, cwd, depth=0):
             if not argv and ENV_RE.match(v):
                 assigns.append(v)
             elif not argv and (v in KEYWORDS or ("/" in v and os.path.basename(v) in WRAPPERS)):
-                pass
+                prefix.append(v)
             elif not argv and v == "export":
                 argv.append(v)
             else:
@@ -307,9 +309,9 @@ def analyze(text, cwd, depth=0):
                 cwd = None
             else:
                 cwd = os.path.realpath(os.path.join(cwd, tgt))
-            out.append(Cmd(argv, redirs, cwd, assigns))
+            out.append(Cmd(argv, redirs, cwd, assigns, prefix, depth > 0))
             continue
-        c = Cmd(argv, redirs, cwd, assigns)
+        c = Cmd(argv, redirs, cwd, assigns, prefix, depth > 0)
         out.append(c)
         prog = os.path.basename(argv[0]) if argv else ""
         if prog in SHELLS and "-c" in argv:
@@ -719,6 +721,57 @@ def check_push(rest, g):
     return dry
 
 
+# Gated commands: the permission `ask` rules (user level: Bash(git push:*), glab/gh mr|pr create; project sandbox: the CLI_ASK list of
+# scripts/install_hooks.py) match the command TEXT as a prefix. Any other spelling - git -C x push, /usr/bin/git, env / command / xargs in front,
+# bash -c "...", an option between the subcommand words - does not match, and with the sandbox on it would run auto-approved. So the hook only lets
+# these commands through in the one spelling the rule matches.
+GATED_CLI = {"gh": [("api",), ("auth",), ("secret",), ("variable",), ("repo",), ("workflow",), ("run",), ("release",),
+                    ("pr", "create"), ("pr", "edit"), ("pr", "comment"), ("pr", "close"), ("pr", "review"), ("pr", "reopen")],
+             "glab": [("api",), ("auth",), ("variable",), ("repo",), ("ci",), ("release",),
+                      ("mr", "create"), ("mr", "update"), ("mr", "note"), ("mr", "close"), ("mr", "approve"), ("mr", "reopen")]}
+CLI_VALUE_OPTS = {"-R", "--repo", "--hostname"}
+
+
+def _cli_positionals(toks):
+    pos, i = [], 0
+    while i < len(toks):
+        t = toks[i]
+        if t.startswith("-"):
+            i += 2 if t in CLI_VALUE_OPTS else 1
+        else:
+            pos.append(t)
+            i += 1
+    return pos
+
+
+def check_canonical(c):
+    """Block a gated command (git push, gh / glab writes) that is not spelled the way its ask rule matches."""
+    a = c.argv
+    if not a:
+        return
+    prog = os.path.basename(a[0])
+    plain = a[0] == prog and not c.prefix and not c.assigns and not c.nested
+    if prog == "git":
+        sub, _, _, _ = parse_git(a)
+        if sub == "push" and not (plain and len(a) > 1 and a[1] == "push"):
+            block("git push is spelled so the permission ask rule would not match it (-C / -c / --git-dir, a path, a wrapper such as env / command / "
+                  "xargs, an env assignment, or inside bash -c / eval / $( )): write it exactly as `git push <remote> <branch>`, run from the "
+                  "worktree directory")
+    elif prog in GATED_CLI:
+        toks = a[1:]
+        pos = _cli_positionals(toks)
+        def in_order(pat):             # an option with a value we do not know (gh pr -t x create) hides the words from `pos`
+            it = iter(toks)
+            return len(pat) > 1 and toks[:1] == [pat[0]] and all(w in it for w in pat)
+        for pat in GATED_CLI[prog]:
+            if tuple(pos[:len(pat)]) == pat or in_order(pat):
+                if plain and (tuple(toks[:len(pat)]) == pat or (toks and toks[0] in ("-R", "--repo"))):
+                    return
+                block("%s %s is spelled so the permission ask rule would not match it (a path, a wrapper, an env assignment, bash -c / eval, or an "
+                      "option between the subcommand words): write it as `%s %s ...` with -R / --repo, if any, first"
+                      % (prog, " ".join(pat), prog, " ".join(pat)))
+
+
 def command_pushes(cmds, g):
     """Yield (Cmd, dry_run, push_cwd) for each git push; applies the git checks only to push."""
     for c in cmds:
@@ -1023,6 +1076,8 @@ def check_cmd(c, g, payload, all_cmds=()):
     # --- recursive searches that could cover .env*
     if not exempt and (prog in GREP_PROGS or prog in ("rg", "git")):
         check_search(c, prog)
+
+    check_canonical(c)
 
     # --- git
     if prog == "git":
