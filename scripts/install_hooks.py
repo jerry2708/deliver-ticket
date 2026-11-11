@@ -18,11 +18,19 @@ registered per initialised project in <repo>/.claude/settings.local.json (gitign
                          project-apply refuses (exit 3) unless --add-exclude (after the user saw the exclude diff in project-diff and said yes)
                          adds `/.claude/settings.local.json` to <git-common-dir>/info/exclude (never the repo's .gitignore)
   project-uninstall --repo R [--confirmed]    remove exactly what project-apply added
+
+The Bash sandbox is enabled per project, in the same file (a separate decision from the hooks; the user-level part - no unsandboxed
+retry, denyWrite for the protected state - comes from `apply` and is required first):
+  project-sandbox-status|project-sandbox-diff --repo R [--domains a,b] [--local-binding]
+  project-sandbox-apply --repo R --confirmed [--domains a,b] [--local-binding] [--add-exclude]
+  project-sandbox-off --repo R [--confirmed]  remove exactly what project-sandbox-apply added (manifest in the state dir); run it before
+                         checking out v0.1 on `main`, whose `bash scripts/...` calls fail inside the sandbox
 """
 import copy
 import difflib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -548,6 +556,211 @@ def cmd_project(cmd, args):
     return 2
 
 
+# ---- project level: the Bash sandbox in <repo>/.claude/settings.local.json ---------------------------------------------------------------------------
+BOOKKEEPING = ["session-map.sh", "pending-ticket.sh", "project-map-stale.sh"]   # excluded + allow rule: no prompt
+GATES = ["ticket-state.sh", "guard-apply.sh"]                                     # excluded + ask rule on the full path: the prompt is the user's yes
+# An ask rule always beats an allow rule (docs, "Manage permissions": "rule specificity doesn't change the order"), so a broad `glab *` ask with narrow
+# allows cannot work: these are enumerated. Option-before-subcommand forms (-R / --repo) are listed too; see the README limits for what a prefix list misses.
+CLI_ASK = (["glab " + w + " *" for w in ("api", "auth", "variable", "repo", "ci", "release", "-R", "--repo")] +
+           ["glab mr " + w + " *" for w in ("update", "note", "close", "approve", "reopen")] +
+           ["gh " + w + " *" for w in ("api", "auth", "secret", "variable", "repo", "workflow", "run", "release", "-R", "--repo")] +
+           ["gh pr " + w + " *" for w in ("edit", "comment", "close", "review", "reopen")])
+CLI_ALLOW = ["glab mr view *", "glab mr list *", "gh pr view *", "gh pr list *"]
+ABSENT = "__absent__"
+DOMAIN_RE = re.compile(r"[A-Za-z0-9*][A-Za-z0-9*.-]*")
+
+
+def sandbox_plan(repo, state, domains, local_binding):
+    sk = os.path.join(SKILL, "scripts")
+    book, gate = [os.path.join(sk, x) for x in BOOKKEEPING], [os.path.join(sk, x) for x in GATES]
+    sets = [(("sandbox", "enabled"), True), (("sandbox", "failIfUnavailable"), True)]
+    if local_binding:
+        sets.append((("sandbox", "network", "allowLocalBinding"), True))
+    adds = [(("sandbox", "excludedCommands"), [p + " *" for p in book + gate] + ["git push *", "git branch -m *", "glab *", "gh *"]),
+            (("sandbox", "filesystem", "allowWrite"), [os.path.join(state, "evidence"), os.path.join(repo, ".claude", "worktrees")]),
+            (("sandbox", "network", "allowedDomains"), list(domains)),
+            (("permissions", "allow"), ["Bash(%s *)" % p for p in book] + ["Bash(git branch -m *)"] + ["Bash(%s)" % c for c in CLI_ALLOW]),
+            (("permissions", "ask"), ["Bash(%s *)" % p for p in gate] + ["Bash(%s)" % c for c in CLI_ASK])]
+    return sets, adds
+
+
+def _node(d, path, m=None):
+    """The dict at `path`; creates missing ones (recorded in the manifest) when m is given, else returns None if absent."""
+    for i, k in enumerate(path):
+        if not isinstance(d.get(k), dict):
+            if m is None:
+                return None
+            d[k] = {}
+            key = "/".join(path[:i + 1])
+            if key not in m["created_dicts"]:
+                m["created_dicts"].append(key)
+        d = d[k]
+    return d
+
+
+def sandbox_desired(cur, sets, adds, m):
+    new = copy.deepcopy(cur)
+    for path, val in sets:
+        node = _node(new, path[:-1], m)
+        m["set_prev"].setdefault("/".join(path), node.get(path[-1], ABSENT))
+        node[path[-1]] = val
+    for path, items in adds:
+        node = _node(new, path[:-1], m)
+        k = "/".join(path)
+        if not isinstance(node.get(path[-1]), list):
+            node[path[-1]] = []
+            if k not in m["created_lists"]:
+                m["created_lists"].append(k)
+        for it in items:
+            if it not in node[path[-1]]:
+                node[path[-1]].append(it)
+                m["added"].setdefault(k, [])
+                if it not in m["added"][k]:
+                    m["added"][k].append(it)
+    return new
+
+
+def sandbox_removed(cur, m):
+    new = copy.deepcopy(cur)
+    for k in sorted(set(m["added"]) | set(m["created_lists"])):
+        items = m["added"].get(k, [])
+        path = k.split("/")
+        node = _node(new, path[:-1])
+        if node is not None and isinstance(node.get(path[-1]), list):
+            node[path[-1]] = [x for x in node[path[-1]] if x not in items]
+            if not node[path[-1]] and k in m["created_lists"]:
+                del node[path[-1]]
+    for k, prev in m["set_prev"].items():
+        path = k.split("/")
+        node = _node(new, path[:-1])
+        if node is not None:
+            if prev == ABSENT:
+                node.pop(path[-1], None)
+            else:
+                node[path[-1]] = prev
+    for k in sorted(m["created_dicts"], key=lambda x: -len(x.split("/"))):
+        path = k.split("/")
+        parent = _node(new, path[:-1])
+        if parent is not None and parent.get(path[-1]) == {}:
+            del parent[path[-1]]
+    return new
+
+
+def sandbox_problems(cur, plan_sets, plan_adds):
+    out = []
+    for path, val in plan_sets:
+        n = _node(cur, path[:-1])
+        if n is None or n.get(path[-1]) != val:
+            out.append("%s must be %r" % (".".join(path), val))
+    for path, items in plan_adds:
+        n = _node(cur, path[:-1])
+        have = (n or {}).get(path[-1]) or []
+        out += ["missing %s: %s" % (".".join(path), it) for it in items if it not in have]
+    return out
+
+
+def user_sandbox_missing():
+    return [x for x in problems(load()) if x.startswith(("sandbox.", "missing sandbox."))]
+
+
+def cmd_sandbox(cmd, args):
+    rest, repo = parse_repo(args)
+    domains, local_binding, flags, i = [], False, [], 0
+    while i < len(rest):
+        if rest[i] == "--domains" and i + 1 < len(rest):
+            domains = [x for x in rest[i + 1].split(",") if x]
+            i += 2
+        else:
+            if rest[i] == "--local-binding":
+                local_binding = True
+            flags.append(rest[i]); i += 1
+    bad = [d for d in domains if not DOMAIN_RE.fullmatch(d)]
+    if bad:
+        print("not a host name: %s" % ", ".join(bad), file=sys.stderr); return 2
+    path, state, _ = project_paths(repo)
+    spath = os.path.join(state, "sandbox-manifest.json")
+    cur = project_load(path)
+    try:
+        om = json.load(open(spath))
+    except (OSError, ValueError):
+        om = None
+    fresh = lambda: copy.deepcopy(om) if om else {"set_prev": {}, "added": {}, "created_dicts": [], "created_lists": [], "settings_created": not os.path.exists(path)}
+    if cmd == "project-sandbox-status":
+        if om is None:
+            print("sandbox: off (no sandbox manifest in %s)" % state); return 1
+        sets, adds = sandbox_plan(repo, state, [], "sandbox/network/allowLocalBinding" in om["set_prev"])
+        p = sandbox_problems(cur, sets, adds) + [x for k, its in om["added"].items() if k == "sandbox/network/allowedDomains"
+                                                  for x in ["missing domain: %s" % d for d in its if d not in (_node(cur, ["sandbox", "network"]) or {}).get("allowedDomains", [])]]
+        print("sandbox: on in %s" % path if not p else "sandbox: DRIFT in %s:\n  %s" % (path, "\n  ".join(p)))
+        return 1 if p else 0
+    if cmd == "project-sandbox-off":
+        if om is None:
+            print("no sandbox manifest in %s: nothing to remove (the sandbox was not enabled by project-sandbox-apply)" % state); return 1
+        new = sandbox_removed(cur, om)
+        if dump(cur) == dump(new):
+            print("nothing to remove"); return 0
+        if flags != ["--confirmed"]:
+            sys.stdout.writelines(difflib.unified_diff(dump(cur).splitlines(True), dump(new).splitlines(True), "a/" + path, "b/" + path))
+            print("\n(dry run; add --confirmed to write)"); return 0
+        bak = project_backup(path, state)
+        project_write(path, dump(new))
+        os.replace(spath, spath + ".removed")
+        print("sandbox removed; backup: %s\nThe project can be checked out on v0.1 (main) now." % bak)
+        return 0
+    sets, adds = sandbox_plan(repo, state, domains, local_binding)
+    m = fresh()
+    new = sandbox_desired(cur, sets, adds, m)
+    if cmd == "project-sandbox-diff":
+        if dump(cur) == dump(new) and os.path.exists(path):
+            print("no change: already enabled"); return 0
+        sys.stdout.writelines(difflib.unified_diff((dump(cur) if os.path.exists(path) else "").splitlines(True), dump(new).splitlines(True), "a/" + path, "b/" + path))
+        print("\nnetwork: %s" % (("allowed domains " + ", ".join(domains)) if domains else "NO allowed domains (no network from sandboxed commands); pass --domains"))
+        miss = user_sandbox_missing()
+        if miss:
+            print("\nNOT APPLICABLE YET: the user-level sandbox settings are missing (run install-hooks.sh diff / apply first):\n  " + "\n  ".join(miss))
+        st, excl = settings_state(repo)
+        if st == "tracked":
+            print("\nNOT REGISTERABLE: %s is tracked by git" % path)
+        elif st == "not-ignored":
+            print("\n%s is NOT git-ignored; project-sandbox-apply also needs (local, never committed):" % path)
+            sys.stdout.write(exclude_diff(excl)[0])
+        print("\nbackup: %s/backups/settings.local.json.bak-deliver-ticket-<ts>; manifest: %s; creates %s/evidence if missing" % (state, spath, state))
+        return 0
+    if cmd == "project-sandbox-apply":
+        if "--confirmed" not in flags or set(flags) - {"--confirmed", "--add-exclude", "--local-binding"}:
+            print("project-sandbox-apply needs --confirmed, only after the user saw project-sandbox-diff and said yes in this conversation", file=sys.stderr); return 2
+        miss = user_sandbox_missing()
+        if miss:
+            print("refused: the user-level sandbox settings are missing (a project-level sandbox without them leaves the unsandboxed retry open):\n  " + "\n  ".join(miss), file=sys.stderr); return 3
+        if not os.path.isfile(os.path.join(state, "guard.json")):
+            print("no guard.json in %s: initialise the project first" % state, file=sys.stderr); return 2
+        st, excl = settings_state(repo)
+        if st == "tracked":
+            print("%s is tracked by git: not writing machine-specific absolute paths there" % path, file=sys.stderr); return 3
+        if st == "not-ignored":
+            if "--add-exclude" not in flags:
+                print("%s is NOT git-ignored. Nothing written. Show project-sandbox-diff and, after the user's yes, run again with --add-exclude." % path, file=sys.stderr); return 3
+            os.makedirs(os.path.dirname(excl), exist_ok=True)
+            with open(excl, "w") as f:
+                f.write(exclude_diff(excl)[1])
+            if settings_state(repo)[0] != "ignored":
+                print("added the exclude line but git still does not ignore the file; not writing", file=sys.stderr); return 3
+        if dump(cur) == dump(new) and os.path.exists(path):
+            print("already enabled, nothing written"); return 0
+        os.makedirs(os.path.join(state, "evidence"), exist_ok=True)
+        bak = project_backup(path, state)
+        with open(spath, "w") as f:                    # m was built from the old manifest above, before this open() truncates it
+            json.dump(m, f, indent=2)
+        project_write(path, dump(new))
+        left = sandbox_problems(project_load(path), sets, adds)
+        if left:
+            print("written file does not verify (%s) - restore from %s" % ("; ".join(left), bak), file=sys.stderr); return 1
+        print("written %s; backup: %s%s" % (path, bak, "" if domains else "\nnote: no --domains, sandboxed commands have no network"))
+        return 0
+    return 2
+
+
+
 def run_hook(script, payload, env, cwd):
     t = time.time()
     p = subprocess.run([os.path.join(HOOKS, script)], input=payload, capture_output=True, text=True, env=env, cwd=cwd, timeout=60)
@@ -634,10 +847,13 @@ def cmd_selftest(args=()):
 
 def main():
     a = sys.argv[1:]
-    cmds = ("status", "diff", "apply", "selftest", "uninstall", "project-status", "project-diff", "project-apply", "project-uninstall")
+    cmds = ("status", "diff", "apply", "selftest", "uninstall", "project-status", "project-diff", "project-apply", "project-uninstall",
+            "project-sandbox-status", "project-sandbox-diff", "project-sandbox-apply", "project-sandbox-off")
     if not a or a[0] not in cmds:
         print(__doc__)
         return 2
+    if a[0].startswith("project-sandbox-"):
+        return cmd_sandbox(a[0], a[1:])
     if a[0].startswith("project-"):
         return cmd_project(a[0], a[1:])
     if a[0] == "selftest":

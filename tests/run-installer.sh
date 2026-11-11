@@ -139,4 +139,84 @@ R4="$D/proj4"; mkdir -p "$R4/.claude" && git -C "$R4" init -q -b main
 key4=$(bash -c ". \"$SK/hooks/lib.sh\"; dt_key \"$R4\""); mkdir -p "$DELIVER_TICKET_HOME/$key4"; printf '{"version":1}\n' > "$DELIVER_TICKET_HOME/$key4/guard.json"
 GIT_CONFIG_GLOBAL="$D/gitconfig-global" "$SK/scripts/install-hooks.sh" project-apply --repo "$R4" --confirmed >/dev/null 2>&1 && echo "ok project-apply when ignored by a global excludesFile" || { fail=1; echo "FAIL global-ignore case"; }
 grep -qF settings.local.json "$R4/.git/info/exclude" 2>/dev/null && { fail=1; echo "FAIL info/exclude touched in the global-ignore case"; } || echo "ok info/exclude untouched in the global-ignore case"
+# --- project-level Bash sandbox: project-sandbox-diff / apply / status / off
+IH="$SK/scripts/install-hooks.sh"
+R5="$D/proj5"; mkdir -p "$R5/.claude" && git -C "$R5" init -q -b main && printf '.claude/settings.local.json\n' > "$R5/.gitignore"
+key5=$(bash -c ". \"$SK/hooks/lib.sh\"; dt_key \"$R5\""); ST5="$DELIVER_TICKET_HOME/$key5"; mkdir -p "$ST5"; printf '{"version":1}\n' > "$ST5/guard.json"
+printf '{"permissions":{"allow":["Bash(ls)"],"ask":["Bash(git push:*)"]},"sandbox":{"network":{"allowedDomains":["mine.example"]}},"theme":"x"}\n' > "$R5/.claude/settings.local.json"; cp "$R5/.claude/settings.local.json" "$D/proj5-orig.json"
+echo '{}' > "$D/user-empty.json"
+UH() { DT_SETTINGS="$D/user-sb.json" "$@"; }
+"$IH" project-sandbox-apply --repo "$R5" --confirmed >/dev/null 2>&1; rc=$?
+[ $rc = 3 ] && cmp -s "$R5/.claude/settings.local.json" "$D/proj5-orig.json" && echo "ok sandbox-apply refuses without the user-level settings (rc 3, nothing written)" || { fail=1; echo "FAIL sandbox-apply without user-level settings: rc=$rc"; }
+DT_SETTINGS="$D/user-sb.json" "$IH" apply --confirmed >/dev/null 2>&1
+UH "$IH" project-sandbox-apply --repo "$R5" >/dev/null 2>&1; [ $? = 2 ] && echo "ok sandbox-apply needs --confirmed" || { fail=1; echo "FAIL sandbox-apply without --confirmed"; }
+UH "$IH" project-sandbox-apply --repo "$R5" --confirmed --domains 'bad host' >/dev/null 2>&1; [ $? = 2 ] && echo "ok sandbox-apply rejects a malformed domain" || { fail=1; echo "FAIL malformed domain accepted"; }
+UH "$IH" project-sandbox-diff --repo "$R5" --domains registry.npmjs.org 2>&1 | grep -q 'allowed domains registry.npmjs.org' && echo "ok sandbox-diff names the domains" || { fail=1; echo "FAIL sandbox-diff domains line"; }
+cmp -s "$R5/.claude/settings.local.json" "$D/proj5-orig.json" && echo "ok sandbox-diff writes nothing" || { fail=1; echo "FAIL sandbox-diff wrote"; }
+UH "$IH" project-sandbox-apply --repo "$R5" --confirmed --domains registry.npmjs.org --local-binding >/dev/null 2>&1 && echo "ok sandbox-apply" || { fail=1; echo "FAIL sandbox-apply"; }
+python3 -I - "$R5/.claude/settings.local.json" "$SK" "$R5" "$ST5" <<'PY' && echo "ok sandbox entries (exact set)" || { fail=1; echo "FAIL sandbox entries"; }
+import json, os, sys
+d = json.load(open(sys.argv[1])); sk, repo, st = sys.argv[2], os.path.realpath(sys.argv[3]), os.path.realpath(sys.argv[4])
+sb, pm = d["sandbox"], d["permissions"]
+assert sb["enabled"] is True and sb["failIfUnavailable"] is True and sb["network"]["allowLocalBinding"] is True
+assert sb["network"]["allowedDomains"] == ["mine.example", "registry.npmjs.org"], sb["network"]
+assert sb["filesystem"]["allowWrite"] == [st + "/evidence", repo + "/.claude/worktrees"], sb["filesystem"]
+ex = sb["excludedCommands"]
+for n in ("session-map.sh", "pending-ticket.sh", "project-map-stale.sh", "ticket-state.sh", "guard-apply.sh"):
+    assert "%s/scripts/%s *" % (sk, n) in ex, n
+for e in ("git push *", "git branch -m *", "glab *", "gh *"):
+    assert e in ex, e
+assert not any(e.startswith("bash ") for e in ex)
+assert "allowUnsandboxedCommands" not in sb      # that one is user level
+al, ask = pm["allow"], pm["ask"]
+assert al[0] == "Bash(ls)" and "Bash(git branch -m *)" in al and "Bash(glab mr view *)" in al and "Bash(gh pr list *)" in al
+for n in ("session-map.sh", "pending-ticket.sh", "project-map-stale.sh"):
+    assert "Bash(%s/scripts/%s *)" % (sk, n) in al and "Bash(%s/scripts/%s *)" % (sk, n) not in ask
+for n in ("ticket-state.sh", "guard-apply.sh"):
+    assert "Bash(%s/scripts/%s *)" % (sk, n) in ask and "Bash(%s/scripts/%s *)" % (sk, n) not in al, n
+assert ask[0] == "Bash(git push:*)"
+for r in ("glab api *", "gh api *", "gh auth *", "glab auth *", "gh secret *", "gh -R *", "gh --repo *", "glab -R *", "glab --repo *", "gh repo *", "gh run *", "gh workflow *", "glab ci *", "glab mr update *", "gh pr edit *"):
+    assert "Bash(%s)" % r in ask, r
+assert not any(a in ask for a in ("Bash(glab *)", "Bash(gh *)"))   # a broad ask would beat the narrow allows
+assert not [a for a in al if a in ask]
+assert d["theme"] == "x"
+PY
+[ -d "$ST5/evidence" ] && echo "ok evidence dir created in the state dir" || { fail=1; echo "FAIL evidence dir"; }
+ls "$ST5/backups" 2>/dev/null | grep -q 'settings.local.json.bak-deliver-ticket' && echo "ok backup in the state dir" || { fail=1; echo "FAIL backup"; }
+[ "$(ls -A "$R5/.claude")" = "settings.local.json" ] && echo "ok nothing else written into the repo's .claude" || { fail=1; echo "FAIL extra files in .claude"; }
+UH "$IH" project-sandbox-status --repo "$R5" >/dev/null 2>&1 && echo "ok sandbox-status: on" || { fail=1; echo "FAIL sandbox-status"; }
+cp "$R5/.claude/settings.local.json" "$D/proj5-on.json"
+UH "$IH" project-sandbox-apply --repo "$R5" --confirmed --domains registry.npmjs.org --local-binding 2>&1 | grep -q 'already enabled' && cmp -s "$R5/.claude/settings.local.json" "$D/proj5-on.json" && echo "ok sandbox-apply is idempotent" || { fail=1; echo "FAIL sandbox-apply not idempotent"; }
+UH "$IH" project-sandbox-apply --repo "$R5" --confirmed --domains registry.npmjs.org,cdn.playwright.dev --local-binding >/dev/null 2>&1 && grep -q cdn.playwright.dev "$R5/.claude/settings.local.json" && echo "ok a second apply adds a domain" || { fail=1; echo "FAIL second apply with another domain"; }
+python3 -I - "$R5/.claude/settings.local.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1])); d["sandbox"]["excludedCommands"].remove("gh *")
+json.dump(d, open(sys.argv[1], "w"), indent=2)
+PY
+UH "$IH" project-sandbox-status --repo "$R5" 2>&1 | grep -q 'DRIFT' && echo "ok sandbox-status reports drift" || { fail=1; echo "FAIL sandbox-status misses drift"; }
+UH "$IH" project-sandbox-apply --repo "$R5" --confirmed --domains registry.npmjs.org,cdn.playwright.dev --local-binding >/dev/null 2>&1
+UH "$IH" project-sandbox-off --repo "$R5" 2>&1 | grep -q 'dry run' && echo "ok sandbox-off without --confirmed is a dry run" || { fail=1; echo "FAIL sandbox-off dry run"; }
+UH "$IH" project-sandbox-off --repo "$R5" --confirmed >/dev/null 2>&1 && echo "ok sandbox-off" || { fail=1; echo "FAIL sandbox-off"; }
+python3 -I - "$R5/.claude/settings.local.json" "$D/proj5-orig.json" <<'PY' && echo "ok apply, apply, apply, off restores the settings (semantically identical)" || { fail=1; echo "FAIL settings not restored after sandbox-off"; }
+import json, sys
+a, b = (json.load(open(x)) for x in sys.argv[1:3])
+assert a == b, (a, b)
+PY
+UH "$IH" project-sandbox-status --repo "$R5" >/dev/null 2>&1 && { fail=1; echo "FAIL sandbox-status says on after off"; } || echo "ok sandbox-status: off after off"
+# a project with no sandbox keys at all: created by apply, gone after off
+R6="$D/proj6"; mkdir -p "$R6" && git -C "$R6" init -q -b main && printf '.claude/settings.local.json\n' > "$R6/.gitignore"
+key6=$(bash -c ". \"$SK/hooks/lib.sh\"; dt_key \"$R6\""); mkdir -p "$DELIVER_TICKET_HOME/$key6"; printf '{"version":1}\n' > "$DELIVER_TICKET_HOME/$key6/guard.json"
+UH "$IH" project-sandbox-apply --repo "$R6" --confirmed >/dev/null 2>&1 && echo "ok sandbox-apply on a project without settings (no domains: empty allowlist)" || { fail=1; echo "FAIL sandbox-apply on a fresh project"; }
+python3 -I -c "import json,sys; d=json.load(open(sys.argv[1])); assert d['sandbox']['network']['allowedDomains']==[]" "$R6/.claude/settings.local.json" && echo "ok empty allowedDomains without --domains" || { fail=1; echo "FAIL allowedDomains"; }
+python3 -I -c "import json,sys; d=json.load(open(sys.argv[1])); assert 'allowLocalBinding' not in d['sandbox']['network']" "$R6/.claude/settings.local.json" && echo "ok allowLocalBinding is opt-in" || { fail=1; echo "FAIL allowLocalBinding set without the flag"; }
+UH "$IH" project-sandbox-off --repo "$R6" --confirmed >/dev/null 2>&1
+[ "$(tr -d ' \n' < "$R6/.claude/settings.local.json")" = "{}" ] && echo "ok sandbox-off leaves {} on a project that had no settings" || { fail=1; echo "FAIL sandbox-off on fresh project: $(cat "$R6/.claude/settings.local.json")"; }
+UH "$IH" project-sandbox-off --repo "$R6" --confirmed >/dev/null 2>&1; [ $? = 1 ] && echo "ok sandbox-off twice: no manifest, rc 1" || { fail=1; echo "FAIL second sandbox-off"; }
+# no guard.json, and a tracked settings file
+R7="$D/proj7"; mkdir -p "$R7" && git -C "$R7" init -q -b main && printf '.claude/settings.local.json\n' > "$R7/.gitignore"
+UH "$IH" project-sandbox-apply --repo "$R7" --confirmed >/dev/null 2>&1; [ $? = 2 ] && echo "ok sandbox-apply refuses before init (no guard.json)" || { fail=1; echo "FAIL sandbox-apply without guard.json"; }
+UH "$IH" project-sandbox-apply --repo "$R3" --confirmed --add-exclude >/dev/null 2>&1; [ $? = 3 ] && [ "$(cat "$R3/.claude/settings.local.json")" = "{}" ] && echo "ok sandbox-apply never touches a tracked settings file" || { fail=1; echo "FAIL sandbox-apply on a tracked file"; }
+R8="$D/proj8"; mkdir -p "$R8" && git -C "$R8" init -q -b main
+key8=$(bash -c ". \"$SK/hooks/lib.sh\"; dt_key \"$R8\""); mkdir -p "$DELIVER_TICKET_HOME/$key8"; printf '{"version":1}\n' > "$DELIVER_TICKET_HOME/$key8/guard.json"
+UH "$IH" project-sandbox-apply --repo "$R8" --confirmed >/dev/null 2>&1; [ $? = 3 ] && [ ! -e "$R8/.claude/settings.local.json" ] && echo "ok sandbox-apply refuses when the file is not git-ignored" || { fail=1; echo "FAIL sandbox-apply on a non-ignored file"; }
 [ $fail = 0 ] && echo "installer: pass" || echo "installer: FAIL"; exit $fail
