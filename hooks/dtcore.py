@@ -321,12 +321,51 @@ def analyze(text, cwd, depth=0):
 
 # ---------------------------------------------------------------- allowlist
 
+_CI = {}
+
+
+def fs_ci(root):
+    """True when the filesystem holding `root` ignores case (detected, not assumed: macOS APFS usually does, Linux
+    usually does not). On such a filesystem `<state>/k/CLOSED/t1` is the file `<state>/k/closed/T1`, and os.path.realpath
+    does not fold case, so every path comparison below has to. Probe: the case-swapped name of the nearest existing
+    ancestor with letters in its name is the same file."""
+    if root in _CI:
+        return _CI[root]
+    q = root
+    while q and not os.path.lexists(q):
+        q = os.path.dirname(q)
+    res = False
+    while q and q != "/":
+        base, par = os.path.basename(q), os.path.dirname(q)
+        if base.swapcase() != base:
+            alt = os.path.join(par, base.swapcase())
+            try:
+                res = os.path.lexists(alt) and os.path.samefile(alt, q)
+            except OSError:
+                res = False
+            break
+        q = par
+    _CI[root] = res
+    return res
+
+
 def under(path, root):
+    if fs_ci(root):
+        path, root = path.casefold(), root.casefold()
     return path == root or path.startswith(root.rstrip("/") + "/")
 
 
 def real(path):
     return os.path.realpath(path)
+
+
+def first_component(path, root):
+    """The first path component of `path` below `root` ("." when path is root). Only valid after under(path, root).
+    Counts components instead of slicing the string, so it holds when under() matched with case folded
+    (os.path.relpath would give ".." for /USERS/x against /Users/x)."""
+    n = len([c for c in root.split("/") if c])
+    parts = [c for c in path.split("/") if c]
+    return parts[n] if len(parts) > n else "."
 
 
 def allowed_roots(g, payload, cwd):
@@ -351,7 +390,7 @@ def allowed_roots(g, payload, cwd):
         except OSError:
             pass
     if cwd and under(real(cwd), wt_root):
-        rel = os.path.relpath(real(cwd), wt_root).split(os.sep)[0]
+        rel = first_component(real(cwd), wt_root)
         roots.append(os.path.join(wt_root, rel))
     return roots
 
@@ -404,12 +443,12 @@ def session_bound(payload, g, cwd):
                 cands.append((v, False, "map"))
             elif k == "worktree":
                 w = real(v)
-                if under(w, wt_root) and w != wt_root:
-                    t = os.path.relpath(w, wt_root).split(os.sep)[0]
+                if under(w, wt_root) and first_component(w, wt_root) != ".":
+                    t = first_component(w, wt_root)
                     if t not in paused:
                         cands.append((t, True, "worktree"))
-    if cwd and under(real(cwd), wt_root) and real(cwd) != wt_root:
-        cands.append((os.path.relpath(real(cwd), wt_root).split(os.sep)[0], True, "cwd"))
+    if cwd and under(real(cwd), wt_root) and first_component(real(cwd), wt_root) != ".":
+        cands.append((first_component(real(cwd), wt_root), True, "cwd"))
     for t, needs_file, via in cands:
         if ticket_closed(t):
             continue
@@ -423,7 +462,7 @@ def protected_state(rp):
     """Written only by the bind hook and the skill's own scripts, in every session."""
     if under(rp, os.path.join(DT_HOME, "sessions")):
         return True
-    return bool(re.match(re.escape(DT_HOME) + r"/[^/]+/(closed(/|$)|delivery\.log$)", rp))
+    return bool(re.match(re.escape(DT_HOME) + r"/[^/]+/(closed(/|$)|delivery\.log$)", rp, re.I if fs_ci(DT_HOME) else 0))
 
 
 def path_ok(p, g, payload, cwd):
@@ -445,7 +484,7 @@ def path_ok(p, g, payload, cwd):
         return None
     claude = os.path.join(HOME, ".claude")
     if under(rp, claude):
-        if re.match(re.escape(claude) + r"/projects/[^/]+/memory(/|$)", rp):
+        if re.match(re.escape(claude) + r"/projects/[^/]+/memory(/|$)", rp, re.I if fs_ci(claude) else 0):
             return None
         return "writes to ~/.claude/ (settings, hooks, skills) are only allowed through scripts/install-hooks.sh"
     if protected_state(rp):

@@ -349,6 +349,46 @@ except dtcore.Block:
     pass
 dtcore.nostate_path("/x/OK", None)
 PY
+echo "# C1: case-insensitive filesystems: CLOSED/t1 is closed/T1 there, so the guard must compare case-insensitively (detected, not assumed)"
+mkdir -p "$S/CiProbe"; if [ -d "$S/ciprobe" ]; then SCI=2; else SCI=0; fi         # what the scratch filesystem (state root) does with a case-swapped name
+if [ -d "$HOME/.CLAUDE" ]; then HCI=2; else HCI=0; fi                             # the same for $HOME/.claude
+echo "scratch fs case-insensitive: $([ $SCI = 2 ] && echo yes || echo no); \$HOME fs: $([ $HCI = 2 ] && echo yes || echo no)"
+mkdir -p "$DT/$key/closed"                                                       # (no marker file: closed/T1 would close the open ticket T1 that the case-variant cwd tests below need)
+for v in "$DT/$key/CLOSED/T1" "$DT/$key/Closed/t1" "$DT/$key/closed/t1" "$DT/$key/DELIVERY.LOG" "$DT/$key/Delivery.Log" "$DT/SESSIONS/zz" "$DT/Sessions/s1"; do
+  for sid in s1 u1; do wsid $SCI $sid "$R" Write "{\"file_path\":\"$v\"}"; wsid $SCI $sid "$R" Edit "{\"file_path\":\"$v\"}"; tsid $SCI guard.sh $sid "$R" "echo x > $v"; tsid $SCI guard.sh $sid "$R" "touch $v"; done
+  NSSID=nsu; nsr $SCI worktree-guard.sh "$nostate" Write "$v"; nsr $SCI guard.sh "$nostate" Bash "echo x > $v"
+  nsr $SCI guard.sh "$X" Bash "echo x >> $v"; NSSID=tk; nsr $SCI worktree-guard.sh "$nostate" Edit "$v"; NSSID=nsu
+done
+echo "## ~/.claude in another case (bound and unbound session); the no-state cwd does not apply this rule at all"
+for sid in s1 u1; do wsid $HCI $sid "$R" Write "{\"file_path\":\"$HOME/.CLAUDE/settings.json\"}"; wsid $HCI $sid "$R" Write "{\"file_path\":\"$HOME/.Claude/skills/x/SKILL.md\"}"; tsid $HCI guard.sh $sid "$R" "echo x > $HOME/.CLAUDE/settings.json"; done
+echo "## the exact spelling and an unrelated case-variant stay as before"
+wsid 2 u1 "$R" Write "{\"file_path\":\"$DT/$key/closed/T1\"}"
+wsid 0 u1 "$R" Write "{\"file_path\":\"$DT/LESSONS.md\"}"                                     # not a protected name in any case
+wsid 0 u1 "$R" Write "{\"file_path\":\"$R/Docs-new.md\"}"
+echo "## a case-variant cwd / mapped worktree inside a ticket worktree binds the real ticket token (T1), never \"..\""
+if [ $SCI = 2 ]; then
+  WV=${W/\/repo\//\/REPO\/}                                                    # same directory, other spelling of one component
+  [ -d "$WV" ] || { fail=$((fail+1)); echo "FAIL C1 setup: $WV is not a directory"; }
+  msg=$(jq -nc --arg cwd "$WV" --arg f "$R/docs/x.md" '{session_id:"cv1",cwd:$cwd,hook_event_name:"PreToolUse",tool_name:"Write",tool_input:{file_path:$f}}' | "$SK/hooks/worktree-guard.sh" 2>&1); rc=$?
+  { [ $rc = 2 ] && echo "$msg" | grep -q 'bound to ticket T1'; } && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL case-variant cwd must bind ticket T1: rc=$rc $msg"; }
+  wsid 0 cv1 "$WV" Write "{\"file_path\":\"$W/src/a.ts\"}"                    # its own worktree stays writable
+  printf 'project=%s\nworktree=%s\n' "$key" "$WV" > "$DT/sessions/cv2"          # EnterWorktree recorded the variant spelling
+  wsid 2 cv2 "$R" Write "{\"file_path\":\"$R/docs/x.md\"}"
+  wsid 0 cv2 "$R" Write "{\"file_path\":\"$W/src/a.ts\"}"
+fi
+python3 - "$SK/hooks" <<'PY' && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL C1 unit: first_component"; }
+import sys; sys.path.insert(0, sys.argv[1]); import dtcore
+fc = dtcore.first_component
+assert fc("/a/b/T1/src", "/a/b") == "T1" and fc("/A/B/T1", "/a/b") == "T1" and fc("/a/b", "/a/b") == "." and fc("/a/b/x", "/a/b") == "x"
+PY
+echo "## exact comparison where detection says case-sensitive (fs_ci patched)"
+python3 - "$SK/hooks" <<'PY' && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL C1 unit: under() case handling"; }
+import sys; sys.path.insert(0, sys.argv[1]); import dtcore
+dtcore.fs_ci = lambda root: False
+assert not dtcore.under("/a/B/c", "/a/b") and dtcore.under("/a/b/c", "/a/b")
+dtcore._CI.clear(); dtcore.fs_ci = lambda root: True
+assert dtcore.under("/a/B/c", "/a/b") and dtcore.under("/A/b", "/a/B") and not dtcore.under("/a/bc", "/a/b")
+PY
 echo "# corrupt guard.json with state => block (except skill scripts)"
 echo '{broken' > "$DELIVER_TICKET_HOME/$key/guard.json"
 t 2 guard.sh "$W" 'ls'
