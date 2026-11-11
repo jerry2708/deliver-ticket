@@ -574,7 +574,7 @@ Open (unverified, user's phase-5 checklist): subagent session ids vs binding; a 
 - Facts (checked 2026-11-11): one skill checkout, `~/.claude/skills/deliver-ticket`; user-level hooks are registered by absolute path into it (`scripts/install_hooks.py:32-33,53`), so `git checkout` swaps `SKILL.md`, stages and hooks together; ticket state is in the shared state root, so both versions read and write the same files. `scripts/install-hooks.sh status` reports whether the registered hooks and permission rules match the checked-out version.
 - A ticket started on one version may not continue on the other when a change touches: the ticket-file fields or stage names (the header carries `stage:` and `next: Read <skill dir>/stages/<N>.md`); the `guard.json` schema (whether the v0.1 loader rejects an unknown key: not checked); the session map or the bind logic; the hook / permission-rule registry in `settings.json`; the plan-approval marker (v0.1 ignores it, so a locked v0.2 ticket would run unlocked on v0.1); the `project.md` section format or `checked:` lines.
 - **State rule (accepted):** v0.2 changes state **additively only** – new optional keys and fields, never a rename or removal. Ticket file and `guard.json` get a `state_version`; every version refuses (stops and says so) a ticket or config whose `state_version` is newer than it knows; a missing value reads as 1 (v0.1).
-- **Safe switch:** (1) close or pause every open ticket – never check out while a ticket session is open, hooks and stage files would change under it; (2) `git status` clean; (3) `git checkout main` or `git checkout v0.2`; (4) `scripts/install-hooks.sh status`; if it differs, `diff`, show me, `apply --confirmed` only on my yes; (5) start a new session (a user-level hook change picked up mid-session is an inference, `plan.md` section 8b).
+- **Safe switch:** (1) close or pause every open ticket – never check out while a ticket session is open, hooks and stage files would change under it; (2) `git status` clean; (2b) **v0.2 -> v0.1 only:** in every project where the v0.2 sandbox is on, run `scripts/install-hooks.sh project-sandbox-off --repo <repo>` BEFORE the checkout (it removes only our sandbox block, via the manifest; a command that is not built yet): v0.1 calls its scripts as `bash scripts/…`, which fail sandboxed (EPERM) and v0.1 `install-hooks.sh status` does not flag the extra keys; (3) `git checkout main` or `git checkout v0.2`; (4) `scripts/install-hooks.sh status`; if it differs, `diff`, show me, `apply --confirmed` only on my yes; (5) start a new session (a user-level hook change picked up mid-session is an inference, `plan.md` section 8b).
 - Open: with one checkout a real ticket and v0.2 work cannot run at the same time. A second checkout of `v0.2` (a `git worktree`, created only on my yes) would need its own hook registration; `DT_SETTINGS` exists for test runs. Whether a second checkout can be tested as a skill without re-registering: unverified.
 
 **Item 1 in detail: permission + stage write lock** (rewritten 2026-11-11 after a critical review of the first draft)
@@ -601,6 +601,66 @@ Open (unverified, user's phase-5 checklist): subagent session ids vs binding; a 
   - V3 – do hook payloads carry `permission_mode`; which `session_id` and cwd do subagent tool calls carry (decides A1 and the unchecked items); does the `ask` rule on pushing still prompt in auto mode (interactive session, scratch bare remote).
   - V4 – does a `!` command run without PreToolUse hooks? TUI only, not testable with `-p`. It only decides how I create the approval (`!` or another terminal); the lock itself rests on what Claude cannot do, which the findings above answer.
   - V5 – does Claude Code's built-in Bash sandbox restrict filesystem writes to configured paths, and can a session switch it off for one call without my yes? If writes outside the configured paths fail at the OS level, the approvals directory and `guard.json` get an OS-level lock for Bash (Write / Edit stay with the hooks). Docs first, then a test; **unverified until tested**.
+- *Probe results (2026-11-11; Claude Code 2.1.311; `claude -p --model haiku` in a scratch project, every verdict read from the transcript's `tool_use` and `tool_result`, not from the reply; our user-level hooks were active and blocked nothing in these runs):*
+  - **V1 – `allowed-tools` lifetime: the grant lasts ONE TURN.** Docs (https://code.claude.com/docs/en/skills): "The grant clears when you send your next message, even though the skill content stays in context", and it "does not restrict which tools are available … your permission settings still govern tools that are not listed." The page says nothing about subagents.
+
+    | Case | Result | Marker | Verdict |
+    |---|---|---|---|
+    | control, no skill | `This command requires approval` | no | the canary is denied without the skill |
+    | model calls the Skill tool, default mode | the Skill call itself fails (`Execute skill: canary-v1`, an approval prompt `-p` cannot answer) | no | no grant started |
+    | same with `--allowedTools Skill` | `canary-ran:model-invoked` | yes | grant applies in that turn |
+    | user types `/canary-v1 Run …` (how `/deliver-ticket` runs) | `canary-ran:slash-same` | yes | grant applies in that turn |
+    | same skill, command not listed | `requires approval` | no | the grant covers only the listed pattern |
+    | subagent started after the skill loaded | the subagent's Bash ran (`parent_tool_use_id` = the Agent call) | yes | the grant reaches subagent calls in that turn |
+    | `disable-model-invocation: true` skill via `/name` | `canary-ran:dmi` | yes | runs under `-p`, grant applies |
+    | next message (`--resume`, a new `-p` process, so only an approximation of the TUI) | `requires approval` | no | grant cleared |
+
+    Not run (needs the TUI): a later turn after the user's next message, and after `/compact`. Script for it: start `claude --model haiku` in the probe project, type `/canary-v1 Run exactly: bash <canary> tui-1` (expect no prompt), then a plain message `Run exactly: bash <canary> tui-2` (expect a prompt), then `/compact` and a third message.
+  - **V5 – Bash sandbox** (https://code.claude.com/docs/en/sandboxing: "The sandbox covers shell commands only. Claude's file tools, MCP servers, and hooks [run outside it]"; "By default, sandboxed commands can write to the current working directory, the per-user temp directory, and any [directories you've added]"; `allowUnsandboxedCommands`: "When it's `false`, Claude Code ignores that parameter."):
+
+    | Case | Result | Verdict |
+    |---|---|---|
+    | write in the cwd | exit 0, file exists | allowed |
+    | write into a `denyWrite` dir / file | `operation not permitted`, file not created | OS-level EPERM, no prompt |
+    | escape retry (`dangerouslyDisableSandbox: true`), setting unset, default mode | `Run outside of the sandbox` (approval prompt, denied in `-p`) | the model can ask; the user's yes decides |
+    | escape retry, `allowUnsandboxedCommands: false` | flag sent, ignored, second try `operation not permitted` | no escape |
+    | Write tool onto the denied paths (`acceptEdits`) | `File created successfully`, both files exist | Write/Edit are NOT under the sandbox |
+
+    Not run: `bypassPermissions`, `auto` and `dontAsk` escape cases (the auto-mode classifier blocked the `bypassPermissions` batch; docs: bypass runs the retry without a prompt, `dontAsk` denies it).
+  - **V6 – auto-allow** (docs: "Claude Code approves a command automatically, with no prompt, when the command runs inside the sandbox"; deny rules and content-scoped ask rules such as `Bash(git push *)` still apply; "A bare `Bash` ask rule … is skipped for commands that run sandboxed"; `FOO=bar npm test` still prompts; hooks "run with your full access"; network "Your allowed domains start empty"; "On macOS, `git fetch`, `git pull`, and `git push` against an SSH remote fail inside the sandbox even when the host is allowed"; excluded entries are matched on "the text of the call" and "a redirect to a file, a `cd`, or a command substitution … keeps the whole call sandboxed"):
+
+    | Case | Result | Verdict |
+    |---|---|---|
+    | unlisted canary, sandbox on, default mode | ran, marker | no prompt (the control without sandbox is denied) |
+    | `FOO=bar bash canary.sh` | `requires approval` | env prefix still prompts |
+    | Bash deny rule | `has been denied` | deny wins |
+    | `git push` with `Bash(git push *)` ask rule | `you haven't granted it yet`, remote untouched | ask wins |
+    | bare `Bash` ask rule | ran | skipped for sandboxed commands |
+    | project PreToolUse hook blocks `BLOCKME` | `hook error … BLOCKME is not allowed`, next command ran, hook marker | hooks still fire |
+    | cwd write / denied dir / denied file | ok / EPERM / EPERM | denyWrite holds under auto-allow |
+    | `curl https://example.com`, empty domains | `CONNECT tunnel failed, response 403`, `deny network-outbound example.com:443` | blocked |
+    | same, host allowed | `200` | works |
+    | `git ls-remote https://github.com/…` empty / allowed | 403 / HEAD sha | blocked / works |
+    | `ssh -o BatchMode=yes localhost true` | `requires approval` | not auto-approved; SSH git on macOS only has the doc statement (no sshd here) |
+    | `pnpm --version`; `git status/diff/add/commit` in a scratch repo | ran | works |
+    | `git push` to a `file://` bare remote, no ask rule | pushed | works, and passes silently without an ask rule |
+    | skill script `session-map.sh show` (read-only) | ran | works |
+    | skill script that writes a denied path (`bind`), sandboxed, with or without `bash` | Python traceback (EPERM) | locked out by the sandbox |
+    | same script in `excludedCommands` + allow rule, absolute path, no `bash` prefix | `session bound to T1 by hand`, session file exists | works, runs unsandboxed |
+    | `cd R && script` | inconclusive: Haiku dropped the `cd` both times | open |
+    | `a && b`, `a \| b`, `a; b`, `echo >> f && git add && git commit` | ran | compounds are fine; the two that prompted had `$?` / `$VAR` (cause inferred) |
+  - **V7 – denyWrite semantics** (scratch tree under `/tmp`, which the sandbox makes writable by default, so rows about ancestors are inconclusive):
+
+    | Case | Result | Verdict |
+    |---|---|---|
+    | `denyWrite` globs `<root>/sessions`, `<root>/*/closed`, `*/guard.json`, `*/delivery.log` | the four paths denied, `evidence/` writable, also a key dir created later | globs work on macOS (docs: Linux/WSL2 only a trailing `/**`) |
+    | `mv`/`rm` a denied file, `mv new guard.json`, write through a symlink | exit 1, files unchanged | blocked |
+    | `ln guard.json hl.json` | exit 1 | hard link not created |
+    | `mv <root>/keyA <root>/keyA.moved` | **succeeded** | **inconclusive: run under `/tmp`.** The real root `~/.local/share/deliver-ticket` is outside the default write set, so renaming its key dir should fail unless the root is added to `allowWrite`; re-run in V7c |
+    | `git branch -m a b` from a linked worktree | `fatal: branch is renamed, but update of config-file failed` (`could not lock config file …/.git/config`) | `.git/config` and `hooks/` are protected paths: stage 1b step 2c fails sandboxed |
+    | `git commit`, `checkout -b`, `worktree add` from a linked worktree | ran | work |
+  - **Decision (2026-11-11): milestone 1d goes via the Bash sandbox, before 1c (the hook lock for Write/Edit). Branch A (frontmatter `allowed-tools`) is dropped: the grant lasts one turn and a ticket has many.** The sandbox serves both goals: fewer non-gate prompts (auto-allow) and an OS-level Bash lock. Write/Edit are not sandboxed and stay with the hooks (1c). Write set: allowlist style (only the needed subdirs of the state root in `allowWrite`, the root itself unwritable), plus the `denyWrite` globs, because a deny always wins. Excluded skill scripts split into two groups: bookkeeping (`session-map.sh`, `pending-ticket.sh`, `project-map-stale.sh`: `excludedCommands` + allow rule, no prompt) and gate actions (`guard-write.sh apply`, `ticket-state.sh done|cancelled|reopen`, `approve-plan` in 1c: `excludedCommands` without an allow rule, so the harness prompts every time and the prompt is the user's yes). Sandbox enabled per project (`<repo>/.claude/settings.local.json`); user level only `allowUnsandboxedCommands: false`, `denyWrite` and `denyRead`.
+  - Scratch transcripts (not copied): `<scratchpad>/probes/out/v1-*`, `v5*`, `v6-*`, `v7-*` (`.jsonl`, `.summary`, `.err`) and the projects `probes/v1ctl`, `v1skill`, `v5a`, `v5b`, `v6`, `v7`, where `<scratchpad>` is the 2026-11-11 session scratchpad.
 - *Stage write lock:*
   - **Keyed on the path and the marker, in every session:** any tool write under `<repo>/.claude/worktrees/<ID>/` is blocked while ticket `<ID>` is open and has no valid marker. Not keyed on the session's binding (A1) and never on the ticket file's `stage:` field (Claude writes it). State dir and ticket file stay writable. A non-ticket session of mine is held to the same rule for that worktree.
   - **Marker:** `<state>/<key>/approvals/<ID>.plan`, created only by me with `<absolute skill dir>/scripts/ticket-state.sh approve-plan <ID>` (run with `!` or in another terminal; a `!` command runs in the session's cwd, usually the worktree, so a relative `scripts/...` path would not resolve – stage 2 prints the complete command with the absolute skill path and its arguments, ready to paste), holding the hash of the ticket file's plan section. Valid = present and the hash matches the current plan section, so an edited plan re-locks by itself; `reopen` and `rework` rename the marker (nothing is deleted).
