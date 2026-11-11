@@ -43,6 +43,12 @@ eq "$(rc $SM pause T1 --reason x --session a1 --repo $R)" 1 "pause refused after
 eq "$(rc $SM pause T1 --after-stage8 --reason x --session a1 --repo $R)" 1 "--after-stage8 refused at stage 7"
 tf T1 8
 eq "$(rc $SM pause T1 --after-stage8 --reason 'waiting for review' --session a1 --repo $R)" 0 "--after-stage8 allowed at stage 8"
+eq "$(write_ok a1)" 2 "A1: paused after stage 8, the worktree exists: still bound (main checkout read-only)"
+eq "$(rc $SM show T1 --session a1 --repo $R)" 0 "A1: show reports bound (pause ignored while the worktree exists)"
+$SM show T1 --session a1 --repo $R | grep -qx 'bound to T1: yes' && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL A1: show text"; }
+bind a7 '/deliver-ticket T1 again'; tf T1 8
+out=$($SM pause T1 --after-stage8 --reason 'waiting for review' --session a7 --repo $R 2>&1)
+case "$out" in *"stays bound"*) pass=$((pass+1));; *) fail=$((fail+1)); echo "FAIL A1: pause message must not say released: $out";; esac
 echo "# rebind: the word after /deliver-ticket was not the ticket ID"
 bind a2 '/deliver-ticket fix cart bug'
 eq "$(rc $SM rebind fix WL-05 --session a2 --repo $R)" 1 "rebind needs the real ticket file first"

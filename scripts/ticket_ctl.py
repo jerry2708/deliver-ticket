@@ -104,12 +104,19 @@ def main():
     paused = [v for k, v in lines if k == "paused"]
     has_wt = any(k == "worktree" for k, v in lines)
 
+    def wt_exists(t):
+        return os.path.isdir(os.path.join(os.path.realpath(a.repo), ".claude", "worktrees", t))
+
+    def pause_counts(t):
+        """Same rule as hooks/dtcore.py session_bound: a pause is ignored while .claude/worktrees/<t> exists on disk."""
+        return t in paused and not wt_exists(t)
+
     if a.tool == "session-map":
         if a.action == "show":
             for k, v in lines:
                 print("%s=%s" % (k, v))
             if a.ids:
-                ok = a.ids[0] in tokens and a.ids[0] not in paused
+                ok = a.ids[0] in tokens and not pause_counts(a.ids[0])
                 print("bound to %s: %s" % (a.ids[0], "yes" if ok else "NO"))
                 return 0 if ok else 1
             return 0
@@ -142,6 +149,10 @@ def main():
                 print("already paused"); return 0
             write_map(home, a.session, lines + [("paused", t)])
             log(state, a.session, t, "pause", a.reason)
+            if wt_exists(t):
+                print("pause recorded, but %s stays bound: its worktree exists and the guard ignores a pause then "
+                      "(until ticket-state.sh done|cancelled; do other work in a new session)" % t)
+                return 0
             print("session released from %s (re-binds on the next /deliver-ticket %s prompt)" % (t, t))
             return 0
         if a.action == "rebind":

@@ -212,6 +212,20 @@ wsid 0 p1 "$R" Write "{\"file_path\":\"$R/docs/x.md\"}"                         
 bind() { jq -nc --arg cwd "$2" --arg sid "$1" --arg p "$3" '{session_id:$sid,cwd:$cwd,hook_event_name:"UserPromptSubmit",prompt:$p}' | "$SK/hooks/bind-session.sh"; }
 bind p1 "$R" '/deliver-ticket T9 here is the answer'                            # next prompt for the ticket re-binds
 wsid 2 p1 "$R" Write "{\"file_path\":\"$R/docs/x.md\"}"
+echo "## A1: a pause does not unbind a ticket that has a worktree (T1: worktree exists, ticket file exists)"
+printf 'project=%s\nticket=T1\nworktree=%s\npaused=T1\n' "$key" "$W" > "$DT/sessions/pw"
+wsid 2 pw "$R" Write "{\"file_path\":\"$R/docs/x.md\"}"                          # paused, worktree on disk: main checkout still read-only
+wsid 2 pw "$R" Edit "{\"file_path\":\"$R/docs/x.md\"}"
+tsid 2 guard.sh pw "$R" "echo hi > $R/docs/y.md"
+tsid 2 guard.sh pw "$R" 'echo x > /Users/Shared/outside.txt'
+wsid 0 pw "$R" Write "{\"file_path\":\"$W/src/a.ts\"}"                          # the worktree itself stays writable
+wsid 2 pw "$R" Write "{\"file_path\":\"$DT/$key/closed/T1\"}"                    # closed/ stays protected
+printf 'project=%s\nticket=T1\npaused=T1\n' "$key" > "$DT/sessions/pw2"          # no worktree= line: the disk, not the map, decides
+wsid 2 pw2 "$R" Write "{\"file_path\":\"$R/docs/x.md\"}"
+printf 'project=other-00000000\nticket=T1\nworktree=%s\npaused=T1\n' "$W" > "$DT/sessions/pw3"
+wsid 0 pw3 "$R" Write "{\"file_path\":\"$R/docs/x.md\"}"                         # a ticket of another project: unbound here, as before
+wsid 0 u1 "$R" Write "{\"file_path\":\"$R/docs/x.md\"}"                           # session without a ticket: unchanged
+tsid 0 guard.sh u1 "$R" "echo hi > $R/docs/y.md"
 echo "## bookkeeping is protected in EVERY session (no self-unbind)"
 for sid in u1 s1; do
   wsid 2 $sid "$R" Write "{\"file_path\":\"$DT/sessions/s1\"}"

@@ -395,7 +395,10 @@ def session_bound(payload, g, cwd):
     lines = read_map(sid) if sid else []
     cands = []                                       # (token, ticket file must exist, how it binds)
     if any(k == "project" and v == proj for k, v in lines):
-        paused = {v for k, v in lines if k == "paused"}
+        # A pause only counts while the ticket has no worktree on disk. The session can set a pause itself
+        # (session-map.sh pause --after-stage8 trusts the ticket file's `stage:`, which Claude writes), so a ticket
+        # with code must not be unbound by it.
+        paused = {v for k, v in lines if k == "paused" and not os.path.isdir(os.path.join(wt_root, v))}
         for k, v in lines:
             if k == "ticket" and TOKEN_RE.fullmatch(v) and v not in paused:
                 cands.append((v, False, "map"))
