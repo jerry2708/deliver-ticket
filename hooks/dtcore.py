@@ -778,6 +778,45 @@ def check_canonical(c):
                       % (prog, " ".join(pat), prog, " ".join(pat)))
 
 
+# Gate scripts (install_hooks.GATES; a unit test keeps the two lists equal): the user's yes is the permission prompt on the script's full path.
+# is_skill_script exempts every script under scripts/ from the hook, and an `ask` rule matches the command TEXT as a prefix, so `bash <script>`,
+# `python3 <script>`, a wrapper, or the backing module (guard_apply.py, ticket_ctl.py ticket-state) would run without that prompt. A gate action is
+# allowed only as `<skill dir>/scripts/<name>.sh ...`: argv[0] literally that absolute path, no interpreter, wrapper, assignment or nesting.
+GATE_SCRIPTS = {"ticket-state.sh", "guard-apply.sh"}
+GATE_MODULES = {"guard_apply.py": None, "ticket_ctl.py": "ticket-state"}      # module -> the argument that makes it a gate action (None: always)
+
+
+def check_gate(c):
+    a = c.argv
+    if not a:
+        return
+    cand, interp, rest = a[0], False, a[1:]
+    if pname(cand) in SHELLS | {"python3", "python"}:
+        words = [i for i, w in enumerate(a[1:], 1) if not w.startswith("-")]      # python3 -I script, bash -e script: the first non-option word
+        if not words:
+            return
+        cand, interp, rest = a[words[0]], True, a[words[0] + 1:]
+    if SUBST in cand or "$" in cand:
+        return
+    base = c.cwd or os.getcwd()
+    rp = real(os.path.join(base, os.path.expanduser(cand)))
+    if not under(rp, SKILL_SCRIPTS):
+        return
+    name = os.path.basename(rp).lower()        # recognised folded (is_skill_script and under() fold case on this filesystem); ALLOWED only byte for byte below
+    if name in GATE_MODULES:
+        arg = GATE_MODULES[name]
+        if arg is not None and arg not in rest:
+            return
+        shname = {"guard_apply.py": "guard-apply.sh", "ticket_ctl.py": "ticket-state.sh"}[name]
+        block("%s is the module behind the gate script %s: a gate action runs as `%s <args>` (full path, no interpreter), so the permission prompt "
+              "on that path is the user's yes" % (name, shname, os.path.join(SKILL_SCRIPTS, shname)))
+    elif name in GATE_SCRIPTS:
+        want = os.path.join(SKILL_SCRIPTS, name)
+        if interp or a[0] != want or c.prefix or c.assigns or c.nested:
+            block("%s is a gate action and is spelled so its permission ask rule would not match it (bash / python3 in front, a relative or other "
+                  "path, a wrapper, an env assignment, or inside bash -c / eval / $( )): run it exactly as `%s <args>`" % (name, want))
+
+
 def command_pushes(cmds, g):
     """Yield (Cmd, dry_run, push_cwd) for each git push; applies the git checks only to push."""
     for c in cmds:
@@ -1084,6 +1123,7 @@ def check_cmd(c, g, payload, all_cmds=()):
         check_search(c, prog)
 
     check_canonical(c)
+    check_gate(c)
 
     # --- git
     if prog == "git":
@@ -1289,7 +1329,7 @@ def mode_wguard(payload, g):
     if g is None:
         rp = real(os.path.join(cwd or "/", p))
         if protected_state(rp):
-            block("%s is protected state - a broken guard.json is replaced with scripts/guard-write.sh (candidate: "
+            block("%s is protected state - a broken guard.json is replaced with scripts/guard-apply.sh (candidate: "
                   "<state>/guard.candidate.json)" % rp)
         if under(rp, DT_HOME):
             return
@@ -1345,6 +1385,7 @@ def mode_nostate(payload):
         for c in cmds:
             a = c.argv
             prog = pname(a[0]) if a else ""
+            check_gate(c)
             if is_skill_script(c):
                 targets = [t for _, t in c.redirs]
             else:

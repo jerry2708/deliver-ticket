@@ -58,6 +58,10 @@ dt_nostate() {
   if [ $hit = 1 ]; then
     named=1
   else
+    # a gate script or its backing module (their calls must be spelled one way, dtcore.py check_gate)
+    case "$PAYLOAD" in *guard-apply*|*guard_apply*|*ticket-state*|*ticket_ctl*) hit=1 ;; esac
+  fi
+  if [ $hit = 0 ]; then
     # prefix: start of the command string, separators, an absolute path (/bin/rm), `\rm`; after the verb a space or a JSON-escaped tab
     for pre in '"' ' ' ';' '&' '|' '(' '`' '/' '\'; do
       for verb in rm rmdir unlink shred mv; do

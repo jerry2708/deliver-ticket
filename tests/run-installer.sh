@@ -45,6 +45,34 @@ import json, sys
 a, b = (json.load(open(x)) for x in sys.argv[1:3])
 assert a == b, (a, b)
 PY
+# --- the scripts the sandbox block and the user-level ask rules name exist and are executable; the gate scripts' ask rules are user level
+python3 -I - "$SK" <<'PY' && echo "ok every BOOKKEEPING and GATES script exists and is executable" || { fail=1; echo "FAIL a BOOKKEEPING / GATES script is missing or not executable"; }
+import os, sys
+sys.path.insert(0, sys.argv[1] + "/scripts"); os.environ["DT_SETTINGS"] = "/nonexistent"
+import install_hooks as ih
+for n in ih.BOOKKEEPING + ih.GATES:
+    p = os.path.join(sys.argv[1], "scripts", n)
+    assert os.path.isfile(p) and os.access(p, os.X_OK), p
+for g in ih.GATES:
+    assert "Bash(%s *)" % os.path.join(ih.SKILL, "scripts", g) in ih.ASK, g
+assert not set(ih.GATES) & set(ih.BOOKKEEPING)
+PY
+printf '{"theme":"dark"}\n' > "$D/gate.json"
+DT_SETTINGS="$D/gate.json" "$SK/scripts/install-hooks.sh" apply --confirmed >/dev/null 2>&1
+python3 -I - "$D/gate.json" "$SK" <<'PY' && echo "ok user-level ask rules for the gate scripts" || { fail=1; echo "FAIL user-level gate ask rules"; }
+import json, sys
+ask = json.load(open(sys.argv[1]))["permissions"]["ask"]
+for g in ("ticket-state.sh", "guard-apply.sh"):
+    assert "Bash(%s/scripts/%s *)" % (sys.argv[2], g) in ask, g
+PY
+python3 -I - "$D/gate.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1])); d["permissions"]["ask"] = [r for r in d["permissions"]["ask"] if "guard-apply.sh" not in r]
+json.dump(d, open(sys.argv[1], "w"), indent=2)
+PY
+DT_SETTINGS="$D/gate.json" "$SK/scripts/install-hooks.sh" status 2>&1 | grep -q 'missing permission ask: Bash(.*guard-apply.sh \*)' && echo "ok status flags a missing gate ask rule" || { fail=1; echo "FAIL status misses a gate ask rule"; }
+DT_SETTINGS="$D/gate.json" "$SK/scripts/install-hooks.sh" uninstall --confirmed >/dev/null 2>&1
+python3 -I -c "import json,sys; d=json.load(open(sys.argv[1])); assert d=={'theme':'dark'}, d" "$D/gate.json" && echo "ok uninstall removes the gate ask rules" || { fail=1; echo "FAIL uninstall left gate rules"; }
 # --- user-level sandbox keys: allowUnsandboxedCommands false + denyWrite for the protected state; uninstall restores the old values exactly
 export DELIVER_TICKET_HOME="$D/sbhome"
 python3 -I - "$D/sb1.json" <<'PY'

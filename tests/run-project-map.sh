@@ -33,7 +33,8 @@ pass=0; fail=0
 ck() { local want=$1 label=$2; shift 2; local out; out=$("$SK/scripts/project-map-stale.sh" "$@" 2>&1); local rc=$?
   if echo "$out" | grep -q -e "$want"; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL $label: want /$want/"; echo "$out" | sed 's/^/   /'; fi; LAST=$out; LASTRC=$rc; }
 eq() { [ "$1" = "$2" ] && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL $3: got [$1] want [$2]"; }; }
-G=(--repo "$R" --ref main)
+printf '{"repo_root":"%s","base_branch":"main"}' "$R" > "$S/guard.json"     # project.md ($P) lives next to it, as in a state dir
+G=(--guard "$S/guard.json")
 
 echo "# nothing changed -> all fresh, rc 0"
 write_md; ck '^fresh Web source' nochange check "$P" "${G[@]}"; eq "$LASTRC" 0 "rc nochange"
@@ -126,4 +127,12 @@ printf '## Y\nchecked: deadbeef00 · 2026-01-01 · watch: apps/**\n' > "$P"
 ck '^stale Y :: checked sha deadbeef00 not found' badsha check "$P" "${G[@]}"
 printf '{"repo_root":"%s","base_branch":"main"}' "$R" > "$S/guard.json"
 ck '^stale Y' guardjson check "$P" --guard "$S/guard.json"
+echo "# apply / mark-checked write only <state>/project.md next to the given guard.json"
+write_md; mkdir -p "$S/other"; cp "$P" "$S/other/project.md"; cp "$P" "$S/notes.md"; before=$(cat "$S/other/project.md")
+ck 'next to the guard.json' other-dir apply "$S/other/project.md" "${G[@]}"; eq "$LASTRC" 2 "apply refuses a project.md in another directory"; eq "$(cat "$S/other/project.md")" "$before" "other dir untouched"
+ck 'next to the guard.json' other-name apply "$S/notes.md" "${G[@]}"; eq "$LASTRC" 2 "apply refuses another file name"
+ck 'next to the guard.json' mark-other mark-checked "$S/other/project.md" "${G[@]}" "Web source"; eq "$LASTRC" 2 "mark-checked refuses another directory"
+ck 'pass --guard' no-guard apply "$P" --repo "$R" --ref main; eq "$LASTRC" 2 "apply without --guard refuses"
+ln -sf "$S/other/project.md" "$S/sub-link.md" 2>/dev/null; ck 'next to the guard.json' symlink apply "$S/sub-link.md" "${G[@]}"; eq "$LASTRC" 2 "a symlink to another file refuses"
+ck 'stale' check-other check "$S/other/project.md" "${G[@]}"; eq "$(cat "$S/other/project.md")" "$before" "check still reads any path and writes nothing"
 echo "pass=$pass fail=$fail"; [ $fail = 0 ]

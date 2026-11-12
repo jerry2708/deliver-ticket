@@ -210,6 +210,13 @@ def main():
         repo, ref = repo or g["repo_root"], ref or g["base_branch"]
     if not (repo and ref):
         print("need --guard, or --repo and --ref", file=sys.stderr); return 2
+    if a.cmd in ("apply", "mark-checked"):
+        # these two WRITE the file and run unprompted and unsandboxed: only <state>/project.md of the project whose guard.json was passed
+        if not a.guard:
+            print("%s writes the file: pass --guard <state>/guard.json" % a.cmd, file=sys.stderr); return 2
+        want = os.path.join(os.path.realpath(os.path.dirname(os.path.realpath(a.guard))), "project.md")
+        if os.path.realpath(a.project_md) != want:
+            print("%s writes only <state>/project.md next to the guard.json given (%s), not %s" % (a.cmd, want, a.project_md), file=sys.stderr); return 2
     text = open(a.project_md).read()
     lines, secs = parse(text)
     if not any(s["checked_line"] is not None for s in secs):

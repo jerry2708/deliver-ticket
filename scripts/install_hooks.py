@@ -41,7 +41,11 @@ SKILL = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 HOOKS = os.path.join(SKILL, "hooks")
 SETTINGS = os.path.realpath(os.environ.get("DT_SETTINGS") or os.path.expanduser("~/.claude/settings.json"))
 
-ASK = ["Bash(git push:*)", "Bash(glab mr create:*)", "Bash(gh pr create:*)"]
+BOOKKEEPING = ["session-map.sh", "pending-ticket.sh", "project-map-stale.sh"]   # sandbox: excluded + allow rule: no prompt
+GATES = ["ticket-state.sh", "guard-apply.sh"]                                     # excluded + ask rule on the full path: the prompt is the user's yes
+# The gate scripts' ask rules are USER level too: with the sandbox off (or in a project that never enabled it) nothing else would ask, and auto mode
+# ran an excluded command without a prompt (probe V8 d4).
+ASK = ["Bash(git push:*)", "Bash(glab mr create:*)", "Bash(gh pr create:*)"] + ["Bash(%s *)" % os.path.join(SKILL, "scripts", g) for g in GATES]
 DENY = ["Bash(glab mr merge:*)", "Bash(gh pr merge:*)", "Read(**/.env*)"]
 # (event, matcher, script, timeout seconds, onFailure block?)
 HOOK_SPECS = [
@@ -557,8 +561,6 @@ def cmd_project(cmd, args):
 
 
 # ---- project level: the Bash sandbox in <repo>/.claude/settings.local.json ---------------------------------------------------------------------------
-BOOKKEEPING = ["session-map.sh", "pending-ticket.sh", "project-map-stale.sh"]   # excluded + allow rule: no prompt
-GATES = ["ticket-state.sh", "guard-apply.sh"]                                     # excluded + ask rule on the full path: the prompt is the user's yes
 # An ask rule always beats an allow rule (docs, "Manage permissions": "rule specificity doesn't change the order"), so a broad `glab *` ask with narrow
 # allows cannot work: these are enumerated. Option-before-subcommand forms (-R / --repo) are listed too; see the README limits for what a prefix list misses.
 CLI_ASK = (["glab " + w + " *" for w in ("api", "auth", "variable", "repo", "ci", "release", "-R", "--repo")] +

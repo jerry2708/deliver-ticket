@@ -519,6 +519,31 @@ assert c.argv[0] == "GIT" and c.prefix == ["ENV"], (c.argv, c.prefix)
 assert [x.argv[:2] for x in dtcore.analyze('BASH -c "RM -rf x"', "/tmp")][-1] == ["RM", "-rf"]
 assert dtcore.analyze("EXPORT FOO=1", "/tmp")[0].argv[0] == "EXPORT"
 PY
+echo "# G1: a gate action (guard-apply.sh, ticket-state.sh) only as <skill>/scripts/<name>.sh with nothing in front: the ask rule on that path is the user's yes"
+SKS=$SK/scripts
+for c in "python3 $SKS/guard_apply.py c.json --repo $R" "bash $SKS/guard-apply.sh c.json --repo $R" "sh $SKS/ticket-state.sh done T1 --reason x --repo $R" "bash $SKS/ticket-state.sh done T1 --reason x --repo $R" \
+  "python3 $SKS/ticket_ctl.py ticket-state done T1 --reason x --repo $R" "python3 -I $SKS/ticket_ctl.py ticket-state cancelled T1 --reason x --repo $R" "env $SKS/guard-apply.sh c.json --repo $R" \
+  "FOO=1 $SKS/ticket-state.sh done T1 --reason x --repo $R" "cd $SKS && ./guard-apply.sh c.json --repo $R" "bash -c \"$SKS/guard-apply.sh c.json --repo $R\"" \
+  "echo \$($SKS/ticket-state.sh done T1 --reason x --repo $R)" "$SKS/../scripts/guard-apply.sh c.json --repo $R" "xargs $SKS/guard-apply.sh" "BASH $SKS/guard-apply.sh c.json --repo $R" \
+  "command $SKS/ticket-state.sh done T1 --reason x --repo $R" "nohup $SKS/guard-apply.sh c.json --repo $R" "python3 $SKS/guard_apply.py"; do gx 2 Bash "$c"; done
+for c in "$SKS/guard-apply.sh c.json --repo $R" "$SKS/guard-apply.sh --repo $R c.json" "$SKS/ticket-state.sh done T1 --reason x --repo $R" "$SKS/ticket-state.sh reopen T1 --reason x --repo $R" \
+  "bash $SKS/session-map.sh show T1 --session s --repo $R" "python3 $SKS/ticket_ctl.py session-map show T1 --session s --repo $R" "bash $SKS/guard-write.sh verify --repo $R" \
+  "bash $SKS/guard-write.sh diff c.json --repo $R" "python3 $SKS/validate-guard.py x.json" "bash $SKS/pending-ticket.sh save T1 --repo $R" "bash $SKS/project-map-stale.sh check p.md --guard g.json"; do gx 0 Bash "$c"; done
+# case variants resolve to the same file on a case-insensitive filesystem, but the ask rule is a literal prefix: only the exact spelling is allowed
+if [ -d "${SK/deliver-ticket/DELIVER-TICKET}" ]; then
+  UP=${SK/deliver-ticket/DELIVER-TICKET}; DOT=${SKS/.claude/.CLAUDE}
+  for c in "$SKS/GUARD-APPLY.sh c.json --repo $R" "$SKS/Guard-Apply.sh c.json --repo $R" "$SKS/Ticket-State.sh done T1 --reason x --repo $R" "$SKS/TICKET-STATE.SH done T1 --reason x --repo $R" \
+    "$UP/scripts/guard-apply.sh c.json --repo $R" "$DOT/guard-apply.sh c.json --repo $R" "$DOT/ticket-state.sh done T1 --reason x --repo $R" "python3 $SKS/GUARD_APPLY.PY c.json --repo $R" \
+    "python3 $SKS/Ticket_Ctl.py ticket-state done T1 --reason x --repo $R"; do gx 2 Bash "$c"; done
+  gx 0 Bash "$SKS/guard-apply.sh c.json --repo $R"
+fi
+python3 - "$SK/hooks" "$SK/scripts" <<'PY' && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL G1 unit: hook GATE_SCRIPTS vs install_hooks.GATES"; }
+import os, sys
+sys.path.insert(0, sys.argv[1]); sys.path.insert(0, sys.argv[2]); os.environ["DT_SETTINGS"] = "/nonexistent"
+import dtcore, install_hooks as ih
+assert dtcore.GATE_SCRIPTS == set(ih.GATES), (dtcore.GATE_SCRIPTS, ih.GATES)
+assert set(dtcore.GATE_MODULES) == {"guard_apply.py", "ticket_ctl.py"}
+PY
 echo "# corrupt guard.json with state => block (except skill scripts)"
 echo '{broken' > "$DELIVER_TICKET_HOME/$key/guard.json"
 t 2 guard.sh "$W" 'ls'
