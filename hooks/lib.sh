@@ -39,7 +39,9 @@ dt_init() {
 # only a hit on the name (DT_NAMED=1) also blocks targets it cannot resolve. Known limits: a path never spelled with the
 # root's name or built by a variable, globs, interpreters, symlinks made earlier.
 dt_nostate() {
-  local b1 b2 phys sk pl pre verb hit=0 named=0
+  local b1 b2 phys sk pl pre verb hit=0 named=0 ncm
+  # command names and path names are case-insensitive on a case-insensitive filesystem (`RM -rf` runs rm): match without case
+  ncm=$(shopt -p nocasematch); shopt -s nocasematch
   # The default root's name is the skill's own directory name: take the skill dir's path out of the text first, or every
   # skill script call (and every command run with the skill repo as cwd) would be a hit. `<skill dir>/../..` spellings
   # keep the rest of the text, so they still match.
@@ -63,6 +65,7 @@ dt_nostate() {
       done
     done
   fi
+  eval "$ncm"
   [ $hit = 1 ] || return 0
   DT_STATE=""
   DT_NAMED=$named

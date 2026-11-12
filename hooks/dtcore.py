@@ -258,6 +258,12 @@ def resolve_vars(p):
     return p
 
 
+def pname(word):
+    """Program name for every rule: basename, lower case. Command names are case-insensitive on a case-insensitive filesystem
+    (`GIT --version` runs git, `RM -rf` runs rm - probed on macOS APFS), and a rule that compared the spelling would miss them."""
+    return os.path.basename(word).lower()
+
+
 class Cmd:
     def __init__(self, argv, redirs, cwd, assigns, prefix=(), nested=False):
         self.argv, self.redirs, self.cwd, self.assigns = argv, redirs, cwd, assigns
@@ -290,9 +296,9 @@ def analyze(text, cwd, depth=0):
                 continue
             if not argv and ENV_RE.match(v):
                 assigns.append(v)
-            elif not argv and (v in KEYWORDS or ("/" in v and os.path.basename(v) in WRAPPERS)):
+            elif not argv and (v.lower() in KEYWORDS or ("/" in v and pname(v) in WRAPPERS)):
                 prefix.append(v)
-            elif not argv and v == "export":
+            elif not argv and v.lower() == "export":
                 argv.append(v)
             else:
                 argv.append(v)
@@ -313,7 +319,7 @@ def analyze(text, cwd, depth=0):
             continue
         c = Cmd(argv, redirs, cwd, assigns, prefix, depth > 0)
         out.append(c)
-        prog = os.path.basename(argv[0]) if argv else ""
+        prog = pname(argv[0]) if argv else ""
         if prog in SHELLS and "-c" in argv:
             idx = argv.index("-c")
             if idx + 1 < len(argv):
@@ -647,7 +653,7 @@ def is_skill_script(c):
     if not a:
         return False
     cand = a[0]
-    if os.path.basename(cand) in SHELLS | {"python3", "python"} and len(a) > 1:
+    if pname(cand) in SHELLS | {"python3", "python"} and len(a) > 1:
         cand = a[1]
     if SUBST in cand or "$" in cand:
         return False
@@ -749,7 +755,7 @@ def check_canonical(c):
     a = c.argv
     if not a:
         return
-    prog = os.path.basename(a[0])
+    prog = pname(a[0])
     plain = a[0] == prog and not c.prefix and not c.assigns and not c.nested
     if prog == "git":
         sub, _, _, _ = parse_git(a)
@@ -775,7 +781,7 @@ def check_canonical(c):
 def command_pushes(cmds, g):
     """Yield (Cmd, dry_run, push_cwd) for each git push; applies the git checks only to push."""
     for c in cmds:
-        if c.argv and os.path.basename(c.argv[0]) == "git":
+        if c.argv and pname(c.argv[0]) == "git":
             sub, rest, over, cvals = parse_git(c.argv)
             if sub == "push":
                 cwd = c.cwd
@@ -1052,7 +1058,7 @@ def check_search(c, prog):
 
 def check_cmd(c, g, payload, all_cmds=()):
     a = c.argv
-    prog = os.path.basename(a[0]) if a else ""
+    prog = pname(a[0]) if a else ""
     exempt = is_skill_script(c)
 
     for asg in c.assigns + ([x for x in a[1:] if ENV_RE.match(x)] if prog == "export" else []):
@@ -1233,7 +1239,7 @@ def mode_verify(payload, g):
     except ParseError as e:
         block("cannot parse the command (%s) - blocked" % e)
     if g is None:
-        if any(c.argv and os.path.basename(c.argv[0]) == "git" and "push" in c.argv for c in cmds):
+        if any(c.argv and pname(c.argv[0]) == "git" and "push" in c.argv for c in cmds):
             block("guard.json is unreadable - push blocked")
         return
     pushes = [p for p in command_pushes(cmds, g) if not p[1]]
@@ -1338,7 +1344,7 @@ def mode_nostate(payload):
             block("cannot parse the command (%s) and it names the state root - blocked, rewrite it more simply" % e)
         for c in cmds:
             a = c.argv
-            prog = os.path.basename(a[0]) if a else ""
+            prog = pname(a[0]) if a else ""
             if is_skill_script(c):
                 targets = [t for _, t in c.redirs]
             else:

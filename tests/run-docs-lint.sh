@@ -7,6 +7,24 @@ ok() { if [ "$1" = 0 ]; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL
 has() { grep -q -- "$2" "$1"; ok $? "$1 should contain: $2"; }
 hasnt() { ! grep -rq -- "$2" $1; ok $? "$1 must not contain: $2"; }
 FILES="SKILL.md init.md README.md stages templates"
+echo "# test runners: every helper function is defined before its first use (an undefined helper is 'command not found', rc 127, and silently skips its cases)"
+python3 - "$SK" <<'PY'; ok $? "a tests/run-*.sh runner uses a helper before it is defined"
+import glob, re, sys
+bad = []
+for f in sorted(glob.glob(sys.argv[1] + "/tests/run-*.sh")):
+    lines = open(f).read().split("\n")
+    defs = {}
+    for i, l in enumerate(lines):
+        m = re.match(r"^([A-Za-z_][A-Za-z0-9_]*)\(\)\s*\{", l)
+        if m and m.group(1) not in defs:
+            defs[m.group(1)] = i
+    for name, d in defs.items():
+        use = re.compile(r"(^|[;&|(]\s*|\bdo\s+|\bthen\s+|\$\(\s*)" + re.escape(name) + r"\s")
+        for i, l in enumerate(lines[:d]):
+            if not l.lstrip().startswith("#") and use.search(l):
+                bad.append("%s:%d uses %s() before its definition on line %d" % (f, i + 1, name, d + 1)); break
+print("\n".join(bad)); sys.exit(1 if bad else 0)
+PY
 echo "# skill files are read with absolute paths (backlog item 2)"
 hasnt "$FILES" 'cd [^;&|]*deliver-ticket[^;&|]*&&[^;&|]*\(cat\|head\|sed\)'
 # an instruction to cd into the skill is only allowed as a prohibition ("Never `cd <skill dir> && ...`")

@@ -499,6 +499,26 @@ for tool in Write Edit; do gx 0 $tool "$DT/$key/guard.candidate.json"; done
 gxS "rm -rf $S/other"
 echo "## skill scripts stay allowed, also with a corrupt guard.json (the repair path)"
 for c in "$SK/scripts/guard-write.sh diff $DT/$key/guard.candidate.json --repo $R" "bash $SK/scripts/guard-write.sh verify --repo $R"; do gx 0 Bash "$c"; done
+echo "# C3: command names are case-insensitive on a case-insensitive filesystem (GIT --version runs git): every program-name rule folds case"
+for c in 'GIT push --force mirror main' 'Git push mirror feat-T1' 'GIT -C . push mirror feat-T1' '/usr/bin/GIT push mirror feat-T1' '/USR/BIN/Git push mirror feat-T1' 'ENV git push mirror feat-T1' 'Env HUSKY=0 git commit -m x' \
+  'GH pr edit 1' 'Glab mr update 1' 'GLAB api /x' 'GH pr create -t x' 'Gh -R o/r pr edit 1' 'BASH -c "git push mirror feat-T1"' 'EVAL git push mirror feat-T1' \
+  'PYTHON3 -c "print(open(\".env\").read())"' 'Node -e "require(\"fs\").readFileSync(\".env\")"' 'PERL -e "open(F,\".env\")"'; do
+  for sid in s1 u1; do tsid 2 guard.sh $sid "$W" "$c"; done
+done
+for sid in s1 u1; do for c in 'GREP -r K sr2' 'Rg --hidden K sr2' 'Egrep -r K sr2'; do tsid 2 guard.sh $sid "$R" "$c"; done; done
+tsid 2 guard.sh s1 "$W3" 'GIT merge feat-T1'
+for c in 'GIT status' 'Git log --oneline' 'LS -la' 'GH pr view 1' 'Echo hi' 'CAT README'; do for sid in s1 u1; do tsid 0 guard.sh $sid "$W" "$c"; done; done
+for c in "TOUCH $R/docs/q.md" "Tee $R/docs/q.md" "CP /dev/null $R/docs/q.md" "SED -i '' s/a/b/ $R/docs/q.md" "Mv /tmp/zz-c3 $R/docs/q.md" "DD of=$R/docs/q.md"; do tsid 2 guard.sh s1 "$R" "$c"; done
+for c in "RM -rf $DT/$key" "Mv $DT/$key /tmp/zz-c3" "RM -rf $DT" "UNLINK $DT/$key/guard.json" "TRUNCATE -s0 $DT/$key/guard.json" "Shred $DT/$key/guard.json" "LN $DT/$key/guard.json /tmp/zz-hl" "CP -l $DT/$key/guard.json /tmp/zz-hl" "TEE $DT/$key/guard.json" "TOUCH $DT/$key/closed/T9"; do gx 2 Bash "$c"; done
+for c in "RM -rf $S" "/BIN/RM -rf $S" "\\RM -rf $S" "Mv $S /tmp/zz-c3" "ENV rm -rf $S" "echo x;Unlink $S"; do for cwd in "$nostate" "$X"; do nsr 2 guard.sh "$cwd" Bash "$c" $MISS; done; done
+python3 - "$SK/hooks" <<'PY' && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL C3 unit: pname / analyze"; }
+import sys; sys.path.insert(0, sys.argv[1]); import dtcore
+assert dtcore.pname("/Usr/Bin/GIT") == "git" and dtcore.pname("Rm") == "rm"
+c = dtcore.analyze("ENV GIT push mirror x", "/tmp")[0]
+assert c.argv[0] == "GIT" and c.prefix == ["ENV"], (c.argv, c.prefix)
+assert [x.argv[:2] for x in dtcore.analyze('BASH -c "RM -rf x"', "/tmp")][-1] == ["RM", "-rf"]
+assert dtcore.analyze("EXPORT FOO=1", "/tmp")[0].argv[0] == "EXPORT"
+PY
 echo "# corrupt guard.json with state => block (except skill scripts)"
 echo '{broken' > "$DELIVER_TICKET_HOME/$key/guard.json"
 t 2 guard.sh "$W" 'ls'
