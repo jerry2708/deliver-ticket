@@ -843,7 +843,7 @@ PROTECTED_BRANCHES = {"main", "master", "develop", "trunk"}
 def check_merge(c, over, g, all_cmds):
     """git merge is allowed only on a ticket branch (merging the base into it); never on a default/target branch."""
     for o in all_cmds:
-        if o.argv and os.path.basename(o.argv[0]) == "git" and parse_git(o.argv)[0] in ("checkout", "switch"):
+        if o.argv and pname(o.argv[0]) == "git" and parse_git(o.argv)[0] in ("checkout", "switch"):
             block("git merge in the same command as git checkout/switch: the branch it lands on cannot be checked - run them separately")
     base = c.cwd
     if over and base:
