@@ -22,6 +22,7 @@ Every transition is logged to <state>/delivery.log: time | session | ticket | ac
 """
 import argparse
 import hashlib
+import json
 import os
 import re
 import subprocess
@@ -64,6 +65,35 @@ def log(state, sid, ticket, action, detail):
     with open(os.path.join(state, "delivery.log"), "a") as f:
         # "|" is the field separator (guard-write.sh verify parses these lines): it cannot appear inside a field
         f.write("%s | session=%s | ticket=%s | %s | %s\n" % tuple([time.strftime("%Y-%m-%dT%H:%M:%S")] + [str(x).replace("\n", " ").replace("|", "/") for x in (sid, ticket, action, detail)]))
+
+
+def old_binding(home, lines, key):
+    """(token, old project) when the map is bound to ANOTHER project and that binding still holds (open ticket, not paused-with-no-worktree, old state
+    dir present; an unreadable old guard.json counts as holding). Same rule as hooks/dtcore.py old_binding."""
+    old = next((v for k, v in lines if k == "project" and v != key), None)
+    ostate = os.path.join(home, old) if old else None
+    if not ostate or not os.path.isdir(ostate):
+        return None
+    try:
+        with open(os.path.join(ostate, "guard.json")) as f:
+            wt_root = os.path.realpath(os.path.join(json.load(f)["repo_root"], ".claude", "worktrees"))
+    except Exception:
+        wt_root = None
+    paused = {v for k, v in lines if k == "paused"}
+    toks = [v for k, v in lines if k == "ticket" and TOKEN_RE.fullmatch(v)]
+    if wt_root:
+        for k, v in lines:
+            if k == "worktree":
+                w = os.path.realpath(v)
+                if w.startswith(wt_root + os.sep):
+                    toks.append(os.path.relpath(w, wt_root).split(os.sep)[0])
+    for t in toks:
+        if os.path.exists(os.path.join(ostate, "closed", t)):
+            continue
+        if wt_root and t in paused and not os.path.isdir(os.path.join(wt_root, t)):
+            continue
+        return t, old
+    return None
 
 
 def ticket_text(state, tid):
@@ -125,7 +155,11 @@ def main():
             if len(a.ids) != 1 or not a.reason:
                 sys.exit("bind <ID> --reason TEXT")
             t = a.ids[0]
-            out = [] if any(k == "project" and v != key for k, v in lines) else list(lines)   # another project's map: start afresh
+            held = old_binding(home, lines, key)
+            if held:
+                sys.exit("refused: this session is still bound to ticket %s in project %s; binding it to %s would unguard that project's main checkout. "
+                         "Close or pause %s first, or start a new session for this project." % (held[0], held[1], t, held[0]))
+            out = [] if any(k == "project" and v != key for k, v in lines) else list(lines)   # the old binding no longer holds: start afresh
             if not any(k == "project" for k, v in out):
                 out.insert(0, ("project", key))
             if ("ticket", t) not in out:

@@ -1438,6 +1438,13 @@ def record_worktree(payload, g):
             d = os.path.join(DT_HOME, "sessions")
             os.makedirs(d, exist_ok=True)
             f = os.path.join(d, sid)
+            held = old_binding(read_map(sid), os.path.basename(STATE))
+            if held:
+                # the same hole as the bind hook, by another route: rewriting project= would hide the old project's ticket= lines from it.
+                # PostToolUse cannot block; leave the map alone (the old project stays guarded) and say so on stderr.
+                print("deliver-ticket: EnterWorktree entered %s, but this session is still bound to ticket %s in project %s, so the session map was "
+                      "not rewritten for this project: close or pause that ticket, or start a new session." % (real(cand), held[0], held[1]), file=sys.stderr)
+                return
             keep = []
             try:
                 keep = [l for l in open(f).read().splitlines() if not l.startswith(("worktree=", "project="))]
@@ -1530,6 +1537,38 @@ def mode_session(payload, g):
           % (sid, ticket, proj, stage, nxt, SKILL_DIR, tf, SKILL_DIR))
 
 
+def old_binding(lines, proj):
+    """(token, old project) when this session's map is bound to ANOTHER project and that binding still holds, else None. Holds = an open ticket
+    (no closed/<tok> marker) that is not paused-with-no-worktree, in an old project whose state dir exists; an unreadable old guard.json counts as
+    holding (fail-closed). Dropping such a map would make the old project's main checkout writable for the session, unprompted."""
+    old = next((v for k, v in lines if k == "project" and v != proj), None)
+    if old is None:
+        return None
+    ostate = os.path.join(DT_HOME, old)
+    if not os.path.isdir(ostate):
+        return None
+    try:
+        with open(os.path.join(ostate, "guard.json")) as f:
+            wt_root = real(os.path.join(json.load(f)["repo_root"], ".claude", "worktrees"))
+    except Exception:
+        wt_root = None
+    paused = {v for k, v in lines if k == "paused"}
+    toks = [v for k, v in lines if k == "ticket" and TOKEN_RE.fullmatch(v)]
+    if wt_root:
+        for k, v in lines:
+            if k == "worktree":
+                w = real(v)
+                if under(w, wt_root) and first_component(w, wt_root) != ".":
+                    toks.append(first_component(w, wt_root))
+    for t in toks:
+        if os.path.exists(os.path.join(ostate, "closed", t)):
+            continue
+        if wt_root and t in paused and not os.path.isdir(os.path.join(wt_root, t)):
+            continue
+        return t, old
+    return None
+
+
 def mode_bind(payload, g):
     """UserPromptSubmit: `/deliver-ticket <token> ...` (or its expanded `<command-name>` form) binds this session to <token> (the first argument; a file path
     gives its basename). `init` binds nothing. Stores only the token, never the prompt. A later prompt for the same
@@ -1552,8 +1591,15 @@ def mode_bind(payload, g):
         return
     proj = os.path.basename(STATE)
     lines = read_map(sid)
+    held = old_binding(lines, proj)
+    if held:
+        # the hook cannot refuse a prompt: leave the map alone (the old project stays guarded, this one stays unbound; stage 0 check 10 fails
+        # closed) and tell the session why. Plain stdout of a UserPromptSubmit hook is added to Claude's context (hooks docs, exit code 0).
+        print("deliver-ticket: this session is still bound to ticket %s in project %s, so it was not bound to %s: close or pause that ticket "
+              "(ticket-state.sh / session-map.sh pause), or start a new session for this project." % (held[0], held[1], tok))
+        return
     if any(k == "project" and v != proj for k, v in lines):
-        lines = []                                   # the session moved to another project: start a fresh map
+        lines = []                                   # the session moved to another project and the old binding no longer holds: start a fresh map
     if not any(k == "project" for k, v in lines):
         lines.insert(0, ("project", proj))
     if ("ticket", tok) not in lines:
