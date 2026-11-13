@@ -821,6 +821,31 @@ def check_gate(c):
                   "path, a wrapper, an env assignment, or inside bash -c / eval / $( )): run it exactly as `%s <args>`" % (name, want))
 
 
+# The installer writes ~/.claude/settings.json and <repo>/.claude/settings.local.json. is_skill_script exempts it from the hook, so with the sandbox off
+# nothing else would stop a Claude call (auto mode runs it unprompted, as with the gate scripts). A writing subcommand is blocked in every spelling and
+# repo; the user runs it in their own terminal tab after reading `diff` (whether `!` passes through hooks is unverified, probe V4). Known limit: python3 -c.
+INSTALLER_NAMES = {"install-hooks.sh", "install_hooks.py"}
+INSTALLER_WRITING = {"apply", "uninstall", "project-apply", "project-uninstall", "project-sandbox-apply", "project-sandbox-off"}
+
+
+def check_installer(c):
+    a = c.argv
+    if not a:
+        return
+    i = 0
+    if pname(a[0]) in SHELLS | {"python3", "python"}:
+        words = [k for k, w in enumerate(a[1:], 1) if not w.startswith("-")]
+        if not words:
+            return
+        i = words[0]
+    if pname(a[i]) in INSTALLER_NAMES:
+        sub = next((w for w in a[i + 1:] if not w.startswith("-")), None)
+        if sub in INSTALLER_WRITING:
+            block("install-hooks.sh %s changes settings files: Claude does not run it. Show me the matching read-only command (diff, project-diff or "
+                  "project-sandbox-diff) and I run `%s %s ...` myself in my own terminal tab (not with `!`), then `install-hooks.sh status`"
+                  % (sub, os.path.join(SKILL_SCRIPTS, "install-hooks.sh"), sub))
+
+
 def command_pushes(cmds, g):
     """Yield (Cmd, dry_run, push_cwd) for each git push; applies the git checks only to push."""
     for c in cmds:
@@ -1128,6 +1153,7 @@ def check_cmd(c, g, payload, all_cmds=()):
 
     check_canonical(c)
     check_gate(c)
+    check_installer(c)
 
     # --- git
     if prog == "git":
@@ -1390,6 +1416,7 @@ def mode_nostate(payload):
             a = c.argv
             prog = pname(a[0]) if a else ""
             check_gate(c)
+            check_installer(c)
             if is_skill_script(c):
                 targets = [t for _, t in c.redirs]
             else:

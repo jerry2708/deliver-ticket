@@ -2,7 +2,7 @@
 
 Facts about the codebase, not decisions. Decisions live in `config.md`; things learned from tickets live in `lessons.md`. Written by `/deliver-ticket init` from its scan, kept in the state dir (never in the repo). **Every line has a source** (`file:line` or the command that produced it); a line without one is a guess and does not belong here. Env files: names only. Code is the truth: if a line contradicts the code, trust the code, fix the line.
 
-Each section starts with its freshness line (`scripts/project-map-stale.sh`):
+Each section starts with its freshness line (`<skill dir>/scripts/project-map-stale.sh`):
 `checked: <sha> · <date> · watch: <globs>` then `stale: no`. Format is exact: the script parses it.
 
 ## Project map

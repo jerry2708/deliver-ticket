@@ -85,6 +85,12 @@ def sandbox_deny():
     return [r + "/sessions", r + "/*/closed", r + "/*/guard.json", r + "/*/delivery.log"]
 
 
+# Every subcommand is one or the other (a test keeps hooks/dtcore.py INSTALLER_WRITING equal to WRITING_COMMANDS): the hook blocks a Claude call of a
+# writing one in every spelling - settings changes are made by the user in their own terminal, after reading `diff`.
+READ_ONLY_COMMANDS = ("status", "diff", "selftest", "project-status", "project-diff", "project-sandbox-status", "project-sandbox-diff")
+WRITING_COMMANDS = ("apply", "uninstall", "project-apply", "project-uninstall", "project-sandbox-apply", "project-sandbox-off")
+
+
 def entry(script, timeout, block):
     e = {"type": "command", "command": os.path.join(HOOKS, script), "timeout": timeout}
     if block:
@@ -859,8 +865,7 @@ def cmd_selftest(args=()):
 
 def main():
     a = sys.argv[1:]
-    cmds = ("status", "diff", "apply", "selftest", "uninstall", "project-status", "project-diff", "project-apply", "project-uninstall",
-            "project-sandbox-status", "project-sandbox-diff", "project-sandbox-apply", "project-sandbox-off")
+    cmds = READ_ONLY_COMMANDS + WRITING_COMMANDS
     if not a or a[0] not in cmds:
         print(__doc__)
         return 2

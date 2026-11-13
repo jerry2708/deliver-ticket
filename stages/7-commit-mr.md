@@ -17,7 +17,7 @@ Conventional Commits unless config says otherwise; commits end with the attribut
 
 ## Up to the stop point
 - `local`: stop. Show the commits and `mr.md`; tell me the exact commands for the later steps.
-- `before-push`: stop before any push; show the exact `git push` command (named remote from config; a bare `git push` is blocked; `verify-on-push.sh` runs the verify commands first and may block).
+- `before-push`: stop before any push; show the exact `git push` command (plain, run from the worktree directory, never `git -C`; named remote from config; a bare `git push` is blocked; `verify-on-push.sh` runs the verify commands first and may block).
 - `draft-mr` / `ready-mr`: use the **adapter** from config (`adapters/gitlab-glab.md` or `adapters/manual.md`): check -> push (the allowed remote only) -> create (draft or ready). The push itself shows a permission prompt - that is my gate. Never `--force`, never `--no-verify`, never to a forbidden remote.
 - Anything outward (push, MR create, comments) beyond the stop point -> stop and ask.
 

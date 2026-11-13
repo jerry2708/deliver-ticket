@@ -25,6 +25,11 @@ for f in sorted(glob.glob(sys.argv[1] + "/tests/run-*.sh")):
                 bad.append("%s:%d uses %s() before its definition on line %d" % (f, i + 1, name, d + 1)); break
 print("\n".join(bad)); sys.exit(1 if bad else 0)
 PY
+echo "# scripts are called the way the sandbox exclusions and the ask rules match (1d step 4): <skill dir>/scripts/<name>.sh, nothing in front"
+python3 tests/lint_script_calls.py "$SK"; ok $? "the run-time files call a bookkeeping / gate script in a form the sandbox exclusion or ask rule would not match (lines above)"
+for bad in 'run `scripts/ticket-state.sh done T1`' 'run `bash <skill dir>/scripts/session-map.sh show`' 'python3 <skill dir>/scripts/ticket-state.sh x' 'env <skill dir>/scripts/pending-ticket.sh save' \
+  'git -C <worktree> branch -m a b' 'git -C <wt> push mirror x'; do python3 tests/lint_script_calls.py --text "$bad" >/dev/null; [ $? = 1 ]; ok $? "lint must flag: $bad"; done
+for good in 'run `<skill dir>/scripts/ticket-state.sh done T1`' '`<skill dir>/scripts/session-map.sh show`' '`<skill dir>/scripts/guard-write.sh diff`' 'git -C <wt> status' '`git branch -m a b`'; do python3 tests/lint_script_calls.py --text "$good" >/dev/null; ok $? "lint must accept: $good"; done
 echo "# skill files are read with absolute paths (backlog item 2)"
 hasnt "$FILES" 'cd [^;&|]*deliver-ticket[^;&|]*&&[^;&|]*\(cat\|head\|sed\)'
 # an instruction to cd into the skill is only allowed as a prohibition ("Never `cd <skill dir> && ...`")

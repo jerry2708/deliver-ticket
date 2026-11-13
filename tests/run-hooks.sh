@@ -552,6 +552,25 @@ import dtcore, install_hooks as ih
 assert dtcore.GATE_SCRIPTS == set(ih.GATES), (dtcore.GATE_SCRIPTS, ih.GATES)
 assert set(dtcore.GATE_MODULES) == {"guard_apply.py", "ticket_ctl.py"}
 PY
+echo "# I1: the installer's writing subcommands are not run by Claude, in any spelling or repo; read-only ones are"
+for sub in apply uninstall project-apply project-uninstall project-sandbox-apply project-sandbox-off; do
+  for c in "$SKS/install-hooks.sh $sub --repo $R --confirmed" "bash $SKS/install-hooks.sh $sub --confirmed" "sh $SKS/install-hooks.sh $sub" "python3 $SKS/install_hooks.py $sub --confirmed" \
+    "python3 -I $SKS/install_hooks.py $sub --repo $R" "env DT_SETTINGS=x $SKS/install-hooks.sh $sub" "DT_SETTINGS=/tmp/zz-i1 $SKS/install-hooks.sh $sub --confirmed" "bash -c \"$SKS/install-hooks.sh $sub --confirmed\"" \
+    "cd $R && $SKS/install-hooks.sh $sub" "BASH $SKS/Install-Hooks.sh $sub --confirmed" "$SKS/../scripts/install-hooks.sh --confirmed $sub"; do gx 2 Bash "$c"; done
+done
+for sub in status diff selftest project-status project-diff project-sandbox-status project-sandbox-diff; do
+  for c in "$SKS/install-hooks.sh $sub --repo $R" "bash $SKS/install-hooks.sh $sub" "python3 $SKS/install_hooks.py $sub"; do gx 0 Bash "$c"; done
+done
+for c in "cat $SKS/install-hooks.sh" "grep -n apply $SKS/install_hooks.py" "$SKS/install-hooks.sh" "git diff -- $SKS/install_hooks.py" "echo apply install-hooks.sh"; do gx 0 Bash "$c"; done
+python3 - "$SK/hooks" "$SK/scripts" <<'PY' && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL I1 unit: hook INSTALLER_WRITING vs install_hooks"; }
+import os, sys
+sys.path.insert(0, sys.argv[1]); sys.path.insert(0, sys.argv[2]); os.environ["DT_SETTINGS"] = "/nonexistent"
+import dtcore, install_hooks as ih
+assert dtcore.INSTALLER_WRITING == set(ih.WRITING_COMMANDS), (dtcore.INSTALLER_WRITING, ih.WRITING_COMMANDS)
+assert not set(ih.READ_ONLY_COMMANDS) & set(ih.WRITING_COMMANDS)
+assert set(ih.READ_ONLY_COMMANDS) | set(ih.WRITING_COMMANDS) == {"status", "diff", "selftest", "apply", "uninstall", "project-status", "project-diff", "project-apply",
+    "project-uninstall", "project-sandbox-status", "project-sandbox-diff", "project-sandbox-apply", "project-sandbox-off"}
+PY
 echo "# corrupt guard.json with state => block (except skill scripts)"
 echo '{broken' > "$DELIVER_TICKET_HOME/$key/guard.json"
 t 2 guard.sh "$W" 'ls'
