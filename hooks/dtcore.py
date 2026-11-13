@@ -766,9 +766,9 @@ def check_canonical(c):
     elif prog in GATED_CLI:
         toks = a[1:]
         pos = _cli_positionals(toks)
-        def in_order(pat):             # an option with a value we do not know (gh pr -t x create) hides the words from `pos`
-            it = iter(toks)
-            return len(pat) > 1 and toks[:1] == [pat[0]] and all(w in it for w in pat)
+        def in_order(pat):             # an option with a value we do not know (gh pr -t x create) hides the words from `pos`; only an option right after
+            it = iter(toks[1:])        # the first word counts (gh pr list --search review is a read: `list` is there)
+            return len(pat) > 1 and toks[:1] == [pat[0]] and toks[1:2] and toks[1].startswith("-") and all(w in it for w in pat[1:])
         for pat in GATED_CLI[prog]:
             if tuple(pos[:len(pat)]) == pat or in_order(pat):
                 if plain and (tuple(toks[:len(pat)]) == pat or (toks and toks[0] in ("-R", "--repo"))):

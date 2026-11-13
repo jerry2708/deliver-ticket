@@ -275,7 +275,7 @@ for sid in s1 u1; do
     'gh pr -t x reopen 1'; do tsid 2 guard.sh $sid "$W" "$c"; done
   for c in 'git push mirror feat-T1' 'git push -u mirror feat-T1' 'cd . && git push mirror feat-T1' 'git status' 'git -C . status' 'FOO=1 git status' \
     'gh pr edit 1' 'gh pr create -t x' 'gh pr comment 1 -b x' 'gh -R o/r pr edit 1' 'gh --repo o/r pr edit 1' 'glab -R o/r mr update 1' 'glab mr note 1' 'gh api /x' 'glab api /x' 'gh auth status' \
-    'glab release --repo o/r create x' 'gh pr view 1' 'gh pr list' 'gh pr --repo o/r view 1' 'gh --hostname h pr view 1' 'FOO=1 gh pr view 1' 'glab mr view 1' 'glab mr list' 'echo gh pr edit'; do tsid 0 guard.sh $sid "$W" "$c"; done
+    'glab release --repo o/r create x' 'gh pr list --search review' 'gh pr list --search edit' 'gh pr list --search create' 'glab mr list --search close' 'glab mr view 1 --comments' 'gh pr view 1 --json comments' 'gh pr view 1' 'gh pr list' 'gh pr --repo o/r view 1' 'gh --hostname h pr view 1' 'FOO=1 gh pr view 1' 'glab mr view 1' 'glab mr list' 'echo gh pr edit'; do tsid 0 guard.sh $sid "$W" "$c"; done
 done
 python3 - "$SK/hooks" "$SK/scripts" <<'PY' && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL S1 unit: analyze prefix / nested, GATED_CLI vs CLI_ASK"; }
 import os, sys
