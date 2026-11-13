@@ -25,7 +25,8 @@ mkhome h_eof; b=$(sum "$H/.claude/settings.json"); out=$(HOME=$H bash "$SK/scrip
 
 echo "# y applies, backs up, runs status, prints the init reminder"
 mkhome h_y; out=$(printf 'y\n' | HOME=$H bash "$SK/scripts/install.sh" 2>&1); eq "$?" 0 "y: rc"
-has "$out" "all 5 hooks and 8 permission rules registered" "y: status output"
+NRULES=$(DT_SETTINGS=/nonexistent python3 -I -c "import sys; sys.path.insert(0, '$SK/scripts'); import install_hooks as i; print(len(i.ASK) + len(i.DENY))")
+has "$out" "all 5 hooks and $NRULES permission rules registered" "y: status output"
 has "$out" "/deliver-ticket init" "y: init reminder"
 eq "$(ls -A "$H/.claude" | grep -c 'settings.json.bak')" 1 "y: one backup next to settings.json"
 eq "$(python3 -c "import json;d=json.load(open('$H/.claude/settings.json'));print(d['theme'], len(d['hooks']), len(d['permissions']['deny']))")" "dark 3 3" "y: existing keys kept, hook events and deny rules added"

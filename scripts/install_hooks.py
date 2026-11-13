@@ -45,7 +45,20 @@ BOOKKEEPING = ["session-map.sh", "pending-ticket.sh", "project-map-stale.sh"]   
 GATES = ["ticket-state.sh", "guard-apply.sh"]                                     # excluded + ask rule on the full path: the prompt is the user's yes
 # The gate scripts' ask rules are USER level too: with the sandbox off (or in a project that never enabled it) nothing else would ask, and auto mode
 # ran an excluded command without a prompt (probe V8 d4).
-ASK = ["Bash(git push:*)", "Bash(glab mr create:*)", "Bash(gh pr create:*)"] + ["Bash(%s *)" % os.path.join(SKILL, "scripts", g) for g in GATES]
+# An ask rule always beats an allow rule (docs, "Manage permissions": "rule specificity doesn't change the order"), so a broad `glab *` ask with narrow
+# allows cannot work: the gh / glab writes are enumerated. Option-before-subcommand forms (-R / --repo) are listed too; see the README limits for
+# what a prefix list misses. USER level (below), because the project sandbox block does not exist in a project without the sandbox - the case where
+# nothing is sandboxed and, in auto mode, the classifier would otherwise decide. In default mode these commands prompt anyway.
+CLI_ASK = (["glab " + w + " *" for w in ("api", "auth", "variable", "repo", "ci", "release", "-R", "--repo", "alias", "config", "token", "issue", "label",
+                                         "snippet", "ssh-key", "gpg-key")] +
+           ["glab mr " + w + " *" for w in ("update", "note", "close", "approve", "reopen", "checkout", "delete")] +
+           ["gh " + w + " *" for w in ("api", "auth", "secret", "variable", "repo", "workflow", "run", "release", "-R", "--repo", "alias", "extension",
+                                       "config", "issue", "gist", "label", "ssh-key", "gpg-key", "codespace")] +
+           ["gh pr " + w + " *" for w in ("edit", "comment", "close", "review", "reopen", "checkout", "ready", "lock", "unlock")])
+CLI_CREATE = ["glab mr create *", "gh pr create *"]            # their ask rules are the older `:*` spelling in ASK below
+CLI_ALLOW = ["glab mr view *", "glab mr list *", "gh pr view *", "gh pr list *"]
+ASK = (["Bash(git push:*)", "Bash(glab mr create:*)", "Bash(gh pr create:*)"] + ["Bash(%s *)" % os.path.join(SKILL, "scripts", g) for g in GATES] +
+       ["Bash(%s)" % c for c in CLI_ASK])
 DENY = ["Bash(glab mr merge:*)", "Bash(gh pr merge:*)", "Read(**/.env*)"]
 # (event, matcher, script, timeout seconds, onFailure block?)
 HOOK_SPECS = [
@@ -561,13 +574,6 @@ def cmd_project(cmd, args):
 
 
 # ---- project level: the Bash sandbox in <repo>/.claude/settings.local.json ---------------------------------------------------------------------------
-# An ask rule always beats an allow rule (docs, "Manage permissions": "rule specificity doesn't change the order"), so a broad `glab *` ask with narrow
-# allows cannot work: these are enumerated. Option-before-subcommand forms (-R / --repo) are listed too; see the README limits for what a prefix list misses.
-CLI_ASK = (["glab " + w + " *" for w in ("api", "auth", "variable", "repo", "ci", "release", "-R", "--repo")] +
-           ["glab mr " + w + " *" for w in ("update", "note", "close", "approve", "reopen")] +
-           ["gh " + w + " *" for w in ("api", "auth", "secret", "variable", "repo", "workflow", "run", "release", "-R", "--repo")] +
-           ["gh pr " + w + " *" for w in ("edit", "comment", "close", "review", "reopen")])
-CLI_ALLOW = ["glab mr view *", "glab mr list *", "gh pr view *", "gh pr list *"]
 ABSENT = "__absent__"
 DOMAIN_RE = re.compile(r"[A-Za-z0-9*][A-Za-z0-9*.-]*")
 
@@ -578,7 +584,7 @@ def sandbox_plan(repo, state, domains, local_binding):
     sets = [(("sandbox", "enabled"), True), (("sandbox", "failIfUnavailable"), True)]
     if local_binding:
         sets.append((("sandbox", "network", "allowLocalBinding"), True))
-    adds = [(("sandbox", "excludedCommands"), [p + " *" for p in book + gate] + ["git push *", "git branch -m *", "glab *", "gh *"]),
+    adds = [(("sandbox", "excludedCommands"), [p + " *" for p in book + gate] + ["git push *", "git branch -m *"] + CLI_CREATE + CLI_ASK + CLI_ALLOW),
             (("sandbox", "filesystem", "allowWrite"), [os.path.join(state, "evidence"), os.path.join(repo, ".claude", "worktrees")]),
             (("sandbox", "network", "allowedDomains"), list(domains)),
             (("permissions", "allow"), ["Bash(%s *)" % p for p in book] + ["Bash(git branch -m *)"] + ["Bash(%s)" % c for c in CLI_ALLOW]),
@@ -609,6 +615,10 @@ def sandbox_desired(cur, sets, adds, m):
     for path, items in adds:
         node = _node(new, path[:-1], m)
         k = "/".join(path)
+        if k != "sandbox/network/allowedDomains" and isinstance(node.get(path[-1]), list):
+            for old in [x for x in m["added"].get(k, []) if x not in items]:      # added by an earlier apply, no longer in the plan: migrate away
+                node[path[-1]] = [x for x in node[path[-1]] if x != old]
+                m["added"][k].remove(old)
         if not isinstance(node.get(path[-1]), list):
             node[path[-1]] = []
             if k not in m["created_lists"]:

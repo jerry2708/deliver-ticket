@@ -731,10 +731,14 @@ def check_push(rest, g):
 # scripts/install_hooks.py) match the command TEXT as a prefix. Any other spelling - git -C x push, /usr/bin/git, env / command / xargs in front,
 # bash -c "...", an option between the subcommand words - does not match, and with the sandbox on it would run auto-approved. So the hook only lets
 # these commands through in the one spelling the rule matches.
-GATED_CLI = {"gh": [("api",), ("auth",), ("secret",), ("variable",), ("repo",), ("workflow",), ("run",), ("release",),
-                    ("pr", "create"), ("pr", "edit"), ("pr", "comment"), ("pr", "close"), ("pr", "review"), ("pr", "reopen")],
-             "glab": [("api",), ("auth",), ("variable",), ("repo",), ("ci",), ("release",),
-                      ("mr", "create"), ("mr", "update"), ("mr", "note"), ("mr", "close"), ("mr", "approve"), ("mr", "reopen")]}
+GATED_CLI = {"gh": [("api",), ("auth",), ("secret",), ("variable",), ("repo",), ("workflow",), ("run",), ("release",), ("alias",), ("extension",),
+                    ("config",), ("issue",), ("gist",), ("label",), ("ssh-key",), ("gpg-key",), ("codespace",),
+                    ("pr", "create"), ("pr", "edit"), ("pr", "comment"), ("pr", "close"), ("pr", "review"), ("pr", "reopen"), ("pr", "checkout"),
+                    ("pr", "ready"), ("pr", "lock"), ("pr", "unlock")],
+             "glab": [("api",), ("auth",), ("variable",), ("repo",), ("ci",), ("release",), ("alias",), ("config",), ("token",), ("issue",), ("label",),
+                      ("snippet",), ("ssh-key",), ("gpg-key",),
+                      ("mr", "create"), ("mr", "update"), ("mr", "note"), ("mr", "close"), ("mr", "approve"), ("mr", "reopen"), ("mr", "checkout"),
+                      ("mr", "delete")]}
 CLI_VALUE_OPTS = {"-R", "--repo", "--hostname"}
 
 

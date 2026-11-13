@@ -55,6 +55,8 @@ for n in ih.BOOKKEEPING + ih.GATES:
     assert os.path.isfile(p) and os.access(p, os.X_OK), p
 for g in ih.GATES:
     assert "Bash(%s *)" % os.path.join(ih.SKILL, "scripts", g) in ih.ASK, g
+for r in ("gh alias *", "gh extension *", "glab alias *", "gh pr checkout *", "glab mr delete *", "gh issue *", "gh api *", "glab -R *"):
+    assert "Bash(%s)" % r in ih.ASK, r         # USER level: a project without the sandbox has no project block
 assert not set(ih.GATES) & set(ih.BOOKKEEPING)
 PY
 printf '{"theme":"dark"}\n' > "$D/gate.json"
@@ -192,8 +194,18 @@ assert sb["filesystem"]["allowWrite"] == [st + "/evidence", repo + "/.claude/wor
 ex = sb["excludedCommands"]
 for n in ("session-map.sh", "pending-ticket.sh", "project-map-stale.sh", "ticket-state.sh", "guard-apply.sh"):
     assert "%s/scripts/%s *" % (sk, n) in ex, n
-for e in ("git push *", "git branch -m *", "glab *", "gh *"):
+for e in ("git push *", "git branch -m *", "gh api *", "glab api *", "gh pr create *", "glab mr create *", "gh pr view *", "glab mr list *", "gh -R *", "glab --repo *",
+          "gh alias *", "gh extension *", "gh pr checkout *", "glab mr delete *", "glab alias *"):
     assert e in ex, e
+assert "gh *" not in ex and "glab *" not in ex            # only the enumerated forms leave the sandbox
+sys.path.insert(0, sk + "/scripts"); os.environ["DT_SETTINGS"] = "/nonexistent"
+import install_hooks as ih
+cli = [e for e in ex if e.split()[0] in ("gh", "glab")]
+user_ask = {r.replace(":*)", " *)") for r in ih.ASK}
+# invariant: every gh / glab form that runs unsandboxed is gated (an ask rule, user level or project) or a narrow read (allow rule)
+assert all(("Bash(%s)" % e) in set(pm["ask"]) | set(pm["allow"]) | user_ask for e in cli), [e for e in cli if ("Bash(%s)" % e) not in set(pm["ask"]) | set(pm["allow"]) | user_ask]
+assert set(cli) == set(ih.CLI_ASK) | set(ih.CLI_CREATE) | set(ih.CLI_ALLOW)
+assert all(("Bash(%s)" % r) in ih.ASK for r in ih.CLI_ASK)   # the user-level ask list carries the whole CLI_ASK
 assert not any(e.startswith("bash ") for e in ex)
 assert "allowUnsandboxedCommands" not in sb      # that one is user level
 al, ask = pm["allow"], pm["ask"]
@@ -218,7 +230,7 @@ UH "$IH" project-sandbox-apply --repo "$R5" --confirmed --domains registry.npmjs
 UH "$IH" project-sandbox-apply --repo "$R5" --confirmed --domains registry.npmjs.org,cdn.playwright.dev --local-binding >/dev/null 2>&1 && grep -q cdn.playwright.dev "$R5/.claude/settings.local.json" && echo "ok a second apply adds a domain" || { fail=1; echo "FAIL second apply with another domain"; }
 python3 -I - "$R5/.claude/settings.local.json" <<'PY'
 import json, sys
-d = json.load(open(sys.argv[1])); d["sandbox"]["excludedCommands"].remove("gh *")
+d = json.load(open(sys.argv[1])); d["sandbox"]["excludedCommands"].remove("gh api *")
 json.dump(d, open(sys.argv[1], "w"), indent=2)
 PY
 UH "$IH" project-sandbox-status --repo "$R5" 2>&1 | grep -q 'DRIFT' && echo "ok sandbox-status reports drift" || { fail=1; echo "FAIL sandbox-status misses drift"; }
@@ -231,6 +243,28 @@ a, b = (json.load(open(x)) for x in sys.argv[1:3])
 assert a == b, (a, b)
 PY
 UH "$IH" project-sandbox-status --repo "$R5" >/dev/null 2>&1 && { fail=1; echo "FAIL sandbox-status says on after off"; } || echo "ok sandbox-status: off after off"
+# migration: an earlier apply excluded all of gh / glab; a re-apply prunes what it added and the plan no longer has, keeps the user's own entries
+R9="$D/proj9"; mkdir -p "$R9/.claude" && git -C "$R9" init -q -b main && printf '.claude/settings.local.json\n' > "$R9/.gitignore"
+key9=$(bash -c ". \"$SK/hooks/lib.sh\"; dt_key \"$R9\""); ST9="$DELIVER_TICKET_HOME/$key9"; mkdir -p "$ST9"; printf '{"version":1}\n' > "$ST9/guard.json"
+printf '{"sandbox":{"excludedCommands":["my-tool *"]},"permissions":{"allow":["Bash(ls)"]}}\n' > "$R9/.claude/settings.local.json"; cp "$R9/.claude/settings.local.json" "$D/proj9-orig.json"
+UH "$IH" project-sandbox-apply --repo "$R9" --confirmed --domains registry.npmjs.org >/dev/null 2>&1
+python3 -I - "$R9/.claude/settings.local.json" "$ST9/sandbox-manifest.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1])); m = json.load(open(sys.argv[2]))
+d["sandbox"]["excludedCommands"] += ["glab *", "gh *"]; m["added"]["sandbox/excludedCommands"] += ["glab *", "gh *"]
+json.dump(d, open(sys.argv[1], "w"), indent=2); json.dump(m, open(sys.argv[2], "w"), indent=2)
+PY
+UH "$IH" project-sandbox-apply --repo "$R9" --confirmed --domains registry.npmjs.org >/dev/null 2>&1
+python3 -I - "$R9/.claude/settings.local.json" <<'PY' && echo "ok re-apply prunes the old bare gh / glab exclusion and keeps the user's entries" || { fail=1; echo "FAIL migration prune"; }
+import json, sys
+ex = json.load(open(sys.argv[1]))["sandbox"]["excludedCommands"]
+assert "gh *" not in ex and "glab *" not in ex and "my-tool *" in ex and "gh api *" in ex, ex
+PY
+UH "$IH" project-sandbox-off --repo "$R9" --confirmed >/dev/null 2>&1
+python3 -I - "$R9/.claude/settings.local.json" "$D/proj9-orig.json" <<'PY' && echo "ok off after the migration restores the original" || { fail=1; echo "FAIL off after migration"; }
+import json, sys
+a, b = (json.load(open(x)) for x in sys.argv[1:3]); assert a == b, (a, b)
+PY
 # a project with no sandbox keys at all: created by apply, gone after off
 R6="$D/proj6"; mkdir -p "$R6" && git -C "$R6" init -q -b main && printf '.claude/settings.local.json\n' > "$R6/.gitignore"
 key6=$(bash -c ". \"$SK/hooks/lib.sh\"; dt_key \"$R6\""); mkdir -p "$DELIVER_TICKET_HOME/$key6"; printf '{"version":1}\n' > "$DELIVER_TICKET_HOME/$key6/guard.json"
