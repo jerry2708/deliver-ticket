@@ -820,7 +820,7 @@ Threat: a Claude-edited lint/test script (or `package.json` script) runs from `m
 - **C3** probes for F1, `worktree_settings_by_bash` (added to probe-sandbox.sh; you run them).
 - **C4** #1 per your choice (recommend b): `verify.json` writer, `mode_verify` check-only, stage 4/7 text, init.md (tamper-evident-only wording), tests.
 - **C5** F1 fix = alternative (ii), section 1b: `git-push.sh` + `git-rename.sh`, the exclusions drop, hook blocks plain `git push` / `git branch -m`, probes flip.
-- **C6** `approvals/` protected (protected_state + sandbox_deny + installer status) + tests.
+- **C6** `approvals/` protected (protected_state + sandbox_deny + installer status) + tests. DONE: `protected_state`, `state_reason` globs, user-level `denyWrite` `<root>/*/approvals` (installer `status` / manifest follow `sandbox_deny()`), hook tests (Write/Edit/Bash routes, bound + unbound + nostate), audit test (no script names `approvals/` but the C7 writer). Real run [verified 2026-11-16, Claude Code 2.1.311, probe `deny_approvals`]: `mkdir -p <state>/approvals && echo x > .../T1.plan` from sandboxed Bash gives EPERM and no file although `approvals/` did not exist yet, so the glob deny covers a not-yet-created directory and the installer need not pre-create it.
 - **C7** `approve-plan.sh` + marker + hash + reopen/rework rename + state_version + GATES (installer re-apply by you).
 - **C8** the lock in worktree-guard / guard.sh (+A4, A5) + tests.
 - **C9** #6/A2b always-on settings/skill-dir rule + prefilter + (if probe fails) project denyWrite.

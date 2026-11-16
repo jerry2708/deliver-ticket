@@ -366,7 +366,16 @@ for sid in u1 s1; do
   tsid 2 guard.sh $sid "$R" "rm $DT/$key/closed/T5"
   tsid 2 guard.sh $sid "$R" "touch $DT/$key/closed/T1"
   tsid 2 guard.sh $sid "$R" "mv $DT/sessions/s1 $DT/sessions/s1.old"
+  # C6: approvals/ (the plan-approval markers, C7) is protected state in every session, on every route
+  wsid 2 $sid "$R" Write "{\"file_path\":\"$DT/$key/approvals/T1.plan\"}"
+  wsid 2 $sid "$R" Edit "{\"file_path\":\"$DT/$key/approvals/T1.plan\"}"
+  for c in "echo x > $DT/$key/approvals/T1.plan" "echo x >> $DT/$key/approvals/T1.plan" "touch $DT/$key/approvals/T1.plan" "tee $DT/$key/approvals/T1.plan" "cp /dev/null $DT/$key/approvals/T1.plan" \
+    "mkdir $DT/$key/approvals" "rm $DT/$key/approvals/T1.plan" "rm -r $DT/$key/approvals" "mv $DT/$key/approvals $DT/$key/approvals.old" "mv $DT/$key/x $DT/$key/approvals" \
+    "rm $DT/*/approvals/*" "rm -rf $DT/$key/appr*" "cd $DT/$key && echo x > approvals/T1.plan" "ln $DT/$key/approvals/T1.plan $S/hl"; do tsid 2 guard.sh $sid "$R" "$c"; done
+  tsid 0 guard.sh $sid "$R" "cat $DT/$key/approvals/T1.plan"                     # reads stay allowed
+  tsid 0 guard.sh $sid "$R" "ls $DT/$key/approvals"
 done
+echo "## C6: approvals/ in a directory without delivery state (nostate mode shares protected_state)"
 wsid 0 s1 "$R" Write "{\"file_path\":\"$DT/$key/tickets/T1.md\"}"                 # ticket files stay writable
 wsid 0 u1 "$R" Write "{\"file_path\":\"$DT/$key/tickets/T1.md\"}"
 tsid 0 guard.sh s1 "$R" "$SK/scripts/session-map.sh show T1 --session s1 --repo $R"   # the skill's own scripts may write them
@@ -507,6 +516,8 @@ NSSID=nsu
 echo "## custom root (not under HOME, not the default name), symlinked root, physical path of a symlinked root"
 nsr 2 worktree-guard.sh "$nostate" Write "$S/custom/dtstate/k/closed/T1" DELIVER_TICKET_HOME=$S/custom/dtstate
 nsr 2 guard.sh "$nostate" Bash "echo x > $S/custom/dtstate/k/closed/T1" DELIVER_TICKET_HOME=$S/custom/dtstate
+nsr 2 guard.sh "$nostate" Bash "echo x > $S/custom/dtstate/k/approvals/T1.plan" DELIVER_TICKET_HOME=$S/custom/dtstate
+nsr 2 worktree-guard.sh "$nostate" Write "$S/custom/dtstate/k/approvals/T1.plan" DELIVER_TICKET_HOME=$S/custom/dtstate
 nsr 2 guard.sh "$X" Bash "cd $S/custom/dtstate/k && echo x > closed/T1" DELIVER_TICKET_HOME=$S/custom/dtstate
 nsr 2 worktree-guard.sh "$nostate" Write "$S/link-root/k/closed/T1" DELIVER_TICKET_HOME=$S/link-root
 nsr 2 worktree-guard.sh "$nostate" Write "$S/real-root/k/closed/T1" DELIVER_TICKET_HOME=$S/link-root
@@ -694,6 +705,13 @@ sys.path.insert(0, sys.argv[1]); sys.path.insert(0, sys.argv[2]); os.environ["DT
 import dtcore, install_hooks as ih
 assert dtcore.GATE_SCRIPTS == set(ih.GATES), (dtcore.GATE_SCRIPTS, ih.GATES)
 assert set(dtcore.GATE_MODULES) == {"guard_apply.py", "ticket_ctl.py", "git_push.py"}
+PY
+echo "# C6 audit: no excluded script (bookkeeping or gate) and no module behind one names approvals/ - only the C7 writer (ticket_ctl.py approve-plan, approve-plan.sh) will"
+python3 - "$SK/scripts" <<'PY' && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL C6 audit: a script names approvals/"; }
+import glob, os, sys
+allowed = {"install_hooks.py", "probe_sandbox.py", "approve-plan.sh", "approve_plan.py"}      # C7 adds the writer; anything else naming approvals/ is a new, unaudited writer
+bad = [os.path.basename(f) for f in glob.glob(sys.argv[1] + "/*") if os.path.isfile(f) and "approvals" in open(f, errors="replace").read() and os.path.basename(f) not in allowed]
+assert not bad, bad
 PY
 echo "# I1: the installer's writing subcommands are not run by Claude, in any spelling or repo; read-only ones are"
 for sub in apply uninstall project-apply project-uninstall project-sandbox-apply project-sandbox-off; do

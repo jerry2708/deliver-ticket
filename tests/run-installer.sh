@@ -88,7 +88,7 @@ import json, os, sys
 d = json.load(open(sys.argv[1])); r = os.path.realpath(sys.argv[2]); sb = d["sandbox"]
 assert sb["allowUnsandboxedCommands"] is False and sb["enabled"] is False and sb["filesystem"]["allowWrite"] == ["/a"]
 h = os.path.realpath(os.path.expanduser("~"))
-assert sb["filesystem"]["denyWrite"][:5] == ["/x/y", r + "/sessions", r + "/*/closed", r + "/*/guard.json", r + "/*/delivery.log"], sb["filesystem"]["denyWrite"]
+assert sb["filesystem"]["denyWrite"][:6] == ["/x/y", r + "/sessions", r + "/*/closed", r + "/*/guard.json", r + "/*/delivery.log", r + "/*/approvals"], sb["filesystem"]["denyWrite"]
 assert h + "/.gitconfig" in sb["filesystem"]["denyWrite"] and h + "/.config/git/**" in sb["filesystem"]["denyWrite"], sb["filesystem"]["denyWrite"]   # C5b: the user's git config
 PY
 DT_SETTINGS="$D/sb1.json" "$SK/scripts/install-hooks.sh" status >/dev/null 2>&1 && echo "ok status with sandbox keys" || { fail=1; echo "FAIL status with sandbox keys"; }

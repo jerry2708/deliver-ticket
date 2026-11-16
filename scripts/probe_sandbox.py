@@ -162,7 +162,7 @@ def settings_for(c, case):
     d = ih.sandbox_desired({}, sets, adds, m)
     sb = d["sandbox"]
     sb["allowUnsandboxedCommands"] = False
-    sb.setdefault("filesystem", {})["denyWrite"] = [c.ST + "/sessions", c.ST + "/*/closed", c.ST + "/*/guard.json", c.ST + "/*/delivery.log"] + ih.sandbox_deny()[4:]       # [4:] = the user's git config entries (C5b)
+    sb.setdefault("filesystem", {})["denyWrite"] = [c.ST + "/sessions", c.ST + "/*/closed", c.ST + "/*/guard.json", c.ST + "/*/delivery.log", c.ST + "/*/approvals"] + ih.sandbox_deny()[5:]       # [4:] = the user's git config entries (C5b)
     d.setdefault("permissions", {}).setdefault("ask", []).extend(ih.ASK)
     mut = case.get("mutate")
     if mut:
@@ -231,6 +231,8 @@ CASES = [
     dict(id="bare_ask_skipped", cmd="bash {S}/canary.sh bare_ask_skipped", expect="ok", mutate=m_bareask, info=True, disk=[("exists", "{PROJ}/.probe-markers/bare_ask_skipped")]),
     dict(id="deny_guard_json", cmd="echo x > {KD}/guard.json", expect="eperm", disk=[("same", "{KD}/guard.json")]),
     dict(id="deny_sessions", cmd="echo x > {ST}/sessions/s2", expect="eperm", disk=[("absent", "{ST}/sessions/s2")]),
+    # C6: approvals/ does not exist before the first approval (the gate script creates it, unsandboxed), so the deny must also hold for a directory that is not there yet.
+    dict(id="deny_approvals", cmd="mkdir -p {KD}/approvals && echo x > {KD}/approvals/T1.plan", expect="eperm", disk=[("absent", "{KD}/approvals/T1.plan")]),
     dict(id="deny_new_key", cmd="echo x > {ST}/keyC/guard.json", expect="eperm", disk=[("absent", "{ST}/keyC/guard.json")]),
     dict(id="evidence_writable", cmd="echo x > {KD}/evidence/e.txt", expect="ok", disk=[("exists", "{KD}/evidence/e.txt")]),
     dict(id="rename_key_dir", cmd="mv {KD} {KD}.moved", expect="eperm", disk=[("exists", "{KD}/guard.json"), ("absent", "{KD}.moved")]),

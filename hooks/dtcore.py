@@ -472,7 +472,7 @@ def protected_state(rp):
     """Written only by the bind hook and the skill's own scripts, in every session (guard.json: scripts/guard-write.sh)."""
     if under(rp, os.path.join(DT_HOME, "sessions")):
         return True
-    return bool(re.match(re.escape(DT_HOME) + r"/[^/]+/(closed(/|$)|delivery\.log$|guard\.json$)", rp, re.I if fs_ci(DT_HOME) else 0))
+    return bool(re.match(re.escape(DT_HOME) + r"/[^/]+/(closed(/|$)|approvals(/|$)|delivery\.log$|guard\.json$)", rp, re.I if fs_ci(DT_HOME) else 0))
 
 
 DESTRUCTIVE = {"rm", "rmdir", "unlink", "shred", "mv"}
@@ -538,9 +538,9 @@ def state_reason(prog, t, cwd):
     if not any(_cmatch(tc[n], d, ci) for d in kids):
         return None
     sess = _cmatch(tc[n], "sessions", ci)
-    if len(tc) == n + 2 and (sess or any(_cmatch(tc[n + 1], x, ci) for x in ("guard.json", "delivery.log", "closed"))):
+    if len(tc) == n + 2 and (sess or any(_cmatch(tc[n + 1], x, ci) for x in ("guard.json", "delivery.log", "closed", "approvals"))):
         return STATE_WHY % ("a glob in the target of %s could match" % prog, "a protected file")
-    if len(tc) > n + 2 and (sess or _cmatch(tc[n + 1], "closed", ci)):
+    if len(tc) > n + 2 and (sess or _cmatch(tc[n + 1], "closed", ci) or _cmatch(tc[n + 1], "approvals", ci)):
         return STATE_WHY % ("a glob in the target of %s could match" % prog, "a protected file")
     return None
 
