@@ -48,7 +48,7 @@ class Ctx:
     def fmt(self, s):
         return s.format(S=self.S, OUT=self.OUT, PROJ=self.PROJ, ST=self.ST, KD=self.KD, SK=SK, PORT=PORT, WT1=self.PROJ + "/.claude/worktrees/T1",
                         WT2=self.PROJ + "/.claude/worktrees/T2", WT3=self.PROJ + "/.claude/worktrees/T3",
-                        F1A=self.PROJ + "/.claude/worktrees/F1A", F1B=self.PROJ + "/.claude/worktrees/F1B", F1C=self.PROJ + "/.claude/worktrees/F1C")
+                        F1A=self.S + "/f1-a/.claude/worktrees/F1A", F1B=self.S + "/f1-b/.claude/worktrees/F1B", F1C=self.S + "/f1-c/.claude/worktrees/F1C", F1D=self.S + "/f1-d/.claude/worktrees/F1D")
 
 
 def make_fixtures(c):
@@ -104,7 +104,8 @@ def make_f1(c, tag, hooks, where):
     Each hook in `hooks` appends to {OUT}/f1/<tag>-<hook>, a file outside allowWrite: it exists afterwards only if the hook ran unsandboxed.
     where="hookspath": hooks live in <worktree>/.hooks with core.hooksPath=.hooks (a path the sandbox lets Claude edit);
     where="commondir": hooks live in <git-common-dir>/hooks and no core.hooksPath is set. Never deletes; idempotent."""
-    repo, wt, remote = c.S + "/f1-" + tag, c.PROJ + "/.claude/worktrees/F1" + tag.upper(), c.S + "/f1-" + tag + ".git"
+    repo, remote = c.S + "/f1-" + tag, c.S + "/f1-" + tag + ".git"
+    wt = repo + "/.claude/worktrees/F1" + tag.upper()       # under the fixture repo itself: git-push.sh / git-rename.sh want <repo>/.claude/worktrees/<ID> and a guard.json
     os.makedirs(c.OUT + "/f1", exist_ok=True)
     if os.path.isdir(repo + "/.git"):
         return
@@ -117,6 +118,11 @@ def make_f1(c, tag, hooks, where):
     sh("git", "init", "-q", "--bare", remote)
     sh("git", "-C", repo, "remote", "add", "f1remote", "file://" + remote)
     sh("git", "-C", repo, "worktree", "add", "-q", wt, "-b", "work/f1")
+    key = subprocess.run(["bash", "-c", '. "%s/hooks/lib.sh"; dt_key "%s"' % (SK, repo)], capture_output=True, text=True).stdout.strip()
+    os.makedirs(c.ST + "/" + key, exist_ok=True)
+    g = json.loads(c.guard)
+    g.update(project_key=key, repo_root=os.path.realpath(repo), remotes={"push": "f1remote", "allowed": ["f1remote"], "forbidden": []})
+    open(c.ST + "/" + key + "/guard.json", "w").write(json.dumps(g, indent=1))
     hdir = wt + "/.hooks" if where == "hookspath" else repo + "/.git/hooks"
     os.makedirs(hdir, exist_ok=True)
     for h in hooks:
@@ -124,6 +130,16 @@ def make_f1(c, tag, hooks, where):
         os.chmod(hdir + "/" + h, 0o755)
     if where == "hookspath":
         sh("git", "-C", repo, "config", "core.hooksPath", ".hooks")
+
+
+def make_f1_include(c):
+    """Like f1-b (own fixture, tag d), plus an [include] in .git/config that pulls a file inside the worktree which sets core.sshCommand (a marker under {OUT}). Idempotent."""
+    make_f1(c, "d", ["pre-push"], "hookspath")
+    repo, wt = c.S + "/f1-d", c.S + "/f1-d/.claude/worktrees/F1D"
+    inc = wt + "/inc.cfg"
+    if not os.path.exists(inc):
+        open(inc, "w").write("[core]\n\tsshCommand = touch %s/f1/ssh-marker\n" % c.OUT)
+        sh("git", "-C", repo, "config", "include.path", inc)
 
 
 def make_v1(c):
@@ -181,6 +197,12 @@ def m_branch_allowed(c, d):
     d["permissions"].setdefault("allow", []).append("Bash(git branch -m *)")
 
 
+def m_scripts_allowed(c, d):
+    """git-push.sh is a gate (user-level and project ask rule); an allow rule and no ask rule stand in for the user's yes, so the verdict is the sandbox / the script."""
+    d["permissions"]["ask"] = [r for r in d["permissions"]["ask"] if "git-push.sh" not in r]
+    d["permissions"].setdefault("allow", []).append("Bash(%s/scripts/git-push.sh *)" % SK)
+
+
 def m_nobranch(c, d):
     m_branch_allowed(c, d)
     d["sandbox"]["excludedCommands"] = [e for e in d["sandbox"]["excludedCommands"] if e != "git branch -m *"]
@@ -233,25 +255,32 @@ CASES = [
     dict(id="localhost_listen_with_binding", cmd="node {S}/srv.js", local=True, expect="ok", contains="got:ok"),
     dict(id="localhost_client_without_binding", cmd="curl -sS -m 5 http://127.0.0.1:{PORT}/", expect="net", info=True),
     dict(id="localhost_client_with_binding", cmd="curl -sS -m 5 http://127.0.0.1:{PORT}/", local=True, expect="ok", contains="probe-server-ok"),
-    dict(id="git_branch_rename_excluded", cmd="git branch -m work/t1 feat-t1", cwd="{WT1}", expect="ok", mutate=m_branch_allowed, sources=NOUSER),
+    dict(id="git_rename_script_excluded", dt_home=True, cmd="{SK}/scripts/git-rename.sh work/t1 feat-t1", cwd="{WT1}", expect="ok", sources=NOUSER, disk=[("exists", "{PROJ}/.git/refs/heads/feat-t1")]),
     dict(id="git_branch_rename_sandboxed_fails", cmd="git branch -m work/t2 feat-t2", cwd="{WT2}", expect="eperm", mutate=m_nobranch, contains="config", sources=NOUSER),
     # the push is allowed by rule (no prompt), so the verdict is the sandbox: `cd <dir> && git push` does not match `git push *`, so it runs sandboxed -> the file:// remote
     # outside allowWrite stays unchanged. Disk is the proof (no loose ref in remote2.git), not the exit code.
     # HEAD refspecs, not work/t1|t2: git_branch_rename_excluded renames work/t1 earlier in the run
     dict(id="push_after_cd_stays_sandboxed", cmd="cd {WT1} && git push mirror2 HEAD:refs/heads/cdpush", cwd="{S}", expect="eperm", mutate=m_push_allowed, sources=NOUSER,
          disk=[("absent", "{OUT}/remote2.git/refs/heads/cdpush")]),
-    dict(id="push_plain_unsandboxed_control", cmd="git push mirror2 HEAD:refs/heads/plainpush", cwd="{WT2}", expect="ok", mutate=m_push_allowed, sources=NOUSER, info=True,
-         disk=[("exists", "{OUT}/remote2.git/refs/heads/plainpush")]),
-    # F1 (plan.md "Milestone 1c plan" section 1): `git branch -m *` and `git push *` are excluded from the sandbox, so git runs the repo's hooks unsandboxed. The hooks below
-    # append to a file under {OUT} (outside allowWrite, inside the fixture). TODAY THE HOLE IS EXPECTED: expect "ok" + the file EXISTS = the hook wrote outside the sandbox.
-    # Fix (i) is commit C5: it must flip each of these three to expect="hook" (the guard blocks the command) with disk "absent".
-    dict(id="f1_reference_transaction_hookspath", cmd="git branch -m work/f1 work/f1b", cwd="{F1A}", expect="ok", mutate=m_branch_allowed, sources=NOUSER,
-         setup=lambda c: make_f1(c, "a", ["reference-transaction"], "hookspath"), disk=[("exists", "{OUT}/f1/a-reference-transaction")]),
-    dict(id="f1_pre_push_hookspath", cmd="git push f1remote HEAD:refs/heads/f1pp", cwd="{F1B}", expect="ok", mutate=m_push_allowed, sources=NOUSER,
-         setup=lambda c: make_f1(c, "b", ["pre-push"], "hookspath"), disk=[("exists", "{OUT}/f1/b-pre-push")]),
-    dict(id="f1_commondir_hooks_push", cmd="git push f1remote HEAD:refs/heads/f1cd", cwd="{F1C}", expect="ok", mutate=m_push_allowed, sources=NOUSER,
+    dict(id="push_plain_sandboxed_since_c5", cmd="git push mirror2 HEAD:refs/heads/plainpush", cwd="{WT2}", expect="eperm", mutate=m_push_allowed, sources=NOUSER,
+         disk=[("absent", "{OUT}/remote2.git/refs/heads/plainpush")]),
+    # F1 (plan.md "Milestone 1c plan" sections 1 and 1b), fixed in C5. The fixture hooks append to a file under {OUT} (outside allowWrite): it exists only if a hook ran
+    # unsandboxed. Before C5 these three cases ran plain `git branch -m` / `git push` (both excluded) and the files existed. Now the call goes through git-rename.sh / git-push.sh,
+    # which run git with core.hooksPath=/dev/null: the command succeeds, the ref moves, and NO hook ran.
+    dict(id="f1_reference_transaction_hookspath", dt_home=True, cmd="{SK}/scripts/git-rename.sh work/f1 work/f1b", cwd="{F1A}", expect="ok", sources=NOUSER,
+         setup=lambda c: make_f1(c, "a", ["reference-transaction"], "hookspath"), disk=[("exists", "{S}/f1-a/.git/refs/heads/work/f1b"), ("absent", "{OUT}/f1/a-reference-transaction")]),
+    dict(id="f1_pre_push_hookspath", dt_home=True, cmd="{SK}/scripts/git-push.sh f1remote f1pp", cwd="{F1B}", expect="ok", mutate=m_scripts_allowed, sources=NOUSER,
+         setup=lambda c: make_f1(c, "b", ["pre-push"], "hookspath"), disk=[("exists", "{S}/f1-b.git/refs/heads/f1pp"), ("absent", "{OUT}/f1/b-pre-push")]),
+    dict(id="f1_commondir_hooks_push", dt_home=True, cmd="{SK}/scripts/git-push.sh f1remote f1cd", cwd="{F1C}", expect="ok", mutate=m_scripts_allowed, sources=NOUSER,
          setup=lambda c: make_f1(c, "c", ["pre-push", "reference-transaction"], "commondir"),
-         disk=[("exists", "{OUT}/f1/c-pre-push"), ("exists", "{OUT}/f1/c-reference-transaction")]),
+         disk=[("exists", "{S}/f1-c.git/refs/heads/f1cd"), ("absent", "{OUT}/f1/c-pre-push"), ("absent", "{OUT}/f1/c-reference-transaction")]),
+    # C5: the script arguments are validated before git runs (they run unsandboxed). `--receive-pack=<cmd>` is the documented way to run a program for a local remote.
+    dict(id="git_push_script_refuses_options", dt_home=True, cmd="{SK}/scripts/git-push.sh --receive-pack='touch {OUT}/rp-marker' f1remote f1rp", cwd="{F1B}", expect="eperm", mutate=m_scripts_allowed,
+         sources=NOUSER, setup=lambda c: make_f1(c, "b", ["pre-push"], "hookspath"), contains="not a plain name", disk=[("absent", "{OUT}/rp-marker")]),
+    dict(id="git_push_script_refuses_path_remote", dt_home=True, cmd="{SK}/scripts/git-push.sh {S}/f1-b.git f1path", cwd="{F1B}", expect="eperm", mutate=m_scripts_allowed,
+         sources=NOUSER, setup=lambda c: make_f1(c, "b", ["pre-push"], "hookspath"), contains="not in the allowed list", disk=[("absent", "{S}/f1-b.git/refs/heads/f1path")]),
+    dict(id="git_push_script_refuses_include_sshcommand", dt_home=True, cmd="{SK}/scripts/git-push.sh f1remote f1inc", cwd="{F1D}", expect="eperm", mutate=m_scripts_allowed, sources=NOUSER,
+         setup=make_f1_include, contains="inside the repository or a worktree", disk=[("absent", "{OUT}/f1/ssh-marker"), ("absent", "{S}/f1-d.git/refs/heads/f1inc")]),
     # #6 / A2b: the project's worktrees dir is in allowWrite and no denyWrite of ours covers <worktree>/.claude/settings*.json (install_hooks.py:84 lists the protected state only).
     # I expected a hole, but the probe (2026-11-16, Claude Code 2.1.311) showed EPERM and no file when the session cwd is the worktree: Claude Code itself protects
     # .claude/settings*.json under the cwd. So this row is a regression guard for that built-in behaviour, not a hole. NOT probed (Haiku skipped the call both times): a session

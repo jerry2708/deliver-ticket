@@ -763,10 +763,12 @@ def check_canonical(c):
     plain = a[0] == prog and not c.prefix and not c.assigns and not c.nested
     if prog == "git":
         sub, _, _, _ = parse_git(a)
-        if sub == "push" and not (plain and len(a) > 1 and a[1] == "push"):
-            block("git push is spelled so the permission ask rule would not match it (-C / -c / --git-dir, a path, a wrapper such as env / command / "
-                  "xargs, an env assignment, or inside bash -c / eval / $( )): write it exactly as `git push <remote> <branch>`, run from the "
-                  "worktree directory")
+        if sub == "push":
+            block("git push is not run by Claude (the repo's own hooks would run unsandboxed under the excluded git): use `%s <remote> <branch>` from the "
+                  "worktree directory - it pushes HEAD to that branch of an allowed remote, with the verify record checked" % os.path.join(SKILL_SCRIPTS, "git-push.sh"))
+        if sub == "branch" and any(t in ("-m", "-M", "--move") or (t.startswith("-") and not t.startswith("--") and ("m" in t[1:] or "M" in t[1:])) for t in a):
+            block("git branch -m is not run by Claude (the repo's own hooks would run unsandboxed under the excluded git): use `%s <old> <new>` from the "
+                  "worktree directory" % os.path.join(SKILL_SCRIPTS, "git-rename.sh"))
     elif prog in GATED_CLI:
         toks = a[1:]
         pos = _cli_positionals(toks)
@@ -786,8 +788,8 @@ def check_canonical(c):
 # is_skill_script exempts every script under scripts/ from the hook, and an `ask` rule matches the command TEXT as a prefix, so `bash <script>`,
 # `python3 <script>`, a wrapper, or the backing module (guard_apply.py, ticket_ctl.py ticket-state) would run without that prompt. A gate action is
 # allowed only as `<skill dir>/scripts/<name>.sh ...`: argv[0] literally that absolute path, no interpreter, wrapper, assignment or nesting.
-GATE_SCRIPTS = {"ticket-state.sh", "guard-apply.sh"}
-GATE_MODULES = {"guard_apply.py": None, "ticket_ctl.py": "ticket-state"}      # module -> the argument that makes it a gate action (None: always)
+GATE_SCRIPTS = {"ticket-state.sh", "guard-apply.sh", "git-push.sh"}
+GATE_MODULES = {"guard_apply.py": None, "ticket_ctl.py": "ticket-state", "git_push.py": None}      # module -> the argument that makes it a gate action (None: always)
 
 
 def check_gate(c):
@@ -811,7 +813,7 @@ def check_gate(c):
         arg = GATE_MODULES[name]
         if arg is not None and arg not in rest:
             return
-        shname = {"guard_apply.py": "guard-apply.sh", "ticket_ctl.py": "ticket-state.sh"}[name]
+        shname = {"guard_apply.py": "guard-apply.sh", "ticket_ctl.py": "ticket-state.sh", "git_push.py": "git-push.sh"}[name]
         block("%s is the module behind the gate script %s: a gate action runs as `%s <args>` (full path, no interpreter), so the permission prompt "
               "on that path is the user's yes" % (name, shname, os.path.join(SKILL_SCRIPTS, shname)))
     elif name in GATE_SCRIPTS:

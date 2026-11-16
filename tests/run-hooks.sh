@@ -45,7 +45,7 @@ for c in 'git push -f mirror main' 'git push --force mirror main' 'git push orig
   'HUSKY=0 git commit -m x' 'bash -c "git push -f mirror main"' 'echo $(git push -f mirror main)' 'eval git push -f mirror' \
   '/usr/bin/env git push -f mirror main' '/usr/bin/nice git push --force mirror main' '/usr/bin/env HUSKY=0 git commit -m x' 'glab mr merge 5' 'gh pr merge 5' 'glab mr update 5 -d -' 'glab mr update 5 --description=-' 'git config alias.p "push -f"'; do t 2 guard.sh "$W" "$c"; done
 echo "# push allowed through guard (rc 0)"
-for c in 'git push mirror feat-T1' 'git push -u mirror feat-T1' 'git push -n mirror feat-T1' 'git status' 'git commit -m "fix: n"' 'git commit -am msg' 'ls -la' 'npm test'; do t 0 guard.sh "$W" "$c"; done
+for c in 'git status' 'git commit -m "fix: n"' 'git commit -am msg' 'ls -la' 'npm test'; do t 0 guard.sh "$W" "$c"; done
 echo "# git merge: only on a ticket branch"
 t 0 guard.sh "$W" 'git merge main'
 t 0 guard.sh "$W" 'git merge --no-edit main'
@@ -168,6 +168,66 @@ t 0 verify-on-push.sh "$W" 'git push mirror feat-T1'                      # on_p
 setpush lint test
 setv test "sleep 30"
 t 2 verify-on-push.sh "$W" 'git push mirror feat-T1'                      # (state left as before: later tests expect a blocked push)
+echo "# C5: git-push.sh / git-rename.sh validate their own arguments (they run unsandboxed), run git with the repo's hooks off"
+git init -q --bare "$S/mirror.git"
+git -C "$R" remote set-url mirror "file://$S/mirror.git"
+mkdir -p "$S/hooks"; printf '#!/bin/sh\necho fired >> "%s/hook-fired-$(basename $0)"\n' "$S" > "$S/hooks/pre-push"; cp "$S/hooks/pre-push" "$S/hooks/reference-transaction"; chmod +x "$S/hooks/pre-push" "$S/hooks/reference-transaction"
+git -C "$R" config core.hooksPath "$S/hooks"
+hk() { cat "$S"/hook-fired-* 2>/dev/null | wc -l | tr -d ' '; }
+gp() { local exp=$1; shift; local out rc; out=$(cd "$W" && "$SK/scripts/git-push.sh" "$@" 2>&1); rc=$?
+  if [ "$rc" = "$exp" ] || { [ "$exp" = nz ] && [ "$rc" != 0 ]; }; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL git-push.sh rc=$rc want=$exp: $*"; echo "   $out" | head -3; fi; }
+gr() { local exp=$1; shift; local out rc; out=$(cd "$W" && "$SK/scripts/git-rename.sh" "$@" 2>&1); rc=$?
+  if [ "$rc" = "$exp" ] || { [ "$exp" = nz ] && [ "$rc" != 0 ]; }; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL git-rename.sh rc=$rc want=$exp: $*"; echo "   $out" | head -3; fi; }
+setpush
+gp 2 --receive-pack="touch $S/rp-ran" feat-T1
+gp 2 -n mirror feat-T1
+gp 2 mirror -f
+gp 2 mirror
+gp 2 mirror feat-T1 extra
+gp 2 "file://$S/mirror.git" feat-T1
+gp 2 "$S/mirror.git" feat-T1
+gp 2 origin feat-T1
+gp 2 mirror main
+gp 2 mirror 'feat:T1'
+gp 2 mirror '+feat-T1'
+gp 2 mirror ':feat-T1'
+gp 2 mirror 'feat*'
+gp 2 mirror '--feat'
+[ ! -e "$S/rp-ran" ] && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL --receive-pack ran a command"; }
+out=$(cd "$R" && "$SK/scripts/git-push.sh" mirror feat-T1 2>&1); [ $? = 2 ] && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL git-push.sh from the main checkout: $out"; }
+echo "## a tracked include file that sets core.sshCommand is refused; the same key in .git/config is not"
+printf '[core]\n\tsshCommand = touch %s/ssh-ran\n' "$S" > "$R/inc.cfg"
+git -C "$R" config include.path "$R/inc.cfg"
+gp 2 mirror feat-T1
+git -C "$R" config --unset include.path
+git -C "$R" config url."file://$S/mirror.git".insteadOf "x://nothing"
+gp 0 mirror feat-T1
+git -C "$R" config --unset url."file://$S/mirror.git".insteadOf
+echo "## verify record required when on_push lists keys"
+setv lint true; setpush lint
+gp 2 mirror feat-T1
+req "$(vrec T1 --guard "$G")" 0 "record for the script push"
+echo "## GIT_DIR / GIT_SSH_COMMAND in the environment do not reach git; the repo's pre-push and reference-transaction hooks do not run"
+n0=$(hk); out=$(cd "$W" && GIT_DIR=/nonexistent GIT_SSH_COMMAND="touch $S/ssh-ran" GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0="$S/hooks" "$SK/scripts/git-push.sh" mirror feat-T1 2>&1); req "$?" 0 "push with a hostile environment ($out)"
+[ "$(git --git-dir="$S/mirror.git" rev-parse refs/heads/feat-T1)" = "$(git -C "$W" rev-parse HEAD)" ] && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL the push did not land"; }
+[ "$(hk)" = "$n0" ] && [ ! -e "$S/ssh-ran" ] && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL a repo hook (or GIT_SSH_COMMAND / an include) ran under git-push.sh"; }
+git -C "$W" push -q mirror HEAD:refs/heads/ctl >/dev/null 2>&1; [ "$(hk)" != "$n0" ] && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL control: a plain git push should fire the hook in this fixture"; }
+echo "## git-rename.sh"
+gr 2 -f feat-T1 x
+gr 2 feat-T1
+gr 2 other-branch x
+gr 2 feat-T1 main
+gr 2 main x
+gr 2 feat-T1 'a:b'
+gr 2 feat-T1 '--x'
+n0=$(hk)
+gr 0 feat-T1 feat-T1b
+[ "$(git -C "$W" symbolic-ref --short HEAD)" = feat-T1b ] && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL rename did not happen"; }
+[ "$(hk)" = "$n0" ] && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL a hook fired under git-rename.sh"; }
+gr 0 feat-T1b feat-T1
+git -C "$R" config --unset core.hooksPath
+git -C "$R" remote set-url mirror https://example.invalid/m.git
+setv lint true; setpush lint test; setv test "sleep 30"
 echo "# worktree-guard (Edit/Write/NotebookEdit)"
 wp() { jq -nc --arg cwd "$W" --arg tool "$1" --argjson ti "$2" --arg ev "${3:-PreToolUse}" '{session_id:"s1",cwd:$cwd,hook_event_name:$ev,tool_name:$tool,tool_input:$ti}' | "$SK/hooks/worktree-guard.sh" >/dev/null 2>&1; }
 w() { wp "$2" "$3"; local rc=$?; if [ $rc = $1 ]; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL wguard rc=$rc want=$1 $2 $3"; fi; }
@@ -336,9 +396,17 @@ for sid in s1 u1; do
     'gh pr -t x reopen 1'; do tsid 2 guard.sh $sid "$W" "$c"; done
   for c in 'FOO=1 gh alias set x y' '/usr/bin/gh extension install x' 'gh pr --repo o/r checkout 5' 'env glab mr delete 1' 'FOO=1 gh issue create -t x' 'glab --hostname h alias set x y' 'GH config set k v' 'bash -c "glab token create"' 'FOO=1 gh codespace delete' 'gh pr -t x lock 1' 'FOO=1 glab snippet create'; do tsid 2 guard.sh $sid "$W" "$c"; done
   for c in 'gh alias set x y' 'gh extension install x' 'gh pr checkout 5' 'glab mr delete 1' 'gh issue create -t x' 'gh -R o/r issue view 1' 'glab alias list' 'gh config get k' 'gh codespace list' 'gh pr ready 1' 'glab snippet list' 'gh status' 'gh browse'; do tsid 0 guard.sh $sid "$W" "$c"; done
-  for c in 'git push mirror feat-T1' 'git push -u mirror feat-T1' 'cd . && git push mirror feat-T1' 'git status' 'git -C . status' 'FOO=1 git status' \
+  for c in 'git status' 'git -C . status' 'FOO=1 git status' \
     'gh pr edit 1' 'gh pr create -t x' 'gh pr comment 1 -b x' 'gh -R o/r pr edit 1' 'gh --repo o/r pr edit 1' 'glab -R o/r mr update 1' 'glab mr note 1' 'gh api /x' 'glab api /x' 'gh auth status' \
     'glab release --repo o/r create x' 'gh pr list --search review' 'gh pr list --search edit' 'gh pr list --search create' 'glab mr list --search close' 'glab mr view 1 --comments' 'gh pr view 1 --json comments' 'gh pr view 1' 'gh pr list' 'gh pr --repo o/r view 1' 'gh --hostname h pr view 1' 'FOO=1 gh pr view 1' 'glab mr view 1' 'glab mr list' 'echo gh pr edit'; do tsid 0 guard.sh $sid "$W" "$c"; done
+done
+echo "# C5: Claude never runs git push / git branch -m itself (the repo's hooks would run unsandboxed): only git-push.sh / git-rename.sh"
+for sid in s1 u1; do
+  for c in 'git push mirror feat-T1' 'git push -u mirror feat-T1' 'git push -n mirror feat-T1' 'cd . && git push mirror feat-T1' 'git branch -m a b' 'git branch -M a b' 'git branch --move a b' 'git branch -fm a b' 'cd . && git branch -m a b'; do tsid 2 guard.sh $sid "$W" "$c"; done
+  for c in 'git branch' 'git branch -a' 'git branch --show-current' 'git branch -d x' ; do tsid 0 guard.sh $sid "$W" "$c"; done
+  tsid 0 guard.sh $sid "$W" "$SK/scripts/git-push.sh mirror feat-T1"
+  tsid 0 guard.sh $sid "$W" "$SK/scripts/git-rename.sh work/t1 feat/t1"
+  for c in "bash $SK/scripts/git-push.sh mirror feat-T1" "python3 $SK/scripts/git_push.py mirror feat-T1" "FOO=1 $SK/scripts/git-push.sh mirror feat-T1" "env $SK/scripts/git-push.sh mirror feat-T1" "cd . && python3 -I $SK/scripts/git_push.py mirror x"; do tsid 2 guard.sh $sid "$W" "$c"; done
 done
 python3 - "$SK/hooks" "$SK/scripts" <<'PY' && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL S1 unit: analyze prefix / nested, GATED_CLI vs CLI_ASK"; }
 import os, sys
@@ -605,7 +673,7 @@ import os, sys
 sys.path.insert(0, sys.argv[1]); sys.path.insert(0, sys.argv[2]); os.environ["DT_SETTINGS"] = "/nonexistent"
 import dtcore, install_hooks as ih
 assert dtcore.GATE_SCRIPTS == set(ih.GATES), (dtcore.GATE_SCRIPTS, ih.GATES)
-assert set(dtcore.GATE_MODULES) == {"guard_apply.py", "ticket_ctl.py"}
+assert set(dtcore.GATE_MODULES) == {"guard_apply.py", "ticket_ctl.py", "git_push.py"}
 PY
 echo "# I1: the installer's writing subcommands are not run by Claude, in any spelling or repo; read-only ones are"
 for sub in apply uninstall project-apply project-uninstall project-sandbox-apply project-sandbox-off; do

@@ -17,7 +17,7 @@ Conventional Commits unless config says otherwise; commits end with the attribut
 
 ## Up to the stop point
 - `local`: stop. Show the commits and `mr.md`; tell me the exact commands for the later steps.
-- `before-push`: stop before any push; show the exact `git push` command (plain, run from the worktree directory, never `git -C`; named remote from config; a bare `git push` is blocked; `verify-on-push.sh` does not run the verify commands any more: it checks the stage 4 record `<state>/evidence/<ID>/verify.json` for the HEAD tree and blocks when it is missing, failed or stale - run `<skill dir>/scripts/verify-record.sh <ID> --guard <state>/guard.json` again after any new commit; the result you show me before the push prompt is that record).
+- `before-push`: stop before any push; show the exact push command `<skill dir>/scripts/git-push.sh <remote> <branch>` (run from the worktree directory; named remote from config; a plain `git push` is blocked by the hook; the script pushes `HEAD` to `<branch>`, validates its own arguments, runs git with the repo's own hooks off and checks the stage 4 record `<state>/evidence/<ID>/verify.json` for the HEAD tree and blocks when it is missing, failed or stale - run `<skill dir>/scripts/verify-record.sh <ID> --guard <state>/guard.json` again after any new commit; the result you show me before the push prompt is that record).
 - `draft-mr` / `ready-mr`: use the **adapter** from config (`adapters/gitlab-glab.md` or `adapters/manual.md`): check -> push (the allowed remote only) -> create (draft or ready). The push itself shows a permission prompt - that is my gate. Never `--force`, never `--no-verify`, never to a forbidden remote.
 - Anything outward (push, MR create, comments) beyond the stop point -> stop and ask.
 

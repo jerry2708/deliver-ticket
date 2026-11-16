@@ -192,9 +192,11 @@ assert sb["enabled"] is True and sb["failIfUnavailable"] is True and sb["network
 assert sb["network"]["allowedDomains"] == ["mine.example", "registry.npmjs.org"], sb["network"]
 assert sb["filesystem"]["allowWrite"] == [st + "/evidence", repo + "/.claude/worktrees"], sb["filesystem"]
 ex = sb["excludedCommands"]
-for n in ("session-map.sh", "pending-ticket.sh", "project-map-stale.sh", "ticket-state.sh", "guard-apply.sh"):
+for n in ("session-map.sh", "pending-ticket.sh", "project-map-stale.sh", "git-rename.sh", "ticket-state.sh", "guard-apply.sh", "git-push.sh"):
     assert "%s/scripts/%s *" % (sk, n) in ex, n
-for e in ("git push *", "git branch -m *", "gh api *", "glab api *", "gh pr create *", "glab mr create *", "gh pr view *", "glab mr list *", "gh -R *", "glab --repo *",
+# C5: plain git push / git branch -m are NOT excluded (their hooks would run worktree code unsandboxed); only the scripts are
+assert "git push *" not in ex and "git branch -m *" not in ex and not any(e.startswith("git ") for e in ex), ex
+for e in ("gh api *", "glab api *", "gh pr create *", "glab mr create *", "gh pr view *", "glab mr list *", "gh -R *", "glab --repo *",
           "gh alias *", "gh extension *", "gh pr checkout *", "glab mr delete *", "glab alias *"):
     assert e in ex, e
 assert "gh *" not in ex and "glab *" not in ex            # only the enumerated forms leave the sandbox
@@ -205,12 +207,12 @@ user_ask = {r.replace(":*)", " *)") for r in ih.ASK}
 # invariant: every gh / glab form that runs unsandboxed is gated (an ask rule, user level or project) or a narrow read (allow rule)
 assert all(("Bash(%s)" % e) in set(pm["ask"]) | set(pm["allow"]) | user_ask for e in cli), [e for e in cli if ("Bash(%s)" % e) not in set(pm["ask"]) | set(pm["allow"]) | user_ask]
 assert set(cli) == set(ih.CLI_ASK) | set(ih.CLI_CREATE) | set(ih.CLI_ALLOW)
-assert "Bash(git branch -m:*)" in ih.ASK   # user level, so a project-side settings edit cannot drop it
+assert "Bash(git branch -m:*)" in ih.ASK and "Bash(git push:*)" in ih.ASK and ("Bash(%s/scripts/git-push.sh *)" % sk) in ih.ASK   # user level, so a project-side settings edit cannot drop it
 assert all(("Bash(%s)" % r) in ih.ASK for r in ih.CLI_ASK)   # the user-level ask list carries the whole CLI_ASK
 assert not any(e.startswith("bash ") for e in ex)
 assert "allowUnsandboxedCommands" not in sb      # that one is user level
 al, ask = pm["allow"], pm["ask"]
-assert al[0] == "Bash(ls)" and "Bash(git branch -m *)" not in al and "Bash(git branch -m *)" in ask and "Bash(glab mr view *)" in al and "Bash(gh pr list *)" in al
+assert al[0] == "Bash(ls)" and "Bash(git branch -m *)" not in al and "Bash(git branch -m *)" not in ask and "Bash(%s/scripts/git-push.sh *)" % sk in ask and "Bash(%s/scripts/git-push.sh *)" % sk not in al and "Bash(%s/scripts/git-rename.sh *)" % sk in al and "Bash(glab mr view *)" in al and "Bash(gh pr list *)" in al
 for n in ("session-map.sh", "pending-ticket.sh", "project-map-stale.sh"):
     assert "Bash(%s/scripts/%s *)" % (sk, n) in al and "Bash(%s/scripts/%s *)" % (sk, n) not in ask
 assert "Bash(%s/scripts/verify-record.sh *)" % sk in al and "Bash(%s/scripts/verify-record.sh *)" % sk not in ask and (sk + "/scripts/verify-record.sh *") not in ex   # sandboxed on purpose
