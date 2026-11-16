@@ -46,7 +46,7 @@ class Ctx:
         self.KD = None
 
     def fmt(self, s):
-        return s.format(S=self.S, OUT=self.OUT, PROJ=self.PROJ, ST=self.ST, KD=self.KD, SK=SK, PORT=PORT, WT1=self.PROJ + "/.claude/worktrees/T1",
+        return s.format(HOME=os.path.realpath(os.path.expanduser("~")), S=self.S, OUT=self.OUT, PROJ=self.PROJ, ST=self.ST, KD=self.KD, SK=SK, PORT=PORT, WT1=self.PROJ + "/.claude/worktrees/T1",
                         WT2=self.PROJ + "/.claude/worktrees/T2", WT3=self.PROJ + "/.claude/worktrees/T3",
                         F1A=self.S + "/f1-a/.claude/worktrees/F1A", F1B=self.S + "/f1-b/.claude/worktrees/F1B", F1C=self.S + "/f1-c/.claude/worktrees/F1C", F1D=self.S + "/f1-d/.claude/worktrees/F1D")
 
@@ -162,7 +162,7 @@ def settings_for(c, case):
     d = ih.sandbox_desired({}, sets, adds, m)
     sb = d["sandbox"]
     sb["allowUnsandboxedCommands"] = False
-    sb.setdefault("filesystem", {})["denyWrite"] = [c.ST + "/sessions", c.ST + "/*/closed", c.ST + "/*/guard.json", c.ST + "/*/delivery.log"]
+    sb.setdefault("filesystem", {})["denyWrite"] = [c.ST + "/sessions", c.ST + "/*/closed", c.ST + "/*/guard.json", c.ST + "/*/delivery.log"] + ih.sandbox_deny()[4:]       # [4:] = the user's git config entries (C5b)
     d.setdefault("permissions", {}).setdefault("ask", []).extend(ih.ASK)
     mut = case.get("mutate")
     if mut:
@@ -292,6 +292,10 @@ CASES = [
          disk=[("exists", "{WT2}/.claude/settings.local.json")]),
     dict(id="worktree_settings_by_bash", cmd="mkdir -p {WT1}/.claude && echo x > {WT1}/.claude/settings.local.json", cwd="{WT1}", expect="eperm", sources=NOUSER,
          disk=[("absent", "{WT1}/.claude/settings.local.json")]),
+    # C5b: the user's git config is user-level denyWrite (install_hooks.sandbox_deny): git-push.sh trusts it and runs unsandboxed. These write under the REAL home: the first creates
+    # ~/.config/git/dt-probe-c5b only if the deny fails (a stray file; the fixture never deletes), the second only touches ~/.gitconfig (mtime; creates it empty if absent and the deny fails).
+    dict(id="gitconfig_dir_by_bash", cmd="mkdir -p {HOME}/.config/git && echo x > {HOME}/.config/git/dt-probe-c5b", expect="eperm", sources=NOUSER, disk=[("absent", "{HOME}/.config/git/dt-probe-c5b")]),
+    dict(id="gitconfig_file_by_bash", cmd="touch {HOME}/.gitconfig", expect="eperm", sources=NOUSER, disk=[("same", "{HOME}/.gitconfig")]),       # `same` = content sha; touch changes only the mtime, so the verdict is the EPERM
     # C4: verify-record.sh is NOT excluded (runs sandboxed) and has an allow rule: no prompt. It writes evidence/<ID>/verify.json (evidence is in allowWrite), while a verify command
     # that tries to write guard.json (denyWrite) gets EPERM: the script then exits 1, records the failed rc, and guard.json is unchanged.
     dict(id="verify_record_sandboxed", cmd="{SK}/scripts/verify-record.sh V1 --guard {KD}/guard.json", cwd="{PROJ}", expect="eperm", contains="verify lint: exit 1", sources=NOUSER,

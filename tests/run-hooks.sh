@@ -212,6 +212,14 @@ n0=$(hk); out=$(cd "$W" && GIT_DIR=/nonexistent GIT_SSH_COMMAND="touch $S/ssh-ra
 [ "$(git --git-dir="$S/mirror.git" rev-parse refs/heads/feat-T1)" = "$(git -C "$W" rev-parse HEAD)" ] && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL the push did not land"; }
 [ "$(hk)" = "$n0" ] && [ ! -e "$S/ssh-ran" ] && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL a repo hook (or GIT_SSH_COMMAND / an include) ran under git-push.sh"; }
 git -C "$W" push -q mirror HEAD:refs/heads/ctl >/dev/null 2>&1; [ "$(hk)" != "$n0" ] && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL control: a plain git push should fire the hook in this fixture"; }
+echo "## C5b: under HOME only ~/.gitconfig and ~/.config/git/** are trusted origins (the hooks protect those); another file pulled in by an include is refused"
+mkdir -p "$S/fakehome/.config/git"
+printf '[core]\n\tsshCommand = ssh -o BatchMode=yes\n' > "$S/fakehome/.gitconfig"
+out=$(cd "$W" && HOME="$S/fakehome" "$SK/scripts/git-push.sh" mirror feat-T1 2>&1); req "$?" 0 "core.sshCommand in \$HOME/.gitconfig is trusted ($out)"
+printf '[include]\n\tpath = %s/fakehome/other.cfg\n[core]\n\tsshCommand = ssh -o BatchMode=yes\n' "$S" > "$S/fakehome/.gitconfig"
+printf '[credential]\n\thelper = !touch %s/cred-ran\n' "$S" > "$S/fakehome/other.cfg"
+out=$(cd "$W" && HOME="$S/fakehome" "$SK/scripts/git-push.sh" mirror feat-T1 2>&1); req "$?" 2 "credential.helper from an included \$HOME file the hooks do not protect is refused"
+[ ! -e "$S/cred-ran" ] && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL the credential helper ran"; }
 echo "## git-rename.sh"
 gr 2 -f feat-T1 x
 gr 2 feat-T1
@@ -408,6 +416,18 @@ for sid in s1 u1; do
   tsid 0 guard.sh $sid "$W" "$SK/scripts/git-rename.sh work/t1 feat/t1"
   for c in "bash $SK/scripts/git-push.sh mirror feat-T1" "python3 $SK/scripts/git_push.py mirror feat-T1" "FOO=1 $SK/scripts/git-push.sh mirror feat-T1" "env $SK/scripts/git-push.sh mirror feat-T1" "cd . && python3 -I $SK/scripts/git_push.py mirror x"; do tsid 2 guard.sh $sid "$W" "$c"; done
 done
+echo "# C5b: the user's git config (~/.gitconfig, ~/.config/git/**, \$XDG_CONFIG_HOME/git/**) is not written by Claude: git-push.sh trusts it and runs unsandboxed"
+for sid in s1 u1; do
+  for c in 'echo x >> ~/.gitconfig' 'echo x > ~/.config/git/config' 'echo x >> ~/.config/git/ignore' 'touch ~/.gitconfig' 'tee ~/.gitconfig' 'cp /dev/null ~/.config/git/config' \
+    "echo x >> $HOME/.gitconfig" 'git config --global core.sshCommand "touch /x"' 'git config --global --add credential.helper x' 'git config --system core.hooksPath /x' \
+    'git config --global --unset user.name' 'git config --global -e' 'git config --global --edit' 'git config --file ~/.gitconfig core.sshCommand x' 'git config -f ~/.config/git/config a.b c' \
+    'git config --global user.name x' 'git config --global --replace-all user.name x' 'git config --global set user.name x' 'git config --file="$HOME/.gitconfig" a.b c'; do tsid 2 guard.sh $sid "$W" "$c"; done
+  for c in 'git config --global --get user.name' 'git config --global user.name' 'git config --global --list' 'git config --global --show-origin --get-regexp core' 'git config --system --list' \
+    'git config --get remote.mirror.url' 'git config user.name' 'git config --file .git/config --list' 'cat ~/.gitconfig' 'ls ~/.config/git' "echo x > $S/.gitconfig"; do tsid 0 guard.sh $sid "$W" "$c"; done
+done
+out=$(jq -nc --arg cwd "$W" --arg f "$HOME/.gitconfig" '{session_id:"s1",cwd:$cwd,hook_event_name:"PreToolUse",tool_name:"Write",tool_input:{file_path:$f,content:"x"}}' | "$SK/hooks/worktree-guard.sh" 2>&1); req "$?" 2 "Write on ~/.gitconfig ($out)"
+out=$(jq -nc --arg cwd "$W" --arg f "$HOME/.config/git/config" '{session_id:"u1",cwd:$cwd,hook_event_name:"PreToolUse",tool_name:"Edit",tool_input:{file_path:$f,old_string:"a",new_string:"b"}}' | "$SK/hooks/worktree-guard.sh" 2>&1); req "$?" 2 "Edit on ~/.config/git/config ($out)"
+out=$(XDG_CONFIG_HOME="$S/xdg" jq -nc --arg cwd "$W" --arg f "$S/xdg/git/config" '{session_id:"s1",cwd:$cwd,hook_event_name:"PreToolUse",tool_name:"Write",tool_input:{file_path:$f,content:"x"}}' | XDG_CONFIG_HOME="$S/xdg" "$SK/hooks/worktree-guard.sh" 2>&1); req "$?" 2 "Write on \$XDG_CONFIG_HOME/git/config ($out)"
 python3 - "$SK/hooks" "$SK/scripts" <<'PY' && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL S1 unit: analyze prefix / nested, GATED_CLI vs CLI_ASK"; }
 import os, sys
 sys.path.insert(0, sys.argv[1]); sys.path.insert(0, sys.argv[2]); os.environ["DT_SETTINGS"] = "/nonexistent"

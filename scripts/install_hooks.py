@@ -83,7 +83,11 @@ def sandbox_deny():
     """User-level sandbox denyWrite entries: the protected state (hooks/dtcore.py protected_state), for every project key.
     Globs work for denyWrite on macOS (probe V7; on Linux only a trailing /** does). A deny always wins over an allowWrite."""
     r = state_root()
-    return [r + "/sessions", r + "/*/closed", r + "/*/guard.json", r + "/*/delivery.log"]
+    home = os.path.realpath(os.path.expanduser("~"))
+    xdg = os.environ.get("XDG_CONFIG_HOME") or os.path.join(home, ".config")
+    git_cfg = [home + "/.gitconfig", home + "/.config/git/**"] + ([xdg + "/git/**"] if os.path.join(home, ".config") != xdg else [])
+    # the user's git config: git-push.sh / git-rename.sh run git unsandboxed and trust it (scripts/git_safe.py), so a sandboxed Bash must not write it
+    return [r + "/sessions", r + "/*/closed", r + "/*/guard.json", r + "/*/delivery.log"] + git_cfg
 
 
 # Every subcommand is one or the other (a test keeps hooks/dtcore.py INSTALLER_WRITING equal to WRITING_COMMANDS): the hook blocks a Claude call of a

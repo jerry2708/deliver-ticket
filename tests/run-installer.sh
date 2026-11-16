@@ -87,7 +87,9 @@ python3 -I - "$D/sb1.json" "$DELIVER_TICKET_HOME" <<'PY' && echo "ok sandbox key
 import json, os, sys
 d = json.load(open(sys.argv[1])); r = os.path.realpath(sys.argv[2]); sb = d["sandbox"]
 assert sb["allowUnsandboxedCommands"] is False and sb["enabled"] is False and sb["filesystem"]["allowWrite"] == ["/a"]
-assert sb["filesystem"]["denyWrite"] == ["/x/y", r + "/sessions", r + "/*/closed", r + "/*/guard.json", r + "/*/delivery.log"], sb["filesystem"]["denyWrite"]
+h = os.path.realpath(os.path.expanduser("~"))
+assert sb["filesystem"]["denyWrite"][:5] == ["/x/y", r + "/sessions", r + "/*/closed", r + "/*/guard.json", r + "/*/delivery.log"], sb["filesystem"]["denyWrite"]
+assert h + "/.gitconfig" in sb["filesystem"]["denyWrite"] and h + "/.config/git/**" in sb["filesystem"]["denyWrite"], sb["filesystem"]["denyWrite"]   # C5b: the user's git config
 PY
 DT_SETTINGS="$D/sb1.json" "$SK/scripts/install-hooks.sh" status >/dev/null 2>&1 && echo "ok status with sandbox keys" || { fail=1; echo "FAIL status with sandbox keys"; }
 DT_SETTINGS="$D/sb1.json" "$SK/scripts/install-hooks.sh" apply --confirmed 2>&1 | grep -q "already installed" && echo "ok apply is idempotent" || { fail=1; echo "FAIL apply is not idempotent"; }
@@ -108,7 +110,7 @@ PY
 # without any sandbox key: created by apply, gone after uninstall (byte-identical)
 printf '{\n  "theme": "dark"\n}\n' > "$D/sb2.json"; cp "$D/sb2.json" "$D/sb2-orig.json"
 DT_SETTINGS="$D/sb2.json" "$SK/scripts/install-hooks.sh" apply --confirmed >/dev/null 2>&1
-python3 -I -c "import json,sys; d=json.load(open(sys.argv[1])); assert d['sandbox']['allowUnsandboxedCommands'] is False and len(d['sandbox']['filesystem']['denyWrite'])==4" "$D/sb2.json" && echo "ok sandbox block created" || { fail=1; echo "FAIL sandbox block not created"; }
+python3 -I -c "import json,sys; d=json.load(open(sys.argv[1])); assert d['sandbox']['allowUnsandboxedCommands'] is False and len(d['sandbox']['filesystem']['denyWrite'])>=6" "$D/sb2.json" && echo "ok sandbox block created" || { fail=1; echo "FAIL sandbox block not created"; }
 DT_SETTINGS="$D/sb2.json" "$SK/scripts/install-hooks.sh" uninstall --confirmed >/dev/null 2>&1
 cmp -s "$D/sb2-orig.json" "$D/sb2.json" && echo "ok byte-identical after uninstall (no sandbox keys before)" || { fail=1; echo "FAIL not restored (no sandbox keys before)"; }
 unset DELIVER_TICKET_HOME

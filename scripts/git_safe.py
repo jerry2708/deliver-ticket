@@ -89,6 +89,9 @@ def check_config_origins(wt, repo, common):
     if r.returncode not in (0, 1):
         die("cannot read git config (%s)" % r.stderr.strip()[:200])
     repo, common = os.path.realpath(repo), os.path.realpath(common)
+    home = os.path.realpath(os.path.expanduser("~"))
+    xdg = os.environ.get("XDG_CONFIG_HOME") or os.path.join(home, ".config")      # scrub_env keeps XDG_*
+    trusted = [home + "/.gitconfig", home + "/.config/git", os.path.join(os.path.realpath(xdg), "git")]
     for line in r.stdout.splitlines():
         origin, _, rest = line.partition("\t")
         key = rest.split(" ")[0]
@@ -99,6 +102,9 @@ def check_config_origins(wt, repo, common):
         in_git = path == common or path.startswith(common + os.sep)
         if inside and not in_git:
             die("git config %s is set in %s, a file inside the repository or a worktree (Claude can edit it): refused" % (key, path))
+        if (path == home or path.startswith(home + os.sep)) and not in_git and not any(path == t or path.startswith(t + os.sep) for t in trusted):
+            die("git config %s is set in %s, a file under your home that the hooks do not protect (only ~/.gitconfig and ~/.config/git/** are): refused. "
+                "Move the setting there or ask me" % (key, path))
 
 
 def run_git(wt, *a):

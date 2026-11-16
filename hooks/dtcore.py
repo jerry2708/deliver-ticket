@@ -579,6 +579,52 @@ def hardlink_reason(src, cwd):
     return None
 
 
+def gitconfig_paths():
+    """(files, dirs) of the user's git config: git-push.sh / git-rename.sh run unsandboxed and trust these (scripts/git_safe.py), so a core.sshCommand or
+    credential.helper written here would run with the user's full access. ~/.gitconfig, ~/.config/git/**, $XDG_CONFIG_HOME/git/** (Write / Edit and shell writes)."""
+    xdg = os.environ.get("XDG_CONFIG_HOME") or os.path.join(HOME, ".config")
+    return [os.path.join(HOME, ".gitconfig")], [os.path.join(HOME, ".config", "git"), os.path.join(xdg, "git")]
+
+
+def gitconfig_protected(rp):
+    files, dirs = gitconfig_paths()
+    return any(under(rp, f) for f in files + dirs)
+
+
+GITCFG_WRITE_FLAGS = {"--add", "--unset", "--unset-all", "--replace-all", "--rename-section", "--remove-section", "-e", "--edit", "--set", "set", "unset", "edit",
+                      "rename-section", "remove-section"}
+GITCFG_READ_FLAGS = {"--get", "--get-all", "--get-regexp", "--get-urlmatch", "-l", "--list", "get", "list", "--show-origin", "--show-scope", "--name-only"}
+GITCFG_SCOPE = {"--global", "--system"}
+
+
+def check_git_config(rest, cwd):
+    """`git config --global|--system|--file <user git config>` with a write is blocked; reads stay allowed. Fail-closed: no read flag and two or more
+    positionals (key value) is a write. `git config key value` without a scope writes the repo's .git/config, which the sandbox protects (not this rule)."""
+    scoped = any(t in GITCFG_SCOPE for t in rest)
+    for i, t in enumerate(rest):
+        val = None
+        if t in ("-f", "--file") and i + 1 < len(rest):
+            val = rest[i + 1]
+        elif t.startswith("--file="):
+            val = t.split("=", 1)[1]
+        if val is not None:
+            if SUBST in val or "$" in val:
+                scoped = True
+            else:
+                v = os.path.expanduser(val)
+                if not os.path.isabs(v):
+                    v = os.path.join(cwd or "/", v)
+                scoped = scoped or gitconfig_protected(real(v))
+    if not scoped:
+        return
+    pos = [t for t in rest if not t.startswith("-")]
+    writes = any(t in GITCFG_WRITE_FLAGS for t in rest)
+    reads = any(t in GITCFG_READ_FLAGS for t in rest)
+    if writes or (not reads and len(pos) >= 2):
+        block("git config --global / --system / --file on the user's git config is not run by Claude (git-push.sh trusts those files and runs them unsandboxed): "
+              "tell me the setting and I change it myself; reads (--get, --list, --show-origin) are fine")
+
+
 def path_ok(p, g, payload, cwd):
     """None if writing p is allowed, else a reason. A session with no open ticket is only held to the always-on rules
     (~/.claude, session / ticket-state bookkeeping); a path it uses cannot be evaluated when it holds an unresolvable
@@ -596,6 +642,9 @@ def path_ok(p, g, payload, cwd):
     rp = real(p)
     if rp.startswith("/dev/"):
         return None
+    if gitconfig_protected(rp):
+        return ("%s is the user's git config: git-push.sh / git-rename.sh run git unsandboxed and trust it (a core.sshCommand or credential.helper there "
+                "would run with full access) - tell me the setting and I change it myself" % rp)
     claude = os.path.join(HOME, ".claude")
     if under(rp, claude):
         if re.match(re.escape(claude) + r"/projects/[^/]+/memory(/|$)", rp, re.I if fs_ci(claude) else 0):
@@ -1170,6 +1219,8 @@ def check_cmd(c, g, payload, all_cmds=()):
             for t in rest:
                 if sub == "commit" and re.fullmatch(r"-[A-Za-z]*n[A-Za-z]*", t):
                     block("git commit -n is --no-verify - not allowed")
+        if sub == "config":
+            check_git_config(rest, c.cwd if not over else os.path.join(c.cwd or "/", over))
         if sub == "config" and any(t.startswith("alias.") or t.startswith("core.hookspath") or
                                     t.lower().startswith("core.hookspath") for t in rest):
             block("git config alias.* / core.hooksPath is not allowed")
