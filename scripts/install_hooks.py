@@ -57,7 +57,7 @@ CLI_ASK = (["glab " + w + " *" for w in ("api", "auth", "variable", "repo", "ci"
            ["gh pr " + w + " *" for w in ("edit", "comment", "close", "review", "reopen", "checkout", "ready", "lock", "unlock")])
 CLI_CREATE = ["glab mr create *", "gh pr create *"]            # their ask rules are the older `:*` spelling in ASK below
 CLI_ALLOW = ["glab mr view *", "glab mr list *", "gh pr view *", "gh pr list *"]
-ASK = (["Bash(git push:*)", "Bash(glab mr create:*)", "Bash(gh pr create:*)"] + ["Bash(%s *)" % os.path.join(SKILL, "scripts", g) for g in GATES] +
+ASK = (["Bash(git push:*)", "Bash(git branch -m:*)", "Bash(glab mr create:*)", "Bash(gh pr create:*)"] + ["Bash(%s *)" % os.path.join(SKILL, "scripts", g) for g in GATES] +
        ["Bash(%s)" % c for c in CLI_ASK])
 DENY = ["Bash(glab mr merge:*)", "Bash(gh pr merge:*)", "Read(**/.env*)"]
 # (event, matcher, script, timeout seconds, onFailure block?)
@@ -593,8 +593,8 @@ def sandbox_plan(repo, state, domains, local_binding):
     adds = [(("sandbox", "excludedCommands"), [p + " *" for p in book + gate] + ["git push *", "git branch -m *"] + CLI_CREATE + CLI_ASK + CLI_ALLOW),
             (("sandbox", "filesystem", "allowWrite"), [os.path.join(state, "evidence"), os.path.join(repo, ".claude", "worktrees")]),
             (("sandbox", "network", "allowedDomains"), list(domains)),
-            (("permissions", "allow"), ["Bash(%s *)" % p for p in book] + ["Bash(git branch -m *)"] + ["Bash(%s)" % c for c in CLI_ALLOW]),
-            (("permissions", "ask"), ["Bash(%s *)" % p for p in gate] + ["Bash(%s)" % c for c in CLI_ASK])]
+            (("permissions", "allow"), ["Bash(%s *)" % p for p in book] + ["Bash(%s)" % c for c in CLI_ALLOW]),
+            (("permissions", "ask"), ["Bash(%s *)" % p for p in gate] + ["Bash(git branch -m *)"] + ["Bash(%s)" % c for c in CLI_ASK])]
     return sets, adds
 
 

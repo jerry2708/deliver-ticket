@@ -205,11 +205,12 @@ user_ask = {r.replace(":*)", " *)") for r in ih.ASK}
 # invariant: every gh / glab form that runs unsandboxed is gated (an ask rule, user level or project) or a narrow read (allow rule)
 assert all(("Bash(%s)" % e) in set(pm["ask"]) | set(pm["allow"]) | user_ask for e in cli), [e for e in cli if ("Bash(%s)" % e) not in set(pm["ask"]) | set(pm["allow"]) | user_ask]
 assert set(cli) == set(ih.CLI_ASK) | set(ih.CLI_CREATE) | set(ih.CLI_ALLOW)
+assert "Bash(git branch -m:*)" in ih.ASK   # user level, so a project-side settings edit cannot drop it
 assert all(("Bash(%s)" % r) in ih.ASK for r in ih.CLI_ASK)   # the user-level ask list carries the whole CLI_ASK
 assert not any(e.startswith("bash ") for e in ex)
 assert "allowUnsandboxedCommands" not in sb      # that one is user level
 al, ask = pm["allow"], pm["ask"]
-assert al[0] == "Bash(ls)" and "Bash(git branch -m *)" in al and "Bash(glab mr view *)" in al and "Bash(gh pr list *)" in al
+assert al[0] == "Bash(ls)" and "Bash(git branch -m *)" not in al and "Bash(git branch -m *)" in ask and "Bash(glab mr view *)" in al and "Bash(gh pr list *)" in al
 for n in ("session-map.sh", "pending-ticket.sh", "project-map-stale.sh"):
     assert "Bash(%s/scripts/%s *)" % (sk, n) in al and "Bash(%s/scripts/%s *)" % (sk, n) not in ask
 for n in ("ticket-state.sh", "guard-apply.sh"):
