@@ -247,6 +247,10 @@ CASES = [
     # .claude/settings*.json under the cwd. So this row is a regression guard for that built-in behaviour, not a hole. NOT probed (Haiku skipped the call both times): a session
     # whose cwd is the project root or elsewhere writing <worktree>/.claude/settings*.json - that is where the denyWrite glob <repo>/.claude/worktrees/*/.claude/settings*.json
     # (C9) would still matter. denyWrite globs work on macOS only (Linux: a trailing /** only, plan V7c). Also unverified: whether a session whose cwd is a worktree reads that file.
+    # From the project root (not the worktree) the write SUCCEEDED in one ad hoc run (sonnet, 2026-11-16; Haiku skipped the call twice, hence model="sonnet"): TODAY A HOLE, expect "ok"
+    # + file exists. C9 (the denyWrite glob) must flip this to eperm + absent.
+    dict(id="worktree_settings_from_project_cwd", cmd="mkdir -p {WT2}/.claude && echo x > {WT2}/.claude/settings.local.json", cwd="{PROJ}", expect="ok", sources=NOUSER, model="sonnet",
+         disk=[("exists", "{WT2}/.claude/settings.local.json")]),
     dict(id="worktree_settings_by_bash", cmd="mkdir -p {WT1}/.claude && echo x > {WT1}/.claude/settings.local.json", cwd="{WT1}", expect="eperm", sources=NOUSER,
          disk=[("absent", "{WT1}/.claude/settings.local.json")]),
     dict(id="git_dash_C_stays_sandboxed", cmd="git -C {WT3} branch -m work/t3 feat-t3", cwd="{PROJ}", expect="eperm", contains="config", mutate=m_branch_allowed, sources=NOUSER),
@@ -274,9 +278,9 @@ def classify(texts):
     return "ok"
 
 
-def run_claude(claude, cmd, settings, mode, cwd, env, sources=None):
+def run_claude(claude, cmd, settings, mode, cwd, env, sources=None, model="haiku"):
     args = claude + ["-p", "Run exactly this ONE Bash command, as a single call, character for character, changing nothing (keep any cd, &&, prefix and path): " + cmd,
-                     "--model", "haiku", "--output-format", "stream-json", "--verbose", "--max-turns", "6", "--max-budget-usd", "0.30", "--settings", settings,
+                     "--model", model, "--output-format", "stream-json", "--verbose", "--max-turns", "6", "--max-budget-usd", "0.30", "--settings", settings,
                      "--permission-mode", mode] + (["--setting-sources", sources] if sources else [])
     r = subprocess.run(args, cwd=cwd, env=env, capture_output=True, text=True)
     used, res = [], []
@@ -403,7 +407,7 @@ def main():
         env = dict(base_env)
         if k.get("dt_home"):          # only the script cases: with the fixture as the state root our own hooks protect it and would answer before the sandbox does
             env["DELIVER_TICKET_HOME"] = c.ST
-        used, res = run_claude(a.claude.split(), cmd, sp, mode, cwd, env, k.get("sources"))
+        used, res = run_claude(a.claude.split(), cmd, sp, mode, cwd, env, k.get("sources"), k.get("model", "haiku"))
         verdict, note = judge(c, k, used, res, before)
         counts[verdict] = counts.get(verdict, 0) + 1
         print("| %s | %s | %s | %s |" % (k["id"], mode, verdict, note.replace("|", "/")), flush=True)
