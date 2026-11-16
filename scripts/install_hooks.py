@@ -819,7 +819,8 @@ def cmd_selftest(args=()):
     nostate = os.path.join(base, "nostate")
     repo = os.path.join(base, "repo")
     for d in (nostate, repo):
-        if not os.path.isdir(os.path.join(d, ".git")):
+        # a leftover .git directory is not proof of a repository (an emptied one made every state-dependent check below fail); `git init` is idempotent and repairs it
+        if not (os.path.isdir(d) and subprocess.run(["git", "-C", d, "rev-parse", "--git-dir"], capture_output=True).returncode == 0):
             os.makedirs(d, exist_ok=True)
             subprocess.run(["git", "init", "-q", d], check=True)
     pre = json.dumps({"session_id": "st", "cwd": nostate, "hook_event_name": "PreToolUse", "tool_name": "Bash",
