@@ -6,7 +6,9 @@ The Bash sandbox's excludedCommands and the permission ask / allow rules match t
   - a bookkeeping / gate script (install_hooks.BOOKKEEPING + GATES) is named as `scripts/<name>` without the `<skill dir>/` prefix, or with `bash` / `python3` in front;
   - `<skill dir>/scripts/<name>.sh`, made absolute, would not match an excludedCommands pattern of `install-hooks.sh project-sandbox-apply` (or, for a gate script,
     its user-level ask rule is missing);
-  - `git -C <dir> push` or `git -C <dir> branch -m` is written (a `git -C` call stays sandboxed even when excluded).
+  - `git -C <dir> push` or `git -C <dir> branch -m` is written (a `git -C` call stays sandboxed even when excluded);
+  - `cd <dir> && git push|branch -m` (also `;`, `||`, `pushd`, inside a subshell) or an env assignment in front (`FOO=1 git push`) is written: the exclusion and the
+    ask rule match the command text as a prefix, so the push would run sandboxed (probe `push_after_cd_stays_sandboxed`) or miss its ask rule.
 Usage: lint_script_calls.py [skill root]      -> exit 1 and one line per violation
        lint_script_calls.py --text "<text>"   -> checks one string (used by run-docs-lint.sh to prove that bad forms are caught)
 """
@@ -50,6 +52,10 @@ def check(text, label):
                     out.append("%s:%d: %s would not match any excludedCommands pattern" % (label, n, name))
         if re.search(r"git -C \S+ (push|branch -m)\b", line):
             out.append("%s:%d: `git -C <dir> push|branch -m` stays sandboxed even when excluded; use the plain command from the worktree directory" % (label, n))
+        if re.search(r"\b(cd|pushd)\s+\S+\s*(&&|;|\|\|)\s*git (push|branch -m)\b", line):
+            out.append("%s:%d: `cd <dir> && git push|branch -m` does not match the exclusion or the ask rule (command text prefix); make `cd` its own call, then the plain command" % (label, n))
+        if re.search(r"(^|[\s`(;&|])[A-Za-z_][A-Za-z0-9_]*=\S*\s+git (push|branch -m)\b", line):
+            out.append("%s:%d: an env assignment in front of `git push|branch -m` does not match the exclusion or the ask rule; call the plain command" % (label, n))
     return out
 
 

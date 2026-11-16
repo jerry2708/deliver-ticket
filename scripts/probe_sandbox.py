@@ -62,6 +62,8 @@ def make_fixtures(c):
         sh("git", "-C", c.PROJ, "commit", "-q", "-m", "init")
         sh("git", "init", "-q", "--bare", c.S + "/remote.git")
         sh("git", "-C", c.PROJ, "remote", "add", "mirror", "file://" + c.S + "/remote.git")
+        sh("git", "init", "-q", "--bare", c.OUT + "/remote2.git")                  # outside allowWrite and outside /tmp: only an unsandboxed push can write here
+        sh("git", "-C", c.PROJ, "remote", "add", "mirror2", "file://" + c.OUT + "/remote2.git")
         os.makedirs(c.PROJ + "/.claude/worktrees", exist_ok=True)
         for n in (1, 2, 3):
             sh("git", "-C", c.PROJ, "worktree", "add", "-q", c.PROJ + "/.claude/worktrees/T%d" % n, "-b", "work/t%d" % n)
@@ -74,7 +76,7 @@ def make_fixtures(c):
         os.makedirs(c.KD + "/" + d, exist_ok=True)
     os.makedirs(c.ST + "/keyC", exist_ok=True)
     g = json.load(open(SK + "/tests/guard-json/valid.json"))
-    g.update(project_key=c.key, repo_root=c.PROJ, remotes={"push": "mirror", "allowed": ["mirror"], "forbidden": ["origin"]},
+    g.update(project_key=c.key, repo_root=c.PROJ, remotes={"push": "mirror", "allowed": ["mirror", "mirror2"], "forbidden": ["origin"]},
              verify={"lint": None, "test": None, "build": None, "on_push": [], "timeout_sec": 20})
     c.guard = json.dumps(g, indent=1)
     open(c.KD + "/guard.json", "w").write(c.guard)
@@ -135,9 +137,21 @@ def m_allowglob(c, d):
     d["sandbox"]["filesystem"].setdefault("allowWrite", []).append(c.ST + "/*/evidence2")
 
 
+def m_branch_allowed(c, d):
+    """`git branch -m` is an ask rule since C0 (project and user level); an allow rule and no ask rule stand in for the user's yes, so the verdict is the sandbox."""
+    d["permissions"]["ask"] = [r for r in d["permissions"]["ask"] if not r.startswith("Bash(git branch -m")]
+    d["permissions"].setdefault("allow", []).append("Bash(git branch -m *)")
+
+
 def m_nobranch(c, d):
+    m_branch_allowed(c, d)
     d["sandbox"]["excludedCommands"] = [e for e in d["sandbox"]["excludedCommands"] if e != "git branch -m *"]
-    d["permissions"]["allow"] = [r for r in d["permissions"]["allow"] if r != "Bash(git branch -m *)"]
+
+
+def m_push_allowed(c, d):
+    """An allow rule for any push and no ask rule for it, so no prompt hides the sandbox verdict."""
+    d["permissions"]["ask"] = [r for r in d["permissions"]["ask"] if not r.startswith("Bash(git push")]
+    d["permissions"].setdefault("allow", []).append("Bash(git push *)")
 
 
 def m_noask_off(c, d):
@@ -146,6 +160,7 @@ def m_noask_off(c, d):
 
 
 BOTH = ["default", "auto"]
+NOUSER = "project,local"     # --setting-sources: the verdict must come from the fixture settings (--settings) alone; the real ~/.claude/settings.json (ask rules, hooks) is not loaded
 SID = "--reason probe --session {id} --repo {PROJ}"
 CASES = [
     # group, id, command, cwd, modes, mutate/options, expectation {kind, contains, disk, info}
@@ -180,9 +195,16 @@ CASES = [
     dict(id="localhost_listen_with_binding", cmd="node {S}/srv.js", local=True, expect="ok", contains="got:ok"),
     dict(id="localhost_client_without_binding", cmd="curl -sS -m 5 http://127.0.0.1:{PORT}/", expect="net", info=True),
     dict(id="localhost_client_with_binding", cmd="curl -sS -m 5 http://127.0.0.1:{PORT}/", local=True, expect="ok", contains="probe-server-ok"),
-    dict(id="git_branch_rename_excluded", cmd="git branch -m work/t1 feat-t1", cwd="{WT1}", expect="ok"),
-    dict(id="git_branch_rename_sandboxed_fails", cmd="git branch -m work/t2 feat-t2", cwd="{WT2}", expect="eperm", mutate=m_nobranch, contains="config"),
-    dict(id="git_dash_C_stays_sandboxed", cmd="git -C {WT3} branch -m work/t3 feat-t3", cwd="{PROJ}", expect="eperm", contains="config"),
+    dict(id="git_branch_rename_excluded", cmd="git branch -m work/t1 feat-t1", cwd="{WT1}", expect="ok", mutate=m_branch_allowed, sources=NOUSER),
+    dict(id="git_branch_rename_sandboxed_fails", cmd="git branch -m work/t2 feat-t2", cwd="{WT2}", expect="eperm", mutate=m_nobranch, contains="config", sources=NOUSER),
+    # the push is allowed by rule (no prompt), so the verdict is the sandbox: `cd <dir> && git push` does not match `git push *`, so it runs sandboxed -> the file:// remote
+    # outside allowWrite stays unchanged. Disk is the proof (no loose ref in remote2.git), not the exit code.
+    # HEAD refspecs, not work/t1|t2: git_branch_rename_excluded renames work/t1 earlier in the run
+    dict(id="push_after_cd_stays_sandboxed", cmd="cd {WT1} && git push mirror2 HEAD:refs/heads/cdpush", cwd="{S}", expect="eperm", mutate=m_push_allowed, sources=NOUSER,
+         disk=[("absent", "{OUT}/remote2.git/refs/heads/cdpush")]),
+    dict(id="push_plain_unsandboxed_control", cmd="git push mirror2 HEAD:refs/heads/plainpush", cwd="{WT2}", expect="ok", mutate=m_push_allowed, sources=NOUSER, info=True,
+         disk=[("exists", "{OUT}/remote2.git/refs/heads/plainpush")]),
+    dict(id="git_dash_C_stays_sandboxed", cmd="git -C {WT3} branch -m work/t3 feat-t3", cwd="{PROJ}", expect="eperm", contains="config", mutate=m_branch_allowed, sources=NOUSER),
     dict(id="gh_read_unsandboxed", cmd="gh pr view 1", expect="ok", contains="fake-gh: UNSANDBOXED"),
     dict(id="gh_write_asks", cmd="gh pr edit 1", modes=BOTH, expect="prompt"),
     dict(id="gh_unlisted_sandboxed", cmd="gh cache delete 1", expect="ok", contains="fake-gh: SANDBOXED"),
@@ -200,17 +222,17 @@ def classify(texts):
         return "prompt"
     if "has been denied" in t:
         return "denied"
-    if re.search(r"not permitted|EPERM|PermissionError|update of config-file failed|could not lock config", t):
+    if re.search(r"not permitted|EPERM|PermissionError|update of config-file failed|could not lock config|unable to create temporary object directory", t):
         return "eperm"
     if re.search(r"CONNECT tunnel failed|network-outbound|Connection refused|Could not connect|Failed to connect|Operation timed out", t):
         return "net"
     return "ok"
 
 
-def run_claude(claude, cmd, settings, mode, cwd, env):
+def run_claude(claude, cmd, settings, mode, cwd, env, sources=None):
     args = claude + ["-p", "Run exactly this ONE Bash command, as a single call, character for character, changing nothing (keep any cd, &&, prefix and path): " + cmd,
                      "--model", "haiku", "--output-format", "stream-json", "--verbose", "--max-turns", "6", "--max-budget-usd", "0.30", "--settings", settings,
-                     "--permission-mode", mode]
+                     "--permission-mode", mode] + (["--setting-sources", sources] if sources else [])
     r = subprocess.run(args, cwd=cwd, env=env, capture_output=True, text=True)
     used, res = [], []
     for l in r.stdout.splitlines():
@@ -334,7 +356,7 @@ def main():
         env = dict(base_env)
         if k.get("dt_home"):          # only the script cases: with the fixture as the state root our own hooks protect it and would answer before the sandbox does
             env["DELIVER_TICKET_HOME"] = c.ST
-        used, res = run_claude(a.claude.split(), cmd, sp, mode, cwd, env)
+        used, res = run_claude(a.claude.split(), cmd, sp, mode, cwd, env, k.get("sources"))
         verdict, note = judge(c, k, used, res, before)
         counts[verdict] = counts.get(verdict, 0) + 1
         print("| %s | %s | %s | %s |" % (k["id"], mode, verdict, note.replace("|", "/")), flush=True)
