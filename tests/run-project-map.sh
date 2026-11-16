@@ -134,5 +134,10 @@ ck 'next to the guard.json' other-name apply "$S/notes.md" "${G[@]}"; eq "$LASTR
 ck 'next to the guard.json' mark-other mark-checked "$S/other/project.md" "${G[@]}" "Web source"; eq "$LASTRC" 2 "mark-checked refuses another directory"
 ck 'pass --guard' no-guard apply "$P" --repo "$R" --ref main; eq "$LASTRC" 2 "apply without --guard refuses"
 ln -sf "$S/other/project.md" "$S/sub-link.md" 2>/dev/null; ck 'next to the guard.json' symlink apply "$S/sub-link.md" "${G[@]}"; eq "$LASTRC" 2 "a symlink to another file refuses"
+echo "# project.md next to the guard.json IS a symlink to another file: realpath differs, both writers refuse, target untouched"
+mkdir -p "$S/st2"; printf '{"repo_root":"%s","base_branch":"main"}' "$R" > "$S/st2/guard.json"; ln -s "$S/other/project.md" "$S/st2/project.md"
+ck 'next to the guard.json' pmd-symlink-apply apply "$S/st2/project.md" --guard "$S/st2/guard.json"; eq "$LASTRC" 2 "apply refuses a project.md symlinked elsewhere"
+ck 'next to the guard.json' pmd-symlink-mark mark-checked "$S/st2/project.md" --guard "$S/st2/guard.json" "Web source"; eq "$LASTRC" 2 "mark-checked refuses a project.md symlinked elsewhere"
+eq "$(cat "$S/other/project.md")" "$before" "symlink target untouched"
 ck 'stale' check-other check "$S/other/project.md" "${G[@]}"; eq "$(cat "$S/other/project.md")" "$before" "check still reads any path and writes nothing"
 echo "pass=$pass fail=$fail"; [ $fail = 0 ]
