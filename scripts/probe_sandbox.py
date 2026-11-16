@@ -126,6 +126,16 @@ def make_f1(c, tag, hooks, where):
         sh("git", "-C", repo, "config", "core.hooksPath", ".hooks")
 
 
+def make_v1(c):
+    """verify-record fixture: a clean worktree V1 (branch work/v1) and a guard.json whose verify.lint tries to write guard.json (denyWrite) and is the only on_push key."""
+    wt = c.PROJ + "/.claude/worktrees/V1"
+    if not os.path.isdir(wt):
+        sh("git", "-C", c.PROJ, "worktree", "add", "-q", wt, "-b", "work/v1")
+    g = json.loads(c.guard)
+    g["verify"].update(lint="echo tamper >> %s/guard.json" % c.KD, on_push=["lint"])
+    open(c.KD + "/guard.json", "w").write(json.dumps(g, indent=1))
+
+
 def expand(c, k, s):
     return c.fmt(s.replace("{id}", k["id"]))
 
@@ -253,6 +263,10 @@ CASES = [
          disk=[("exists", "{WT2}/.claude/settings.local.json")]),
     dict(id="worktree_settings_by_bash", cmd="mkdir -p {WT1}/.claude && echo x > {WT1}/.claude/settings.local.json", cwd="{WT1}", expect="eperm", sources=NOUSER,
          disk=[("absent", "{WT1}/.claude/settings.local.json")]),
+    # C4: verify-record.sh is NOT excluded (runs sandboxed) and has an allow rule: no prompt. It writes evidence/<ID>/verify.json (evidence is in allowWrite), while a verify command
+    # that tries to write guard.json (denyWrite) gets EPERM: the script then exits 1, records the failed rc, and guard.json is unchanged.
+    dict(id="verify_record_sandboxed", cmd="{SK}/scripts/verify-record.sh V1 --guard {KD}/guard.json", cwd="{PROJ}", expect="eperm", contains="verify lint: exit 1", sources=NOUSER,
+         setup=make_v1, disk=[("exists", "{KD}/evidence/V1/verify.json"), ("same", "{KD}/guard.json")]),
     dict(id="git_dash_C_stays_sandboxed", cmd="git -C {WT3} branch -m work/t3 feat-t3", cwd="{PROJ}", expect="eperm", contains="config", mutate=m_branch_allowed, sources=NOUSER),
     dict(id="gh_read_unsandboxed", cmd="gh pr view 1", expect="ok", contains="fake-gh: UNSANDBOXED"),
     dict(id="gh_write_asks", cmd="gh pr edit 1", modes=BOTH, expect="prompt"),

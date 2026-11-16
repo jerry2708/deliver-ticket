@@ -22,7 +22,7 @@ sys.path.insert(0, os.path.join(ROOT, "scripts"))
 os.environ.setdefault("DT_SETTINGS", "/nonexistent")
 import install_hooks as ih  # noqa: E402
 
-NAMES = ih.BOOKKEEPING + ih.GATES
+NAMES = ih.BOOKKEEPING + ih.SANDBOXED + ih.GATES
 SK = ih.SKILL
 
 
@@ -48,7 +48,7 @@ def check(text, label):
                 before = prefix[:-len("<skill dir>/")].rstrip()
                 if re.search(r"\b(bash|sh|zsh|python3?|env|xargs)\s*`?$", before):
                     out.append("%s:%d: %s has an interpreter or wrapper in front: %r" % (label, n, name, before[-24:]))
-                if not matches(os.path.join(SK, "scripts", name) + " x", pats):
+                if name not in ih.SANDBOXED and not matches(os.path.join(SK, "scripts", name) + " x", pats):
                     out.append("%s:%d: %s would not match any excludedCommands pattern" % (label, n, name))
         if re.search(r"git -C \S+ (push|branch -m)\b", line):
             out.append("%s:%d: `git -C <dir> push|branch -m` stays sandboxed even when excluded; use the plain command from the worktree directory" % (label, n))

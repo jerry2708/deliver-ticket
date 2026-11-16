@@ -72,7 +72,7 @@ Only after step 1 is confirmed. Create the state dir and, in this order:
 | `project_key`, `repo_root` | computed; absolute main-checkout path | all hooks (main-checkout write block) |
 | `base_branch`, `branch_naming` (placeholders `{id}` `{id-lowercase}` `{type}` `{slug}`, must contain an ID placeholder; anything else is rejected) | Git group | `worktree-create.sh` (provisional branch), `branch-name.py` (final name, stage 1b) |
 | `remotes.push`, `remotes.allowed`, `remotes.forbidden` | Git group | `guard.sh` (push to a remote not in `allowed`, or in `forbidden` -> block) |
-| `verify.lint/test/build/on_push/timeout_sec` | Verify group | `verify-on-push.sh`, stage 3-4. **Known limit until milestone 1c (#1):** `verify.on_push` commands run in a hook, outside the sandbox, with your full access and before the `git push` prompt; with the sandbox on, set `verify.on_push: []` for real tickets |
+| `verify.lint/test/build/on_push/timeout_sec` | Verify group | `verify-on-push.sh`, stage 3-4. Since milestone 1c (#1) the push hook runs none of these: stage 4 runs `verify-record.sh`, which runs the `on_push` commands sandboxed and writes `evidence/<ID>/verify.json`; the hook only checks it (HEAD tree + command hashes). The record is tamper-evident, not tamper-proof (evidence/ is sandbox-writable). `on_push: []` needs no record |
 | `env_files` | Workspace (names relative to the main checkout) | `setup-worktree.sh` (symlinks) |
 | `install` | Workspace | `setup-worktree.sh` |
 | `ports` `{vars, base, step}` | Workspace | `setup-worktree.sh`, stage 1b |

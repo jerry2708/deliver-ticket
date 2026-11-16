@@ -105,14 +105,69 @@ for h in guard verify-on-push worktree-guard session-start; do
   if [ $rc = 0 ] && [ -z "$out" ] && [ $ms -lt 500 ]; then pass=$((pass+1)); echo "ok no-state $h rc=0 ${ms}ms"; else fail=$((fail+1)); echo "FAIL no-state $h rc=$rc ${ms}ms out=$out"; fi
 done
 echo '{"cwd":"/tmp","tool_name":"Bash"}' | (cd /tmp && "$SK/hooks/guard.sh") >/dev/null 2>&1; [ $? = 0 ] && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL non-git cwd should no-op"; }
-echo "# verify-on-push: test=false => block; dry-run => pass"
-t 2 verify-on-push.sh "$W" 'git push mirror feat-T1'
+echo "# verify-on-push (milestone 1c #1): the hook only READS evidence/<ID>/verify.json (written by verify-record.sh); it executes nothing"
+G="$DELIVER_TICKET_HOME/$key/guard.json"
+setv() { python3 -I -c 'import json,sys; p,k,v=sys.argv[1:4]; g=json.load(open(p)); g["verify"][k]=v; json.dump(g,open(p,"w"))' "$G" "$1" "$2"; }
+setpush() { python3 -I -c 'import json,sys; p=sys.argv[1]; g=json.load(open(p)); g["verify"]["on_push"]=sys.argv[2:]; json.dump(g,open(p,"w"))' "$G" "$@"; }
+vrec() { "$SK/scripts/verify-record.sh" "$@" >/dev/null 2>&1; echo $?; }
+req() { [ "$1" = "$2" ] && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL $3: got [$1] want [$2]"; }; }
+t 2 verify-on-push.sh "$W" 'git push mirror feat-T1'                      # no record yet: blocked, whatever the commands would do
 t 0 verify-on-push.sh "$W" 'git push -n mirror feat-T1'
 t 0 verify-on-push.sh "$W" 'git status'
-sed -i.bak 's/"test":"false"/"test":"true"/' "$DELIVER_TICKET_HOME/$key/guard.json"
+req "$(vrec T1 --guard "$G")" 1 "record with test=false exits 1"
+t 2 verify-on-push.sh "$W" 'git push mirror feat-T1'                      # the record says test failed
+setv test true
+t 2 verify-on-push.sh "$W" 'git push mirror feat-T1'                      # command string changed since the record: old record void
+req "$(vrec T1 --guard "$G")" 0 "record with test=true exits 0"
 t 0 verify-on-push.sh "$W" 'git push mirror feat-T1'
-sed -i.bak 's/"test":"true"/"test":"sleep 30"/' "$DELIVER_TICKET_HOME/$key/guard.json"
-t 2 verify-on-push.sh "$W" 'git push mirror feat-T1'
+out=$(payload "$W" Bash 'git push mirror feat-T1' u1 | "$SK/hooks/verify-on-push.sh" 2>&1); req "$?" 0 "the hook does not depend on the session (unbound u1: $out)"
+t 2 verify-on-push.sh "$R" 'git push mirror feat-T1'                      # no ticket resolvable from the cwd (the repo root): fail-closed
+t 2 verify-on-push.sh "$R/.claude/worktrees" 'git push mirror feat-T1'
+echo x > "$W/f.txt"; git -C "$W" add f.txt; git -C "$W" commit -q -m "tree changes"
+t 2 verify-on-push.sh "$W" 'git push mirror feat-T1'                      # HEAD's tree changed since the record
+echo y > "$W/untracked.txt"
+req "$(vrec T1 --guard "$G")" 2 "verify-record refuses an unclean worktree (untracked file)"
+t 2 verify-on-push.sh "$W" 'git push mirror feat-T1'                      # ... and wrote no new record
+git -C "$W" add untracked.txt; git -C "$W" commit -q -m "add untracked"
+req "$(vrec T1 --guard "$G")" 0 "clean worktree: record exits 0"
+t 0 verify-on-push.sh "$W" 'git push mirror feat-T1'
+echo "## every ref the push sends must have the recorded tree, not only HEAD"
+git -C "$W" branch other-tree HEAD~1
+t 0 verify-on-push.sh "$W" 'git push mirror'                              # no refspec = the current branch = HEAD
+t 0 verify-on-push.sh "$W" 'git push mirror HEAD:refs/heads/x'
+t 0 verify-on-push.sh "$W" 'git push -u mirror feat-T1:feat-T1'
+t 2 verify-on-push.sh "$W" 'git push mirror other-tree'                   # another branch, other tree
+t 2 verify-on-push.sh "$W" "git push mirror $(git -C "$W" rev-parse HEAD~1):refs/heads/x"
+t 2 verify-on-push.sh "$W" 'git push mirror HEAD~1:refs/heads/x'
+t 2 verify-on-push.sh "$W" 'git push mirror feat-T1 other-tree'           # one good source, one bad
+t 2 verify-on-push.sh "$W" 'git push --all mirror'
+t 2 verify-on-push.sh "$W" 'git push --mirror mirror'
+t 2 verify-on-push.sh "$W" 'git push --tags mirror'
+t 2 verify-on-push.sh "$W" 'git push mirror refs/heads/*:refs/heads/*'
+t 2 verify-on-push.sh "$W" 'git push mirror no-such-ref'                  # cannot be resolved
+t 2 verify-on-push.sh "$W" 'git push --delete mirror x'
+git -C "$W" config push.default matching
+t 2 verify-on-push.sh "$W" 'git push mirror'                              # matching = every matching branch
+git -C "$W" config push.default simple
+git -C "$W" config remote.mirror.push 'refs/heads/other-tree:refs/heads/o'
+t 2 verify-on-push.sh "$W" 'git push mirror'                              # a configured push refspec redirects a bare push
+git -C "$W" config --unset-all remote.mirror.push
+t 0 verify-on-push.sh "$W" 'git push mirror'
+echo "garbage" > "$DELIVER_TICKET_HOME/$key/evidence/T1/verify.json"
+t 2 verify-on-push.sh "$W" 'git push mirror feat-T1'                      # unreadable record: fail-closed
+req "$(vrec T1 --guard "$G")" 0 "re-record after garbage"
+echo "## the hook runs nothing from the worktree (before 1c: verify.<k> ran unsandboxed, before the push prompt)"
+setv lint "touch $S/hook-ran-this"
+t 2 verify-on-push.sh "$W" 'git push mirror feat-T1'                      # lint string changed -> record void -> blocked
+[ ! -e "$S/hook-ran-this" ] && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL verify-on-push executed a verify command"; }
+req "$(vrec T1 --guard "$G")" 0 "verify-record runs the command (the stage 4 call, sandboxed in real use)"
+[ -e "$S/hook-ran-this" ] && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL verify-record did not run the command"; }
+setv lint true
+setpush
+t 0 verify-on-push.sh "$W" 'git push mirror feat-T1'                      # on_push [] : no record needed
+setpush lint test
+setv test "sleep 30"
+t 2 verify-on-push.sh "$W" 'git push mirror feat-T1'                      # (state left as before: later tests expect a blocked push)
 echo "# worktree-guard (Edit/Write/NotebookEdit)"
 wp() { jq -nc --arg cwd "$W" --arg tool "$1" --argjson ti "$2" --arg ev "${3:-PreToolUse}" '{session_id:"s1",cwd:$cwd,hook_event_name:$ev,tool_name:$tool,tool_input:$ti}' | "$SK/hooks/worktree-guard.sh" >/dev/null 2>&1; }
 w() { wp "$2" "$3"; local rc=$?; if [ $rc = $1 ]; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL wguard rc=$rc want=$1 $2 $3"; fi; }

@@ -9,11 +9,11 @@ Standard library only. Known limit: it reads the shell command text; code run by
 interpreter (python script.py, make, npm run) can do anything and is not analysed.
 """
 import fnmatch
+import hashlib
 import json
 import os
 import re
 import shlex
-import signal
 import subprocess
 import sys
 
@@ -855,7 +855,7 @@ def command_pushes(cmds, g):
                 cwd = c.cwd
                 if over and cwd:
                     cwd = real(os.path.join(cwd, over))
-                yield c, check_push(rest, g), cwd
+                yield c, check_push(rest, g), cwd, rest
 
 
 def current_branch(cwd):
@@ -1317,27 +1317,88 @@ def mode_verify(payload, g):
         return
     v = g["verify"]
     keys = v.get("on_push") or []
-    timeout = int(v.get("timeout_sec") or 300)
-    run_cwd = pushes[0][2] or cwd or os.getcwd()
+    if not keys:
+        return
     for k in keys:
-        cmdline = v.get(k)
-        if not cmdline:
+        if not v.get(k):
             block("verify.on_push lists %r but verify.%s has no command" % (k, k))
-        try:
-            p = subprocess.Popen(cmdline, shell=True, cwd=run_cwd, stdout=subprocess.PIPE,
-                                 stderr=subprocess.STDOUT, text=True, start_new_session=True)
+    for p in pushes:
+        run_cwd = p[2] or cwd or os.getcwd()
+        why = verify_record_problem(g, run_cwd, keys, p[3])
+        if why:
+            block("%s - push blocked. Stage 4 records the result: `%s <ID> --guard <state>/guard.json` from a clean, committed worktree (it runs the verify.on_push "
+                  "commands sandboxed and writes evidence/<ID>/verify.json)" % (why, os.path.join(SKILL_SCRIPTS, "verify-record.sh")))
+
+
+def push_sources(rest, where):
+    """The refs a `git push` (arguments after `push`, already vetted by check_push) sends, as (list of source refs, problem). A problem means the
+    sources cannot be determined statically, so the record cannot vouch for them (fail-closed)."""
+    pos, i = [], 0
+    while i < len(rest):
+        t = rest[i]
+        if t == "--":
+            pos += rest[i + 1:]
+            break
+        if t == "--tags":
+            return None, "git push --tags sends tags that the verify record does not cover"
+        if not t.startswith("-"):
+            pos.append(t)
+        i += 1
+    remote, specs = pos[0], pos[1:]
+    if not specs:                                  # the current branch - unless the config redirects what a bare push sends
+        for key, bad in (("push.default", lambda out: out.strip() == "matching"), ("remote.%s.push" % remote, lambda out: bool(out.strip()))):
             try:
-                out, _ = p.communicate(timeout=timeout)
-            except subprocess.TimeoutExpired:
-                os.killpg(p.pid, signal.SIGKILL)
-                p.communicate()
-                block("verify %s timed out after %ss - push blocked" % (k, timeout))
-        except OSError as e:
-            block("verify %s could not start (%s) - push blocked" % (k, e))
-        if p.returncode != 0:
-            tail = "\n".join((out or "").splitlines()[-60:])
-            block("verify %s failed (exit %s) in %s - push blocked. Last output:\n%s" %
-                  (k, p.returncode, run_cwd, tail))
+                r = subprocess.run(["git", "-C", where, "config", "--get-all", key], capture_output=True, text=True, timeout=10)
+            except (OSError, subprocess.SubprocessError):
+                return None, "cannot read git config %s" % key
+            if bad(r.stdout):
+                return None, "git config %s makes a bare push send more than the current branch" % key
+        return ["HEAD"], None
+    srcs = []
+    for s in specs:
+        src = s.split(":", 1)[0]
+        if not src or src.startswith("-") or any(ch in s for ch in "*?["):
+            return None, "refspec %r cannot be resolved statically (delete, option or wildcard)" % s
+        srcs.append(src)
+    return srcs, None
+
+
+def verify_record_problem(g, run_cwd, keys, rest=()):
+    """None when evidence/<ID>/verify.json proves verify.on_push passed for the tree about to be pushed, else the reason. Reads JSON and runs
+    `git rev-parse` only: it executes nothing from the worktree (a Claude-edited script run here would be unsandboxed). Fail-closed on anything odd.
+    The record is tamper-evident, not tamper-proof: evidence/ is sandbox-writable (plan.md, milestone 1c, #1)."""
+    base = real(os.path.join(g["repo_root"], ".claude", "worktrees"))
+    where = real(run_cwd)
+    if not under(where, base) or where == base:
+        return "cannot tell the ticket from %s (push from the ticket's worktree directory)" % run_cwd
+    tid = os.path.relpath(where, base).split(os.sep)[0]
+    path = os.path.join(STATE, "evidence", tid, "verify.json")
+    try:
+        with open(path) as f:
+            rec = json.load(f)
+        results = rec["results"]
+        rtree = rec["tree"]
+        if not isinstance(results, dict) or not isinstance(rtree, str) or rec.get("id") != tid:
+            raise ValueError("unexpected shape")
+    except (OSError, ValueError, KeyError, TypeError) as e:
+        return "no usable verify record for %s (%s: %s)" % (tid, os.path.basename(os.path.dirname(path)) + "/verify.json", e.__class__.__name__)
+    srcs, why = push_sources(list(rest), where) if rest else (["HEAD"], None)
+    if why:
+        return why
+    for src in srcs:                                # every ref the push sends must have exactly the recorded tree, not only HEAD
+        try:
+            r = subprocess.run(["git", "-C", where, "rev-parse", "--verify", "-q", src + "^{tree}"], capture_output=True, text=True, timeout=10)
+        except (OSError, subprocess.SubprocessError) as e:
+            return "cannot read the tree of %s in %s (%s)" % (src, where, e)
+        if r.returncode != 0 or r.stdout.strip() != rtree:
+            return "the pushed %s is not the tree of the verify record for %s (HEAD changed since it was recorded, or another ref is pushed)" % (src, tid)
+    for k in keys:
+        res = results.get(k)
+        if not isinstance(res, dict) or res.get("rc") != 0:
+            return "verify %s did not pass in the record for %s" % (k, tid)
+        if res.get("cmd_sha256") != hashlib.sha256(g["verify"][k].encode()).hexdigest():
+            return "verify.%s changed since the record for %s was made" % (k, tid)
+    return None
 
 
 def mode_wguard(payload, g):

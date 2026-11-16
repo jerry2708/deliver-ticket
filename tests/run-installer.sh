@@ -50,14 +50,14 @@ python3 -I - "$SK" <<'PY' && echo "ok every BOOKKEEPING and GATES script exists 
 import os, sys
 sys.path.insert(0, sys.argv[1] + "/scripts"); os.environ["DT_SETTINGS"] = "/nonexistent"
 import install_hooks as ih
-for n in ih.BOOKKEEPING + ih.GATES:
+for n in ih.BOOKKEEPING + ih.SANDBOXED + ih.GATES:
     p = os.path.join(sys.argv[1], "scripts", n)
     assert os.path.isfile(p) and os.access(p, os.X_OK), p
 for g in ih.GATES:
     assert "Bash(%s *)" % os.path.join(ih.SKILL, "scripts", g) in ih.ASK, g
 for r in ("gh alias *", "gh extension *", "glab alias *", "gh pr checkout *", "glab mr delete *", "gh issue *", "gh api *", "glab -R *"):
     assert "Bash(%s)" % r in ih.ASK, r         # USER level: a project without the sandbox has no project block
-assert not set(ih.GATES) & set(ih.BOOKKEEPING)
+assert not set(ih.GATES) & set(ih.BOOKKEEPING) and not set(ih.SANDBOXED) & (set(ih.GATES) | set(ih.BOOKKEEPING))
 PY
 printf '{"theme":"dark"}\n' > "$D/gate.json"
 DT_SETTINGS="$D/gate.json" "$SK/scripts/install-hooks.sh" apply --confirmed >/dev/null 2>&1
@@ -213,6 +213,7 @@ al, ask = pm["allow"], pm["ask"]
 assert al[0] == "Bash(ls)" and "Bash(git branch -m *)" not in al and "Bash(git branch -m *)" in ask and "Bash(glab mr view *)" in al and "Bash(gh pr list *)" in al
 for n in ("session-map.sh", "pending-ticket.sh", "project-map-stale.sh"):
     assert "Bash(%s/scripts/%s *)" % (sk, n) in al and "Bash(%s/scripts/%s *)" % (sk, n) not in ask
+assert "Bash(%s/scripts/verify-record.sh *)" % sk in al and "Bash(%s/scripts/verify-record.sh *)" % sk not in ask and (sk + "/scripts/verify-record.sh *") not in ex   # sandboxed on purpose
 for n in ("ticket-state.sh", "guard-apply.sh"):
     assert "Bash(%s/scripts/%s *)" % (sk, n) in ask and "Bash(%s/scripts/%s *)" % (sk, n) not in al, n
 assert ask[0] == "Bash(git push:*)"

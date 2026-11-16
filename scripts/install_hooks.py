@@ -42,6 +42,7 @@ HOOKS = os.path.join(SKILL, "hooks")
 SETTINGS = os.path.realpath(os.environ.get("DT_SETTINGS") or os.path.expanduser("~/.claude/settings.json"))
 
 BOOKKEEPING = ["session-map.sh", "pending-ticket.sh", "project-map-stale.sh"]   # sandbox: excluded + allow rule: no prompt
+SANDBOXED = ["verify-record.sh"]                                                    # NOT excluded: runs inside the sandbox; allow rule only (no prompt)
 GATES = ["ticket-state.sh", "guard-apply.sh"]                                     # excluded + ask rule on the full path: the prompt is the user's yes
 # The gate scripts' ask rules are USER level too: with the sandbox off (or in a project that never enabled it) nothing else would ask, and auto mode
 # ran an excluded command without a prompt (probe V8 d4).
@@ -586,14 +587,14 @@ DOMAIN_RE = re.compile(r"[A-Za-z0-9*][A-Za-z0-9*.-]*")
 
 def sandbox_plan(repo, state, domains, local_binding):
     sk = os.path.join(SKILL, "scripts")
-    book, gate = [os.path.join(sk, x) for x in BOOKKEEPING], [os.path.join(sk, x) for x in GATES]
+    book, gate, boxed = [os.path.join(sk, x) for x in BOOKKEEPING], [os.path.join(sk, x) for x in GATES], [os.path.join(sk, x) for x in SANDBOXED]
     sets = [(("sandbox", "enabled"), True), (("sandbox", "failIfUnavailable"), True)]
     if local_binding:
         sets.append((("sandbox", "network", "allowLocalBinding"), True))
     adds = [(("sandbox", "excludedCommands"), [p + " *" for p in book + gate] + ["git push *", "git branch -m *"] + CLI_CREATE + CLI_ASK + CLI_ALLOW),
             (("sandbox", "filesystem", "allowWrite"), [os.path.join(state, "evidence"), os.path.join(repo, ".claude", "worktrees")]),
             (("sandbox", "network", "allowedDomains"), list(domains)),
-            (("permissions", "allow"), ["Bash(%s *)" % p for p in book] + ["Bash(%s)" % c for c in CLI_ALLOW]),
+            (("permissions", "allow"), ["Bash(%s *)" % p for p in book + boxed] + ["Bash(%s)" % c for c in CLI_ALLOW]),
             (("permissions", "ask"), ["Bash(%s *)" % p for p in gate] + ["Bash(git branch -m *)"] + ["Bash(%s)" % c for c in CLI_ASK])]
     return sets, adds
 
