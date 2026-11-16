@@ -372,6 +372,23 @@ for sid in u1 s1; do
   for c in "echo x > $DT/$key/approvals/T1.plan" "echo x >> $DT/$key/approvals/T1.plan" "touch $DT/$key/approvals/T1.plan" "tee $DT/$key/approvals/T1.plan" "cp /dev/null $DT/$key/approvals/T1.plan" \
     "mkdir $DT/$key/approvals" "rm $DT/$key/approvals/T1.plan" "rm -r $DT/$key/approvals" "mv $DT/$key/approvals $DT/$key/approvals.old" "mv $DT/$key/x $DT/$key/approvals" \
     "rm $DT/*/approvals/*" "rm -rf $DT/$key/appr*" "cd $DT/$key && echo x > approvals/T1.plan" "ln $DT/$key/approvals/T1.plan $S/hl"; do tsid 2 guard.sh $sid "$R" "$c"; done
+  # symlinks: ln is a write to its destination, so a link planted AT approvals/ (redirecting later writes) or AT a marker is blocked; a link FROM approvals/ is a hard-link/read question
+  for c in "ln -s $S $DT/$key/approvals" "ln -sf $S $DT/$key/approvals" "ln -s $S/x $DT/$key/approvals/T1.plan" "ln -sfn $S $DT/$key/approvals" "cd $DT/$key && ln -s $S approvals" \
+    "cd $DT/$key && ln -s $S/x approvals/T1.plan" "ln $S/x $DT/$key/approvals/T1.plan" "mv $S/link $DT/$key/approvals" \
+    "ln -s -t $DT/$key $S/x/approvals" "ln -s $S/x/approvals $DT/$key/" "ln -s $S/x/approvals $DT/$key" "cp -R $S/x/approvals $DT/$key/" "cp -R $S/x/approvals $DT/$key" \
+    "mv $S/x/approvals $DT/$key/" "rsync -a $S/x/approvals $DT/$key/" "tar -C $DT/$key -xf $S/x/a.tar" "tar -xf $S/x/a.tar -C $DT/$key" "tar xf $S/x/a.tar -C $DT/$key" \
+    "tar --directory=$DT/$key -xf $S/x/a.tar" "unzip $S/x/a.zip -d $DT/$key" "cd $DT/$key && tar -xf $S/x/a.tar" "cd $DT/$key && cp -R $S/x/approvals ." "cp -R $S/x/approvals $DT/" \
+    "ln -s $S/x/sessions $DT" \
+    "ditto $S/x/approvals $DT/$key/approvals" "ditto $S/x/approvals $DT/$key" "ditto -x -k $S/x/a.zip $DT/$key" "ditto $S/x $DT" "ditto -V $S/x/approvals $DT/$key/" \
+    "bsdtar -x -C $DT/$key -f $S/x/a.tar" "bsdtar -xf $S/x/a.tar -C $DT/$key" "bsdtar xf $S/x/a.tar --directory $DT/$key" "gtar -C $DT/$key -xf $S/x/a.tar" \
+    "cd $DT/$key && pax -r -f $S/x/a.pax" "cd $DT/$key && pax -rw $S/x/approvals ." "pax -rw $S/x/approvals $DT/$key" "cd $DT && pax -r -f $S/x/a.pax" \
+    "cd $DT/$key && cpio -id < $S/x/a.cpio" "cd $DT/$key && cpio -i < $S/x/a.cpio" "cd $DT && cpio -idm < $S/x/a.cpio" "echo f | cpio -pd $DT/$key" "cd $S/x && echo f | cpio -pdm $DT/$key/" \
+    "7z x $S/x/a.7z -o$DT/$key" "7z x -o$DT/$key $S/x/a.7z" "7za x $S/x/a.7z -o$DT" "cd $DT/$key && 7z x $S/x/a.7z" "cd $DT/$key && 7zz e $S/x/a.7z" \
+    "git clone $S/x/src $DT/$key/approvals" "git clone $S/x/src $DT/x" "git clone $S/x/src $DT/$key" "git clone $S/x/src $DT/$key/closed" "git init $DT/x" "git worktree add $DT/x"; do tsid 2 guard.sh $sid "$R" "$c"; done
+  mkdir -p "$S/x/approvals"
+  for c in "ditto $S/x $S/y" "bsdtar -x -C $S/x -f $S/x/a.tar" "cd $S/x && pax -r -f $S/x/a.pax" "cd $S/x && cpio -id < $S/x/a.cpio" "echo f | cpio -pd $S/y" "7z x $S/x/a.7z -o$S/y" "cd $S/x && 7z x $S/x/a.7z" \
+    "git clone $S/x/src $S/y" "git status" "ditto -c -k $S/x $S/x/a.zip" "cpio -o < $S/x/list > $S/x/a.cpio" "pax -w $S/x > $S/x/a.pax"; do tsid 0 guard.sh $sid "$R" "$c"; done
+  for c in "cp $S/x/f $DT/$key/guard.candidate.json" "cp $S/x/f $DT/$key/tickets/T1.md" "tar -C $S/x -xf $S/x/a.tar" "ln -s $S/x/f $S/x/g" "cp -R $S/x/approvals $S/y"; do tsid 0 guard.sh $sid "$R" "$c"; done
   tsid 0 guard.sh $sid "$R" "cat $DT/$key/approvals/T1.plan"                     # reads stay allowed
   tsid 0 guard.sh $sid "$R" "ls $DT/$key/approvals"
 done

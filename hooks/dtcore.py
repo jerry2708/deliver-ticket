@@ -545,6 +545,30 @@ def state_reason(prog, t, cwd):
     return None
 
 
+DIR_COPY_PROGS = {"cp", "ln", "mv", "install", "rsync", "tar", "bsdtar", "gtar", "gnutar", "unzip", "ditto", "pax", "cpio", "7z", "7za", "7zr", "7zz", "7zip", "git clone", "git init", "git worktree"}
+
+
+def state_dir_target_reason(prog, t, cwd, label=None):
+    """A copy / link / move / extract whose DESTINATION is the state root or a project state dir (a directory target): `ln -s /x/approvals <keydir>` names the
+    link after the source basename, `cp -R /x/approvals <keydir>/`, `tar -C <keydir> -xf a.tar` and `unzip -d <keydir>` create approvals/ (or closed/, guard.json ...) in it.
+    The destination itself names no protected path, so the path rule cannot see it; any such write into the root or a project dir is refused (state files change
+    through the skill's scripts and the Write tool, never through a directory-level copy). Targets that cannot be resolved are left to the callers."""
+    if prog not in DIR_COPY_PROGS:
+        return None
+    p = resolve_vars(os.path.expanduser(t))
+    if SUBST in p or "$" in p:
+        return None
+    if not os.path.isabs(p):
+        if cwd is None:
+            return None
+        p = os.path.join(cwd, p)
+    rp = real(p)
+    if under(rp, DT_HOME) and len(_comps(rp)) <= len(_comps(DT_HOME)) + 1:           # the root, a project dir, or a new entry directly in the root (git clone <src> <root>/x)
+        return ("%s into %s, the delivery state's root / project directory, could create a protected entry there (approvals/, closed/, guard.json, sessions/ - the name "
+                "comes from the source): state files change only through the skill's scripts" % (label or prog, rp))
+    return None
+
+
 def hardlink_sources(a, prog):
     """Source arguments of a command that makes a hard link (ln without -s, link, cp -l / --link). Writing through the
     link edits the same file, so a protected source must not be linked."""
@@ -1245,6 +1269,9 @@ def check_cmd(c, g, payload, all_cmds=()):
                 why = path_ok(full, g, payload, c.cwd)
                 if why:
                     block("git %s would write in %s: %s" % (sub, full, why))
+                why = state_dir_target_reason("git " + sub, full, c.cwd)
+                if why:
+                    block("git %s blocked: %s" % (sub, why))
             elif tgt is None and sub not in ("worktree",):
                 pass
 
@@ -1271,6 +1298,9 @@ def check_cmd(c, g, payload, all_cmds=()):
                 block("hard link blocked: %s" % why)
     for t in targets:
         why = state_reason(prog, t, c.cwd) if not exempt else None
+        if why:
+            block("write blocked: %s" % why)
+        why = state_dir_target_reason(prog, t, c.cwd) if not exempt else None
         if why:
             block("write blocked: %s" % why)
         why = path_ok(t, g, payload, c.cwd)
@@ -1316,13 +1346,30 @@ def write_targets(a, prog, c):
                 out.append(a[i + 1])
         if not out and (prog == "wget" or "-O" in a or "--remote-name" in a):
             out = [c.cwd or "."]
-    elif prog == "tar":
-        if any(re.fullmatch(r"-?[A-Za-z]*x[A-Za-z]*", t) for t in a[1:2]) or "-x" in a or "--extract" in a:
-            ch = [a[i + 1] for i, t in enumerate(a) if t == "-C" and i + 1 < len(a)]
+    elif prog in ("tar", "bsdtar", "gtar", "gnutar"):
+        # extraction: the first word as a cluster (`tar xf a`), any `-xf` / `-x` style cluster (`tar -C d -xf a`), or --extract; -C / --directory is the destination
+        if any(re.fullmatch(r"-?[A-Za-z]*x[A-Za-z]*", t) for t in a[1:2]) or any(re.fullmatch(r"-[A-Za-z]*x[A-Za-z]*", t) for t in a[1:]) or "--extract" in a:
+            ch = [a[i + 1] for i, t in enumerate(a) if t in ("-C", "--directory") and i + 1 < len(a)] + [t.split("=", 1)[1] for t in a if t.startswith("--directory=")]
             out = ch or [c.cwd or "."]
     elif prog == "unzip":
         ch = [a[i + 1] for i, t in enumerate(a) if t == "-d" and i + 1 < len(a)]
         out = ch or [c.cwd or "."]
+    elif prog == "ditto":
+        out = pos[-1:] if len(pos) >= 2 else []                        # ditto [opts] src... dst, also `ditto -x archive dst`
+    elif prog == "pax":
+        # -r reads an archive and extracts into the cwd; -rw copies src... into the last operand. Not parsed further: the destination is the cwd or the last word.
+        rflag = any(re.fullmatch(r"-[A-Za-z]*r[A-Za-z]*", t) for t in a[1:])
+        wflag = any(re.fullmatch(r"-[A-Za-z]*w[A-Za-z]*", t) for t in a[1:])
+        out = (pos[-1:] if wflag else [c.cwd or "."]) if rflag else []
+    elif prog == "cpio":
+        # -i extracts into the cwd; -p <dir> passes files through to <dir> (the last operand); -o writes an archive to stdout / -F
+        if any(re.fullmatch(r"-[A-Za-z]*p[A-Za-z]*", t) for t in a[1:]) or "--pass-through" in a:
+            out = pos[-1:]
+        elif any(re.fullmatch(r"-[A-Za-z]*i[A-Za-z]*", t) for t in a[1:]) or "--extract" in a:
+            out = [c.cwd or "."]
+    elif prog in ("7z", "7za", "7zr", "7zz", "7zip"):
+        if len(pos) >= 1 and pos[0] in ("x", "e"):
+            out = [t[2:] for t in a[1:] if t.startswith("-o") and len(t) > 2] or [c.cwd or "."]
     return out
 
 
