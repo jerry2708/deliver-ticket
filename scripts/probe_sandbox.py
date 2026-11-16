@@ -47,7 +47,8 @@ class Ctx:
 
     def fmt(self, s):
         return s.format(S=self.S, OUT=self.OUT, PROJ=self.PROJ, ST=self.ST, KD=self.KD, SK=SK, PORT=PORT, WT1=self.PROJ + "/.claude/worktrees/T1",
-                        WT2=self.PROJ + "/.claude/worktrees/T2", WT3=self.PROJ + "/.claude/worktrees/T3")
+                        WT2=self.PROJ + "/.claude/worktrees/T2", WT3=self.PROJ + "/.claude/worktrees/T3",
+                        F1A=self.PROJ + "/.claude/worktrees/F1A", F1B=self.PROJ + "/.claude/worktrees/F1B", F1C=self.PROJ + "/.claude/worktrees/F1C")
 
 
 def make_fixtures(c):
@@ -96,6 +97,33 @@ def make_fixtures(c):
         'const http = require("http");\nconst s = http.createServer((q, r) => r.end("ok")).listen(0, "127.0.0.1", () => {\n'
         '  http.get({ host: "127.0.0.1", port: s.address().port }, (r) => { let d = ""; r.on("data", (x) => (d += x)); r.on("end", () => { console.log("got:" + d); s.close(); }); });\n});\n'
         's.on("error", (e) => { console.log("listen-error:" + e.code); process.exit(3); });\n')
+
+
+def make_f1(c, tag, hooks, where):
+    """F1 fixture: its OWN repo (the other cases never see these hooks) with a linked worktree under the project's worktrees dir, and a bare remote.
+    Each hook in `hooks` appends to {OUT}/f1/<tag>-<hook>, a file outside allowWrite: it exists afterwards only if the hook ran unsandboxed.
+    where="hookspath": hooks live in <worktree>/.hooks with core.hooksPath=.hooks (a path the sandbox lets Claude edit);
+    where="commondir": hooks live in <git-common-dir>/hooks and no core.hooksPath is set. Never deletes; idempotent."""
+    repo, wt, remote = c.S + "/f1-" + tag, c.PROJ + "/.claude/worktrees/F1" + tag.upper(), c.S + "/f1-" + tag + ".git"
+    os.makedirs(c.OUT + "/f1", exist_ok=True)
+    if os.path.isdir(repo + "/.git"):
+        return
+    sh("git", "init", "-q", "-b", "main", repo)
+    sh("git", "-C", repo, "config", "user.email", "p@b.c")
+    sh("git", "-C", repo, "config", "user.name", "probe")
+    open(repo + "/f.txt", "w").write("1\n")
+    sh("git", "-C", repo, "add", "f.txt")
+    sh("git", "-C", repo, "commit", "-q", "-m", "init")
+    sh("git", "init", "-q", "--bare", remote)
+    sh("git", "-C", repo, "remote", "add", "f1remote", "file://" + remote)
+    sh("git", "-C", repo, "worktree", "add", "-q", wt, "-b", "work/f1")
+    hdir = wt + "/.hooks" if where == "hookspath" else repo + "/.git/hooks"
+    os.makedirs(hdir, exist_ok=True)
+    for h in hooks:
+        open(hdir + "/" + h, "w").write('#!/bin/sh\necho "%s $*" >> "%s/f1/%s-%s"\n' % (h, c.OUT, tag, h))
+        os.chmod(hdir + "/" + h, 0o755)
+    if where == "hookspath":
+        sh("git", "-C", repo, "config", "core.hooksPath", ".hooks")
 
 
 def expand(c, k, s):
@@ -204,6 +232,23 @@ CASES = [
          disk=[("absent", "{OUT}/remote2.git/refs/heads/cdpush")]),
     dict(id="push_plain_unsandboxed_control", cmd="git push mirror2 HEAD:refs/heads/plainpush", cwd="{WT2}", expect="ok", mutate=m_push_allowed, sources=NOUSER, info=True,
          disk=[("exists", "{OUT}/remote2.git/refs/heads/plainpush")]),
+    # F1 (plan.md "Milestone 1c plan" section 1): `git branch -m *` and `git push *` are excluded from the sandbox, so git runs the repo's hooks unsandboxed. The hooks below
+    # append to a file under {OUT} (outside allowWrite, inside the fixture). TODAY THE HOLE IS EXPECTED: expect "ok" + the file EXISTS = the hook wrote outside the sandbox.
+    # Fix (i) is commit C5: it must flip each of these three to expect="hook" (the guard blocks the command) with disk "absent".
+    dict(id="f1_reference_transaction_hookspath", cmd="git branch -m work/f1 work/f1b", cwd="{F1A}", expect="ok", mutate=m_branch_allowed, sources=NOUSER,
+         setup=lambda c: make_f1(c, "a", ["reference-transaction"], "hookspath"), disk=[("exists", "{OUT}/f1/a-reference-transaction")]),
+    dict(id="f1_pre_push_hookspath", cmd="git push f1remote HEAD:refs/heads/f1pp", cwd="{F1B}", expect="ok", mutate=m_push_allowed, sources=NOUSER,
+         setup=lambda c: make_f1(c, "b", ["pre-push"], "hookspath"), disk=[("exists", "{OUT}/f1/b-pre-push")]),
+    dict(id="f1_commondir_hooks_push", cmd="git push f1remote HEAD:refs/heads/f1cd", cwd="{F1C}", expect="ok", mutate=m_push_allowed, sources=NOUSER,
+         setup=lambda c: make_f1(c, "c", ["pre-push", "reference-transaction"], "commondir"),
+         disk=[("exists", "{OUT}/f1/c-pre-push"), ("exists", "{OUT}/f1/c-reference-transaction")]),
+    # #6 / A2b: the project's worktrees dir is in allowWrite and no denyWrite of ours covers <worktree>/.claude/settings*.json (install_hooks.py:84 lists the protected state only).
+    # I expected a hole, but the probe (2026-11-16, Claude Code 2.1.311) showed EPERM and no file when the session cwd is the worktree: Claude Code itself protects
+    # .claude/settings*.json under the cwd. So this row is a regression guard for that built-in behaviour, not a hole. NOT probed (Haiku skipped the call both times): a session
+    # whose cwd is the project root or elsewhere writing <worktree>/.claude/settings*.json - that is where the denyWrite glob <repo>/.claude/worktrees/*/.claude/settings*.json
+    # (C9) would still matter. denyWrite globs work on macOS only (Linux: a trailing /** only, plan V7c). Also unverified: whether a session whose cwd is a worktree reads that file.
+    dict(id="worktree_settings_by_bash", cmd="mkdir -p {WT1}/.claude && echo x > {WT1}/.claude/settings.local.json", cwd="{WT1}", expect="eperm", sources=NOUSER,
+         disk=[("absent", "{WT1}/.claude/settings.local.json")]),
     dict(id="git_dash_C_stays_sandboxed", cmd="git -C {WT3} branch -m work/t3 feat-t3", cwd="{PROJ}", expect="eperm", contains="config", mutate=m_branch_allowed, sources=NOUSER),
     dict(id="gh_read_unsandboxed", cmd="gh pr view 1", expect="ok", contains="fake-gh: UNSANDBOXED"),
     dict(id="gh_write_asks", cmd="gh pr edit 1", modes=BOTH, expect="prompt"),
@@ -349,6 +394,8 @@ def main():
         make_fixtures(c)
         sp = c.S + "/settings-%s-%s.json" % (k["id"], mode)
         json.dump(settings_for(c, k), open(sp, "w"), indent=1)
+        if k.get("setup"):
+            k["setup"](c)
         paths = [expand(c, k, p) for kd, p in k.get("disk", [])]
         before = {p: sha(p) for p in paths}
         cwd = c.fmt(k.get("cwd", "{PROJ}"))
