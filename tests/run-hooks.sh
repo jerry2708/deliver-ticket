@@ -463,7 +463,9 @@ for sid in s1 u1; do
     "mv $DT/starts $DT/starts.old" "cp -R $S/x/approvals $DT/starts" "ln -s $S/x $DT/starts" "rm $DT/starts/*" "tee $DT/starts/rec9"; do tsid 2 guard.sh $sid "$W" "$c"; done
   for c in 'cat ~/.ssh/config' 'ls ~/.config/gh' 'cat ~/.netrc' "cat $DT/starts/rec1" "ls $DT/starts"; do tsid 0 guard.sh $sid "$W" "$c"; done
 done
-tsid 0 guard.sh u1 "$R" 'echo x >> ~/.ssh/known_hosts'; tsid 0 guard.sh u1 "$R" 'echo x > ~/.config/other-tool/config'
+tsid 0 guard.sh u1 "$R" 'echo x >> ~/.sshx/known_hosts'; tsid 0 guard.sh u1 "$R" 'echo x > ~/.config/other-tool/config'
+# C9b: ~/.ssh/** (was ~/.ssh/config*): Include targets, config.d, keys, known_hosts
+for sid in s1 u1; do for c in 'echo x >> ~/.ssh/known_hosts' 'echo x > ~/.ssh/config.d/x' 'touch ~/.ssh/id_x' 'cp /dev/null ~/.ssh/authorized_keys'; do tsid 2 guard.sh $sid "$W" "$c"; done; done
 for tool in Write Edit; do wsid 2 s1 "$W" $tool "{\"file_path\":\"$HOME/.ssh/config\"}"; wsid 2 u1 "$W" $tool "{\"file_path\":\"$HOME/.netrc\"}"; wsid 2 u1 "$W" $tool "{\"file_path\":\"$DT/starts/rec1\"}"; done
 echo "# C9a: session-record.sh writes <root>/starts/<session_id> once (first record wins), never blocks, ignores a bad id / cwd / planted link"
 sr() { jq -nc --arg sid "$1" --arg cwd "$2" --arg src "${3:-startup}" '{session_id:$sid,cwd:$cwd,hook_event_name:"SessionStart",source:$src}' | env "${@:4}" "$SK/hooks/session-record.sh" >"$S/sr.out" 2>&1; echo $?; }
@@ -615,11 +617,73 @@ python3 - "$SK/hooks" <<'PY' && pass=$((pass+1)) || { fail=$((fail+1)); echo "FA
 import sys; sys.path.insert(0, sys.argv[1]); import dtcore
 dtcore.protected_state = lambda rp: rp.endswith("/MARK")
 try:
-    dtcore.nostate_path("/x/MARK", None); sys.exit(1)
+    dtcore.nostate_path("/x/MARK", None, {}); sys.exit(1)
 except dtcore.Block:
     pass
-dtcore.nostate_path("/x/OK", None)
+dtcore.nostate_path("/x/OK", None, {})
 PY
+echo "# C9b: the configuration the hooks trust is protected in every cwd: ~/.claude/settings*, the skill dir (unless the session STARTED in the skill repo),"
+echo "#      a delivery repo's .claude/settings*.json and worktrees/*/.claude/settings*.json, the git / ssh / gh / glab group"
+mkdir -p "$DT/starts" "$S/elsewhere2" "$S/lnstarts/real" "$nostate/.claude"
+printf '%s\n' "$SK" > "$DT/starts/ns-skill"; printf '%s\n' "$SK/hooks" > "$DT/starts/ns-sub"; printf '%s\n' "$S/elsewhere2" > "$DT/starts/ns-else"
+printf '%s\n' "$SK" > "$S/skill-rec"; ln -s "$S/skill-rec" "$DT/starts/ns-link"
+printf '%s\n' "$SK" > "$S/lnstarts/real/ns-skill"; ln -s "$S/lnstarts/real" "$S/lnstarts/starts"
+for NSSID in ns-skill ns-sub; do                               # started in the skill repo (or inside it): the skill dir is writable from a no-state cwd, settings are not
+  for cwd in "$nostate" "$X"; do
+    nsr 0 worktree-guard.sh "$cwd" Write "$SK/hooks/c9b-probe.sh"; nsr 0 worktree-guard.sh "$cwd" Edit "$SK/stages/c9b.md"
+    nsr 0 guard.sh "$cwd" Bash "echo x > $SK/hooks/c9b-probe.sh"; nsr 0 guard.sh "$cwd" Bash "sed -i '' s/a/b/ $SK/SKILL.md"
+    nsr 0 guard.sh "$SK" Bash "echo x > hooks/c9b-probe.sh"
+  done
+done
+for NSSID in ns-else ns-link nsu ns-missing; do                # started elsewhere, a symlinked record, no record (nsu, ns-missing): blocked on every route
+  for cwd in "$nostate" "$X" "$SK"; do
+    for tool in Write Edit NotebookEdit MultiEdit; do nsr 2 worktree-guard.sh "$cwd" $tool "$SK/hooks/c9b-probe.sh"; done
+    for c in "echo x > $SK/hooks/c9b-probe.sh" "echo x >> $SK/scripts/x.sh" "tee $SK/SKILL.md" "cp /dev/null $SK/hooks/lib.sh" "sed -i '' s/a/b/ $SK/SKILL.md" "touch $SK/x" \
+      "rm -rf $SK" "rm $SK/hooks/*" "mv $SK $S/moved" "rm -rf ~/.claude/skills" "cp -R $S/x $SK/hooks" "ln -s $S/x $SK/hooks/y"; do nsr 2 guard.sh "$cwd" Bash "$c"; done
+  done
+  nsr 2 guard.sh "$SK" Bash "echo x > hooks/c9b-probe.sh"     # the payload cwd follows an earlier `cd <skill dir>` (probe 2026-11-16): it does not count
+  nsr 0 guard.sh "$nostate" Bash "cat $SK/SKILL.md"; nsr 0 guard.sh "$SK" Bash "git status"; nsr 0 guard.sh "$nostate" Bash "echo x > $S/c9b-out.txt"
+done
+NSSID=ns-skill; nsr 2 worktree-guard.sh "$nostate" Write "$SK/hooks/c9b-probe.sh" DELIVER_TICKET_HOME=$S/lnstarts       # starts/ itself a symlink: ignored
+nsr 2 guard.sh "$nostate" Bash "echo x > $SK/x" DELIVER_TICKET_HOME=$S/lnstarts
+NSSID=ns-skill; tsid 2 guard.sh ns-skill "$W" "echo x > $SK/hooks/x"     # in a repo with delivery state the existing ~/.claude rule stays as it is
+for NSSID in ns-skill nsu; do
+  for cwd in "$nostate" "$X"; do
+    for p in "$HOME/.claude/settings.json" "$HOME/.claude/settings.local.json" "$HOME/.claude/settings.json.bak-deliver-ticket-1" "$R/.claude/settings.json" \
+      "$R/.claude/settings.local.json" "$W/.claude/settings.local.json" "$W/.claude/settings.json" "$HOME/.gitconfig" "$HOME/.ssh/config" "$HOME/.ssh/known_hosts" "$HOME/.netrc"; do
+      for tool in Write Edit; do nsr 2 worktree-guard.sh "$cwd" $tool "$p"; done
+      nsr 2 guard.sh "$cwd" Bash "echo x > $p"; nsr 2 guard.sh "$cwd" Bash "cp /dev/null $p"
+    done
+    for c in 'echo x > ~/.claude/settings.json' 'rm ~/.claude/settings*' 'mv ~/.claude ~/c' "cp -R $S/x ~/.claude" "cp -R $S/x $R/.claude" "cp -R $S/x $W/.claude" \
+      "rm -rf $R/.claude" 'git config --global core.sshCommand x' 'git config --global --add credential.helper x' 'echo x >> ~/.config/gh/hosts.yml' \
+      "cd $R/.claude && echo x > settings.local.json"; do nsr 2 guard.sh "$cwd" Bash "$c"; done
+    for c in 'git config --global --get user.name' 'cat ~/.claude/settings.json' "cp -R $S/x $nostate/.claude" "echo x > $nostate/.claude/settings.json" \
+      "echo x > $HOME/.claude/projects/x/memory/m.md" "echo x > $S/settings.json"; do nsr 0 guard.sh "$cwd" Bash "$c"; done
+    nsr 0 worktree-guard.sh "$cwd" Write "$nostate/.claude/settings.local.json"        # a project without delivery state: the update-config workflow
+    nsr 0 worktree-guard.sh "$cwd" Write "$HOME/.claude/projects/x/memory/m.md"         # auto-memory stays writable
+    nsr 0 worktree-guard.sh "$cwd" Write "$HOME/.claude/plans/p.md"                    # the rest of ~/.claude: today's behaviour from a no-state cwd
+  done
+done
+NSSID=nsu
+echo "## C9b: in the repo with delivery state, its own settings files are protected for bound and unbound sessions (bound: also its own worktree's)"
+for sid in s1 u1; do
+  for p in "$R/.claude/settings.json" "$R/.claude/settings.local.json" "$W/.claude/settings.local.json" "$W3/.claude/settings.json"; do
+    wsid 2 $sid "$W" Write "{\"file_path\":\"$p\"}"; tsid 2 guard.sh $sid "$W" "echo x > $p"
+  done
+  wsid 0 $sid "$W" Write "{\"file_path\":\"$HOME/.claude/projects/x/memory/m.md\"}"
+done
+tsid 2 guard.sh s1 "$W" 'mkdir -p .claude && echo x > .claude/settings.local.json'
+tsid 0 guard.sh u1 "$R" "echo x > $nostate/.claude/settings.json"
+echo "## C9b prefilter: transcript_path (always under ~/.claude/projects) alone does not start python; a .claude / config / .ssh / .netrc name does"
+NS2=$S/bin-stub2; mkdir -p "$NS2"; for t in git sed head cut shasum dirname basename cat touch; do ln -sf "$(command -v $t)" "$NS2/$t"; done
+printf '#!/bin/sh\ntouch "%s/stub2-called"\nexit 1\n' "$S" > "$NS2/python3"; chmod +x "$NS2/python3"
+tp() { jq -nc --arg cwd "$nostate" --arg cmd "$1" --arg tp "$HOME/.claude/projects/-x-deliver-ticket/s.jsonl" '{session_id:"nsu",transcript_path:$tp,cwd:$cwd,hook_event_name:"PreToolUse",tool_name:"Bash",tool_input:{command:$cmd}}' \
+  | env PATH="$NS2" DELIVER_TICKET_HOME=$S/zqroot "$SK/hooks/guard.sh" >/dev/null 2>&1; echo $?; }
+req "$(tp 'echo hi')" 0 "transcript_path only: allowed"
+[ ! -e "$S/stub2-called" ] && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL prefilter: transcript_path alone started python"; }
+for c in 'echo x > ~/.claude/settings.json' 'git config --global a.b c' 'cat ~/.ssh/id' 'cat ~/.netrc'; do
+  req "$(tp "$c")" 2 "prefilter hit (stub python exits 1 = fail-closed block): $c"
+done
 echo "# C1: case-insensitive filesystems: CLOSED/t1 is closed/T1 there, so the guard must compare case-insensitively (detected, not assumed)"
 mkdir -p "$S/CiProbe"; if [ -d "$S/ciprobe" ]; then SCI=2; else SCI=0; fi         # what the scratch filesystem (state root) does with a case-swapped name
 if [ -d "$HOME/.CLAUDE" ]; then HCI=2; else HCI=0; fi                             # the same for $HOME/.claude

@@ -39,14 +39,17 @@ dt_init() {
 # only a hit on the name (DT_NAMED=1) also blocks targets it cannot resolve. Known limits: a path never spelled with the
 # root's name or built by a variable, globs, interpreters, symlinks made earlier.
 dt_nostate() {
-  local b1 b2 phys sk pl pre verb hit=0 named=0 ncm
+  local b1 b2 phys sk pl tx pre verb hit=0 named=0 ncm
   # command names and path names are case-insensitive on a case-insensitive filesystem (`RM -rf` runs rm): match without case
   ncm=$(shopt -p nocasematch); shopt -s nocasematch
+  # transcript_path (~/.claude/projects/<cwd as a name>/...) is not a tool target but would hit every name test below: it is taken out first.
+  # The top-level field is the only unescaped `"transcript_path":"` in the JSON (inside a string value a quote is \").
+  tx=$(printf '%s' "$PAYLOAD" | sed 's/"transcript_path" *: *"[^"]*"//')
   # The default root's name is the skill's own directory name: take the skill dir's path out of the text first, or every
   # skill script call (and every command run with the skill repo as cwd) would be a hit. `<skill dir>/../..` spellings
   # keep the rest of the text, so they still match.
   sk=$(cd "$DT_DIR/.." && pwd -P)
-  pl=${PAYLOAD//"$sk"/}
+  pl=${tx//"$sk"/}
   [ -n "$HOME" ] && pl=${pl//"~${sk#"$HOME"}"/}
   b1=${DT_HOME%/}; b1=${b1##*/}
   case "$pl" in *"$b1"*) hit=1 ;; esac
@@ -58,6 +61,12 @@ dt_nostate() {
   if [ $hit = 1 ]; then
     named=1
   else
+    # C9b: the configuration the hooks and gate scripts trust (dtcore.py config_reason: ~/.claude/settings*, the skill dir, a delivery repo's
+    # .claude/settings*.json, ~/.ssh, ~/.netrc, the git / gh / glab configs and `git config`) - tested with the skill dir still in the text.
+    # Not NAMED: a target it cannot resolve passes (known limit, as for the delete-verb trigger).
+    case "$tx" in *.claude*|*.ssh*|*.netrc*|*config*) hit=1 ;; esac
+  fi
+  if [ $hit = 0 ]; then
     # a gate script or its backing module (their calls must be spelled one way, dtcore.py check_gate)
     case "$PAYLOAD" in *guard-apply*|*guard_apply*|*ticket-state*|*ticket_ctl*|*install-hooks*|*install_hooks*|*git-push*|*git_push*|*approve-plan*|*approve_plan*) hit=1 ;; esac
   fi

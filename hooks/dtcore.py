@@ -607,17 +607,163 @@ def gitconfig_paths():
     """(files, dirs) of the user's git config: git-push.sh / git-rename.sh run unsandboxed and trust these (scripts/git_safe.py), so a core.sshCommand or
     credential.helper written here would run with the user's full access. ~/.gitconfig, ~/.config/git/**, $XDG_CONFIG_HOME/git/** (Write / Edit and shell writes)."""
     xdg = os.environ.get("XDG_CONFIG_HOME") or os.path.join(HOME, ".config")
+    # ~/.ssh/** (C9b): config* (ProxyCommand / LocalCommand / Match exec run client-side under the unsandboxed git-push.sh), its Include targets, config.d, keys,
+    # known_hosts - no legitimate Claude write there; ssh updating known_hosts under git-push.sh is not a hooked call
     return ([os.path.join(HOME, ".gitconfig"), os.path.join(HOME, ".netrc")],
             [os.path.join(HOME, ".config", "git"), os.path.join(xdg, "git"), os.path.join(HOME, ".config", "gh"), os.path.join(xdg, "gh"),
-             os.path.join(HOME, ".config", "glab-cli"), os.path.join(xdg, "glab-cli")])
+             os.path.join(HOME, ".config", "glab-cli"), os.path.join(xdg, "glab-cli"), os.path.join(HOME, ".ssh")])
 
 
 def gitconfig_protected(rp):
     files, dirs = gitconfig_paths()
-    if any(under(rp, f) for f in files + dirs):
+    return any(under(rp, f) for f in files + dirs)
+
+
+# ---------------------------------------------------------------- the configuration the hooks trust (C9b, plan.md section 4b): always on, any cwd
+
+CLAUDE_DIR = os.path.join(HOME, ".claude")
+GITCFG_WHY = ("%s is part of the configuration that the unsandboxed git-push.sh / git-rename.sh / gh / glab read and can execute from (git config, ~/.ssh, .netrc, "
+              "the gh / glab configs: a core.sshCommand, ProxyCommand, credential.helper or alias there would run with full access) - tell me the setting and I change it myself")
+SETTINGS_WHY = ("%s is a Claude Code settings file (hooks, permissions, sandbox): it changes only through scripts/install-hooks.sh, which the user runs in their own terminal")
+SKILL_WHY = ("%s is in the deliver-ticket skill dir (hooks, scripts, stages): it is edited only from a session STARTED in the skill repo "
+             "(cd ~/.claude/skills/deliver-ticket && claude; a later cd does not count) - this session's start record (<state root>/starts/<session id>) is elsewhere or missing")
+REPO_SETTINGS_WHY = ("%s is the Claude Code settings file of a repo with delivery state (its project hooks and sandbox): it changes only through install-hooks.sh "
+                     "project-apply / project-sandbox-apply, which the user runs in their own terminal")
+
+
+def skill_dirs():
+    """The skill dir as installed and the checkout this hook runs from (the same directory when the hooks are installed)."""
+    return sorted({real(os.path.join(CLAUDE_DIR, "skills", "deliver-ticket")), SKILL_DIR})
+
+
+def started_in_skill(payload):
+    """True when this session's start record (hooks/session-record.sh, first SessionStart wins) is the skill repo or inside it. The payload cwd follows a `cd`
+    (probe 2026-11-16), so it is not used. Missing / unreadable / symlinked record or starts/, a bad session id: False (fail-closed)."""
+    sid = _sid(payload or {})
+    if sid is None or sid.startswith("."):
+        return False
+    d = os.path.join(DT_HOME, "starts")
+    f = os.path.join(d, sid)
+    if os.path.islink(d) or os.path.islink(f) or not os.path.isfile(f):
+        return False
+    try:
+        rec = open(f).read().strip()
+    except OSError:
+        return False
+    if not rec.startswith("/") or "\n" in rec:
+        return False
+    return any(under(real(rec), s) for s in skill_dirs())
+
+
+def delivery_repos():
+    """repo_root of every project with delivery state (<root>/<key>/guard.json), physical paths."""
+    out = []
+    try:
+        keys = os.listdir(DT_HOME)
+    except OSError:
+        return out
+    for k in keys:
+        gj = os.path.join(DT_HOME, k, "guard.json")
+        if not os.path.isfile(gj):
+            continue
+        try:
+            r = json.load(open(gj)).get("repo_root")
+        except (OSError, ValueError, AttributeError):
+            continue
+        if isinstance(r, str) and r.startswith("/"):
+            out.append(real(r))
+    return out
+
+
+def has_delivery_state(repo):
+    if os.path.isfile(os.path.join(DT_HOME, "%s-%s" % (os.path.basename(repo), hashlib.sha1(repo.encode()).hexdigest()[:8]), "guard.json")):
         return True
-    ssh = os.path.join(HOME, ".ssh")                    # ~/.ssh/config* (ProxyCommand / LocalCommand / Match exec run client-side under the unsandboxed git-push.sh); ~/.ssh/rc is server-side
-    return os.path.dirname(rp) == ssh and fnmatch.fnmatch(os.path.basename(rp).lower(), "config*")
+    return any(under(repo, r) and under(r, repo) for r in delivery_repos())
+
+
+_REPO_SETTINGS = (r"(.+)/\.claude/worktrees/[^/]+/\.claude/settings[^/]*\.json", r"(.+)/\.claude/settings(\.local)?\.json")
+
+
+def repo_settings_file(rp):
+    """True for <repo>/.claude/settings.json|settings.local.json or <repo>/.claude/worktrees/*/.claude/settings*.json of a repo WITH delivery state (another
+    project's settings stay editable: the update-config workflow)."""
+    flags = re.I if fs_ci(rp) else 0
+    for rx in _REPO_SETTINGS:
+        m = re.fullmatch(rx, rp, flags)
+        if m and has_delivery_state(m.group(1)):
+            return True
+    return False
+
+
+def claude_settings_file(rp):
+    """~/.claude/settings* (settings.json, settings.local.json, the installer's manifest and backups)."""
+    return under(os.path.dirname(rp), CLAUDE_DIR) and under(CLAUDE_DIR, os.path.dirname(rp)) and _cmatch("settings*", os.path.basename(rp), fs_ci(CLAUDE_DIR))
+
+
+def config_reason(rp, payload):
+    """A reason when the physical path rp is configuration the hooks and gate scripts trust; checked first by path_ok and nostate_path (every cwd)."""
+    if gitconfig_protected(rp):
+        return GITCFG_WHY % rp
+    if claude_settings_file(rp):
+        return SETTINGS_WHY % rp
+    if any(under(rp, s) for s in skill_dirs()) and not started_in_skill(payload):
+        return SKILL_WHY % rp
+    if repo_settings_file(rp):
+        return REPO_SETTINGS_WHY % rp
+    return None
+
+
+def config_roots(payload):
+    """Protected paths for the removal / glob / directory-destination rule below."""
+    files, dirs = gitconfig_paths()
+    roots = files + dirs + [os.path.join(CLAUDE_DIR, "settings.json"), os.path.join(CLAUDE_DIR, "settings.local.json")]
+    if not started_in_skill(payload):
+        roots += skill_dirs()
+    for r in delivery_repos():
+        roots += [os.path.join(r, ".claude", "settings.json"), os.path.join(r, ".claude", "settings.local.json")]
+    return roots
+
+
+def config_target_reason(prog, t, cwd, payload):
+    """What path_ok / nostate_path cannot see because the target is not the protected path itself: (a) rm / mv / ... of a parent of a protected path
+    (`rm -rf ~/.claude/skills`, `mv ~/.claude ~/c`); (b) a glob target that could match one or a parent of one (`rm ~/.claude/settings*`); (c) a copy / link /
+    extract whose destination is ~/.claude, <repo>/.claude or <repo>/.claude/worktrees/<n>/.claude of a repo with delivery state (`cp -R x/.claude <repo>/`
+    is NOT caught: the destination is the repo root - known limit; the project sandbox denyWrite covers it there). Unresolvable targets: None."""
+    p = resolve_vars(os.path.expanduser(t))
+    if SUBST in p or "$" in p:
+        return None
+    if not os.path.isabs(p):
+        if cwd is None:
+            return None
+        p = os.path.join(cwd, p)
+    if _GLOB.search(p):
+        parts = _comps(os.path.normpath(p))
+        k = 0
+        while k < len(parts) and not _GLOB.search(parts[k]):
+            k += 1
+        tc = _comps(real("/" + "/".join(parts[:k]))) + parts[k:]
+        for root in config_roots(payload):
+            rc = _comps(root)
+            ci = fs_ci(root)
+            if all(_cmatch(tc[i], rc[i], ci) for i in range(min(len(tc), len(rc)))):
+                return "a glob in the target of %s could match %s, which is protected configuration" % (prog, root)
+        return None
+    rp = real(p)
+    if prog in DESTRUCTIVE:
+        for root in config_roots(payload):
+            if under(root, rp) and rp != root:
+                return "%s removes or moves %s, a parent of %s, which is protected configuration" % (prog, rp, root)
+    if prog in DIR_COPY_PROGS:
+        dests = [CLAUDE_DIR]
+        for r in delivery_repos():
+            dests.append(os.path.join(r, ".claude"))
+            wt = os.path.join(r, ".claude", "worktrees")
+            if under(rp, wt) and len(_comps(rp)) == len(_comps(wt)) + 2 and _cmatch(".claude", os.path.basename(rp), fs_ci(wt)):
+                dests.append(rp)
+        if any(under(rp, d) and under(d, rp) for d in dests):
+            return ("%s into %s could create a settings file there (the name comes from the source): Claude Code settings change only through "
+                    "scripts/install-hooks.sh, run by the user" % (prog, rp))
+    return None
 
 
 # ---------------------------------------------------------------- the plan-approval lock (milestone 1c, plan.md section 3b)
@@ -853,10 +999,10 @@ def path_ok(p, g, payload, cwd):
     rp = real(p)
     if rp.startswith("/dev/"):
         return None
-    if gitconfig_protected(rp):
-        return ("%s is part of the configuration that the unsandboxed git-push.sh / git-rename.sh / gh / glab read and can execute from (git config, ssh config, .netrc, "
-                "the gh / glab configs: a core.sshCommand, ProxyCommand, credential.helper or alias there would run with full access) - tell me the setting and I change it myself" % rp)
-    claude = os.path.join(HOME, ".claude")
+    why = config_reason(rp, payload)
+    if why:
+        return why
+    claude = CLAUDE_DIR
     if under(rp, claude):
         if re.match(re.escape(claude) + r"/projects/[^/]+/memory(/|$)", rp, re.I if fs_ci(claude) else 0):
             return None
@@ -1482,7 +1628,7 @@ def check_cmd(c, g, payload, all_cmds=()):
                 why = path_ok(full, g, payload, c.cwd)
                 if why:
                     block("git %s would write in %s: %s" % (sub, full, why))
-                why = state_dir_target_reason("git " + sub, full, c.cwd)
+                why = state_dir_target_reason("git " + sub, full, c.cwd) or config_target_reason("git " + sub, full, c.cwd, payload)
                 if why:
                     block("git %s blocked: %s" % (sub, why))
             elif tgt is None and sub not in ("worktree",):
@@ -1517,6 +1663,9 @@ def check_cmd(c, g, payload, all_cmds=()):
         if why:
             block("write blocked: %s" % why)
         why = locked_ancestor_reason(g, prog, a, t, c.cwd) if not exempt else None
+        if why:
+            block("write blocked: %s" % why)
+        why = config_target_reason(prog, t, c.cwd, payload) if not exempt else None
         if why:
             block("write blocked: %s" % why)
         why = path_ok(t, g, payload, c.cwd)
@@ -1763,9 +1912,9 @@ def mode_wguard(payload, g):
         block("%s blocked: %s" % (tool, why))
 
 
-def nostate_path(p, cwd):
-    """Repo without delivery state, payload names the state root: only protected_state applies. Blocks on a target it
-    cannot resolve (the text already mentions the root)."""
+def nostate_path(p, cwd, payload):
+    """Repo without delivery state, payload names the state root or a protected configuration path (lib.sh dt_nostate): protected_state and
+    config_reason apply. Blocks on a target it cannot resolve only when the text names the state root."""
     p = resolve_vars(os.path.expanduser(p))
     if SUBST in p or "$" in p:
         if not NAMED:
@@ -1783,6 +1932,9 @@ def nostate_path(p, cwd):
     if protected_state(rp):
         block("%s is session / ticket-state bookkeeping: written only by the bind hook and scripts/session-map.sh, "
               "scripts/ticket-state.sh" % rp)
+    why = config_reason(rp, payload)
+    if why:
+        block(why)
 
 
 def mode_nostate(payload):
@@ -1795,7 +1947,7 @@ def mode_nostate(payload):
         p = ti.get("file_path") or ti.get("notebook_path")
         if not isinstance(p, str) or not p:
             block("%s without file_path / notebook_path - blocked (fail-closed)" % tool)
-        nostate_path(p, cwd)
+        nostate_path(p, cwd, payload)
     elif tool == "Bash":
         cmd = ti.get("command")
         if not isinstance(cmd, str):
@@ -1811,6 +1963,10 @@ def mode_nostate(payload):
             prog = pname(a[0]) if a else ""
             check_gate(c)
             check_installer(c)
+            if prog == "git":
+                sub, rest, over, _ = parse_git(a)
+                if sub == "config":
+                    check_git_config(rest, c.cwd if not over else os.path.join(c.cwd or "/", over))
             if is_skill_script(c):
                 targets = [t for _, t in c.redirs]
             else:
@@ -1821,10 +1977,11 @@ def mode_nostate(payload):
                     if why:
                         block("hard link blocked: %s" % why)
             for t in targets:
-                why = state_reason(prog, t, c.cwd) if not is_skill_script(c) else None
+                why = (state_reason(prog, t, c.cwd) or state_dir_target_reason(prog, t, c.cwd) or config_target_reason(prog, t, c.cwd, payload)) \
+                    if not is_skill_script(c) else None
                 if why:
                     block("write blocked: %s" % why)
-                nostate_path(t, c.cwd)
+                nostate_path(t, c.cwd, payload)
 
 
 def find_key(obj, names):

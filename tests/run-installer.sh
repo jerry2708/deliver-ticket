@@ -91,7 +91,7 @@ h = os.path.realpath(os.path.expanduser("~"))
 assert sb["filesystem"]["denyWrite"][:6] == ["/x/y", r + "/sessions", r + "/*/closed", r + "/*/guard.json", r + "/*/delivery.log", r + "/*/approvals"], sb["filesystem"]["denyWrite"]
 assert h + "/.gitconfig" in sb["filesystem"]["denyWrite"] and h + "/.config/git/**" in sb["filesystem"]["denyWrite"], sb["filesystem"]["denyWrite"]   # C5b: the user's git config
 assert r + "/starts" in sb["filesystem"]["denyWrite"], sb["filesystem"]["denyWrite"]   # C9a: the session start-dir records
-for x in ("/.ssh/config*", "/.netrc", "/.config/gh/**", "/.config/glab-cli/**"):
+for x in ("/.ssh/**", "/.netrc", "/.config/gh/**", "/.config/glab-cli/**", "/.claude/settings*"):
     assert h + x in sb["filesystem"]["denyWrite"], (x, sb["filesystem"]["denyWrite"])   # C9a: what git-push.sh / gh / glab read and can execute from
 PY
 DT_SETTINGS="$D/sb1.json" "$SK/scripts/install-hooks.sh" status >/dev/null 2>&1 && echo "ok status with sandbox keys" || { fail=1; echo "FAIL status with sandbox keys"; }
@@ -196,6 +196,7 @@ sb, pm = d["sandbox"], d["permissions"]
 assert sb["enabled"] is True and sb["failIfUnavailable"] is True and sb["network"]["allowLocalBinding"] is True
 assert sb["network"]["allowedDomains"] == ["mine.example", "registry.npmjs.org"], sb["network"]
 assert sb["filesystem"]["allowWrite"] == [st + "/evidence", repo + "/.claude/worktrees"], sb["filesystem"]
+assert sb["filesystem"]["denyWrite"] == [repo + "/.claude/settings.json", repo + "/.claude/settings.local.json", repo + "/.claude/worktrees/*/.claude/settings*.json"], sb["filesystem"]   # C9b
 ex = sb["excludedCommands"]
 for n in ("session-map.sh", "pending-ticket.sh", "project-map-stale.sh", "git-rename.sh", "ticket-state.sh", "guard-apply.sh", "git-push.sh", "approve-plan.sh"):
     assert "%s/scripts/%s *" % (sk, n) in ex, n

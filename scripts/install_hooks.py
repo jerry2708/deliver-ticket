@@ -89,9 +89,10 @@ def sandbox_deny():
     git_cfg = [home + "/.gitconfig", home + "/.config/git/**"] + ([xdg + "/git/**"] if os.path.join(home, ".config") != xdg else [])
     # what the unsandboxed git-push.sh / gh / glab read and may execute from: ssh_config (ProxyCommand / LocalCommand / Match exec), .netrc, the gh / glab configs
     # (glab 1.124.0: an alias `!cmd` runs cmd; editor / browser run a command), see hooks/dtcore.py gitconfig_paths
-    tools_cfg = [home + "/.ssh/config*", home + "/.netrc", home + "/.config/gh/**", home + "/.config/glab-cli/**"]
+    tools_cfg = [home + "/.ssh/**", home + "/.netrc", home + "/.config/gh/**", home + "/.config/glab-cli/**"]       # ~/.ssh/** (C9b): Include targets, config.d, keys too
     # the user's git config: git-push.sh / git-rename.sh run git unsandboxed and trust it (scripts/git_safe.py), so a sandboxed Bash must not write it
-    return [r + "/sessions", r + "/*/closed", r + "/*/guard.json", r + "/*/delivery.log", r + "/*/approvals", r + "/starts"] + git_cfg + tools_cfg
+    # C9b: the Claude Code settings (hooks, permissions, sandbox) - changed only by this installer, run by the user unsandboxed
+    return [r + "/sessions", r + "/*/closed", r + "/*/guard.json", r + "/*/delivery.log", r + "/*/approvals", r + "/starts"] + git_cfg + tools_cfg + [home + "/.claude/settings*"]
 
 
 # Every subcommand is one or the other (a test keeps hooks/dtcore.py INSTALLER_WRITING equal to WRITING_COMMANDS): the hook blocks a Claude call of a
@@ -601,6 +602,9 @@ def sandbox_plan(repo, state, domains, local_binding):
         sets.append((("sandbox", "network", "allowLocalBinding"), True))
     adds = [(("sandbox", "excludedCommands"), [p + " *" for p in book + gate] + CLI_CREATE + CLI_ASK + CLI_ALLOW),
             (("sandbox", "filesystem", "allowWrite"), [os.path.join(state, "evidence"), os.path.join(repo, ".claude", "worktrees")]),
+            # C9b: the project's own settings and every ticket worktree's (a deny wins over the worktrees allowWrite; a glob works on macOS only, V7c)
+            (("sandbox", "filesystem", "denyWrite"), [os.path.join(repo, ".claude", "settings.json"), os.path.join(repo, ".claude", "settings.local.json"),
+                                                     os.path.join(repo, ".claude", "worktrees", "*", ".claude", "settings*.json")]),
             (("sandbox", "network", "allowedDomains"), list(domains)),
             (("permissions", "allow"), ["Bash(%s *)" % p for p in book + boxed] + ["Bash(%s)" % c for c in CLI_ALLOW]),
             (("permissions", "ask"), ["Bash(%s *)" % p for p in gate] + ["Bash(%s)" % c for c in CLI_ASK])]
