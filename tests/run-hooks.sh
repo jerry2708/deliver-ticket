@@ -705,6 +705,11 @@ for c in "python3 $SKS/guard_apply.py c.json --repo $R" "bash $SKS/guard-apply.s
   "FOO=1 $SKS/ticket-state.sh done T1 --reason x --repo $R" "cd $SKS && ./guard-apply.sh c.json --repo $R" "bash -c \"$SKS/guard-apply.sh c.json --repo $R\"" \
   "echo \$($SKS/ticket-state.sh done T1 --reason x --repo $R)" "$SKS/../scripts/guard-apply.sh c.json --repo $R" "xargs $SKS/guard-apply.sh" "BASH $SKS/guard-apply.sh c.json --repo $R" \
   "command $SKS/ticket-state.sh done T1 --reason x --repo $R" "nohup $SKS/guard-apply.sh c.json --repo $R" "python3 $SKS/guard_apply.py"; do gx 2 Bash "$c"; done
+echo "# C7: approve-plan.sh is a gate action too (its prompt is the user's yes to the plan): only the absolute spelling, and not through its module"
+for c in "bash $SKS/approve-plan.sh T1 --repo $R" "python3 $SKS/approve_plan.py T1 --repo $R" "python3 -I $SKS/approve_plan.py T1 --repo $R" "env $SKS/approve-plan.sh T1 --repo $R" "FOO=1 $SKS/approve-plan.sh T1 --repo $R" \
+  "cd $SKS && ./approve-plan.sh T1 --repo $R" "bash -c \"$SKS/approve-plan.sh T1 --repo $R\"" "echo \$($SKS/approve-plan.sh T1 --repo $R)" "$SKS/../scripts/approve-plan.sh T1 --repo $R"; do gx 2 Bash "$c"; done
+for c in "$SKS/approve-plan.sh T1 --repo $R --session s1" "$SKS/git-push.sh mirror feat-T1" "$SKS/git-rename.sh a b"; do gx 0 Bash "$c"; done
+for c in "bash $SKS/git-push.sh mirror feat-T1" "python3 $SKS/git_push.py mirror feat-T1" "env $SKS/git-push.sh mirror feat-T1" "FOO=1 $SKS/git-push.sh mirror feat-T1" "cd $SKS && ./git-push.sh mirror feat-T1"; do gx 2 Bash "$c"; done
 for c in "$SKS/guard-apply.sh c.json --repo $R" "$SKS/guard-apply.sh --repo $R c.json" "$SKS/ticket-state.sh done T1 --reason x --repo $R" "$SKS/ticket-state.sh reopen T1 --reason x --repo $R" \
   "bash $SKS/session-map.sh show T1 --session s --repo $R" "python3 $SKS/ticket_ctl.py session-map show T1 --session s --repo $R" "bash $SKS/guard-write.sh verify --repo $R" \
   "bash $SKS/guard-write.sh diff c.json --repo $R" "python3 $SKS/validate-guard.py x.json" "bash $SKS/pending-ticket.sh save T1 --repo $R" "bash $SKS/project-map-stale.sh check p.md --guard g.json"; do gx 0 Bash "$c"; done
@@ -721,12 +726,12 @@ import os, sys
 sys.path.insert(0, sys.argv[1]); sys.path.insert(0, sys.argv[2]); os.environ["DT_SETTINGS"] = "/nonexistent"
 import dtcore, install_hooks as ih
 assert dtcore.GATE_SCRIPTS == set(ih.GATES), (dtcore.GATE_SCRIPTS, ih.GATES)
-assert set(dtcore.GATE_MODULES) == {"guard_apply.py", "ticket_ctl.py", "git_push.py"}
+assert set(dtcore.GATE_MODULES) == {"guard_apply.py", "ticket_ctl.py", "git_push.py", "approve_plan.py"}
 PY
 echo "# C6 audit: no excluded script (bookkeeping or gate) and no module behind one names approvals/ - only the C7 writer (ticket_ctl.py approve-plan, approve-plan.sh) will"
 python3 - "$SK/scripts" <<'PY' && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL C6 audit: a script names approvals/"; }
 import glob, os, sys
-allowed = {"install_hooks.py", "probe_sandbox.py", "approve-plan.sh", "approve_plan.py"}      # C7 adds the writer; anything else naming approvals/ is a new, unaudited writer
+allowed = {"install_hooks.py", "probe_sandbox.py", "approve-plan.sh", "approve_plan.py", "plan_lock.py"}      # the gate writer, plus plan_lock.py (read-only helpers shared with the C8 lock check); anything else naming approvals/ is a new, unaudited writer
 bad = [os.path.basename(f) for f in glob.glob(sys.argv[1] + "/*") if os.path.isfile(f) and "approvals" in open(f, errors="replace").read() and os.path.basename(f) not in allowed]
 assert not bad, bad
 PY

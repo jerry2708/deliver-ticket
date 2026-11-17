@@ -17,7 +17,7 @@ ticket closure. The guard (hooks/dtcore.py) blocks every other write to sessions
         Close the ticket: marker <state>/closed/<ID>, `state:` line in the ticket file, one line in <state>/delivery.log.
         `done` needs `stage: 8` in the ticket file.
   ticket-state.sh reopen <ID> --reason TEXT --session SID --repo R
-        Rename the marker (nothing is deleted), set `state: active`, un-pause the session. Only after the user said yes.
+        Rename the marker (nothing is deleted), set `state: active`, un-pause the session; also retires the plan-approval marker (approve-plan.sh). Only after the user said yes.
 Every transition is logged to <state>/delivery.log: time | session | ticket | action | detail.
 """
 import argparse
@@ -248,6 +248,11 @@ def main():
         write_map(home, a.session, out)
         log(state, a.session, t, "reopen", a.reason)
         print("ticket %s reopened" % t)
+        sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+        import approve_plan      # a reopened ticket needs its plan approved anew: the old marker is renamed, not deleted (approve_plan.retire)
+        ok, why = approve_plan.retire(state, t, "reopened")
+        if not ok:
+            print("note: the plan approval marker was not touched (%s); it stays invalid for the lock" % why, file=sys.stderr)
         return 0
     sys.exit("unknown ticket-state action %s" % a.action)
 

@@ -59,7 +59,7 @@ dt_nostate() {
     named=1
   else
     # a gate script or its backing module (their calls must be spelled one way, dtcore.py check_gate)
-    case "$PAYLOAD" in *guard-apply*|*guard_apply*|*ticket-state*|*ticket_ctl*|*install-hooks*|*install_hooks*) hit=1 ;; esac
+    case "$PAYLOAD" in *guard-apply*|*guard_apply*|*ticket-state*|*ticket_ctl*|*install-hooks*|*install_hooks*|*git-push*|*git_push*|*approve-plan*|*approve_plan*) hit=1 ;; esac
   fi
   if [ $hit = 0 ]; then
     # prefix: start of the command string, separators, an absolute path (/bin/rm), `\rm`; after the verb a space or a JSON-escaped tab

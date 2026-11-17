@@ -194,7 +194,7 @@ assert sb["enabled"] is True and sb["failIfUnavailable"] is True and sb["network
 assert sb["network"]["allowedDomains"] == ["mine.example", "registry.npmjs.org"], sb["network"]
 assert sb["filesystem"]["allowWrite"] == [st + "/evidence", repo + "/.claude/worktrees"], sb["filesystem"]
 ex = sb["excludedCommands"]
-for n in ("session-map.sh", "pending-ticket.sh", "project-map-stale.sh", "git-rename.sh", "ticket-state.sh", "guard-apply.sh", "git-push.sh"):
+for n in ("session-map.sh", "pending-ticket.sh", "project-map-stale.sh", "git-rename.sh", "ticket-state.sh", "guard-apply.sh", "git-push.sh", "approve-plan.sh"):
     assert "%s/scripts/%s *" % (sk, n) in ex, n
 # C5: plain git push / git branch -m are NOT excluded (their hooks would run worktree code unsandboxed); only the scripts are
 assert "git push *" not in ex and "git branch -m *" not in ex and not any(e.startswith("git ") for e in ex), ex
@@ -217,6 +217,7 @@ al, ask = pm["allow"], pm["ask"]
 assert al[0] == "Bash(ls)" and "Bash(git branch -m *)" not in al and "Bash(git branch -m *)" not in ask and "Bash(%s/scripts/git-push.sh *)" % sk in ask and "Bash(%s/scripts/git-push.sh *)" % sk not in al and "Bash(%s/scripts/git-rename.sh *)" % sk in al and "Bash(glab mr view *)" in al and "Bash(gh pr list *)" in al
 for n in ("session-map.sh", "pending-ticket.sh", "project-map-stale.sh"):
     assert "Bash(%s/scripts/%s *)" % (sk, n) in al and "Bash(%s/scripts/%s *)" % (sk, n) not in ask
+assert "Bash(%s/scripts/plan-hash.sh *)" % sk in al and "Bash(%s/scripts/plan-hash.sh *)" % sk not in ask and (sk + "/scripts/plan-hash.sh *") not in ex   # read-only, sandboxed, allow rule
 assert "Bash(%s/scripts/verify-record.sh *)" % sk in al and "Bash(%s/scripts/verify-record.sh *)" % sk not in ask and (sk + "/scripts/verify-record.sh *") not in ex   # sandboxed on purpose
 for n in ("ticket-state.sh", "guard-apply.sh"):
     assert "Bash(%s/scripts/%s *)" % (sk, n) in ask and "Bash(%s/scripts/%s *)" % (sk, n) not in al, n

@@ -77,7 +77,7 @@ After **any** change: run `tests/run-guard-json.sh`, `tests/run-hooks.sh <new di
 
 ## Global permission rules that `apply` adds (user level, all projects)
 
-- `ask`: `Bash(git push:*)` and `Bash(git branch -m:*)` (second layer: the hook blocks plain `git push` / `git branch -m` first), `Bash(<skill dir>/scripts/git-push.sh *)`, `Bash(glab mr create:*)`, `Bash(gh pr create:*)`.
+- `ask`: `Bash(git push:*)` and `Bash(git branch -m:*)` (second layer: the hook blocks plain `git push` / `git branch -m` first), `Bash(<skill dir>/scripts/git-push.sh *)`, `Bash(<skill dir>/scripts/approve-plan.sh *)`, `Bash(glab mr create:*)`, `Bash(gh pr create:*)`.
 - `deny`: `Bash(glab mr merge:*)`, `Bash(gh pr merge:*)`, `Read(**/.env*)`.
 
 **Merging through `glab`/`gh` is denied in every project, on purpose** (decision 2026-11-05: merges are done in the GitLab UI). Anyone who needs `glab mr merge` from the CLI must remove that rule by hand or run `install-hooks.sh uninstall`. `Read(**/.env*)` covers the Read tool only; whether it also stops the built-in Grep/Glob tools is unverified (`docs/phase5-checklist.md`).

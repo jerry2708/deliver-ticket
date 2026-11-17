@@ -861,8 +861,8 @@ def check_canonical(c):
 # is_skill_script exempts every script under scripts/ from the hook, and an `ask` rule matches the command TEXT as a prefix, so `bash <script>`,
 # `python3 <script>`, a wrapper, or the backing module (guard_apply.py, ticket_ctl.py ticket-state) would run without that prompt. A gate action is
 # allowed only as `<skill dir>/scripts/<name>.sh ...`: argv[0] literally that absolute path, no interpreter, wrapper, assignment or nesting.
-GATE_SCRIPTS = {"ticket-state.sh", "guard-apply.sh", "git-push.sh"}
-GATE_MODULES = {"guard_apply.py": None, "ticket_ctl.py": "ticket-state", "git_push.py": None}      # module -> the argument that makes it a gate action (None: always)
+GATE_SCRIPTS = {"ticket-state.sh", "guard-apply.sh", "git-push.sh", "approve-plan.sh"}
+GATE_MODULES = {"guard_apply.py": None, "ticket_ctl.py": "ticket-state", "git_push.py": None, "approve_plan.py": None}      # module -> the argument that makes it a gate action (None: always)
 
 
 def check_gate(c):
@@ -886,7 +886,7 @@ def check_gate(c):
         arg = GATE_MODULES[name]
         if arg is not None and arg not in rest:
             return
-        shname = {"guard_apply.py": "guard-apply.sh", "ticket_ctl.py": "ticket-state.sh", "git_push.py": "git-push.sh"}[name]
+        shname = {"guard_apply.py": "guard-apply.sh", "ticket_ctl.py": "ticket-state.sh", "git_push.py": "git-push.sh", "approve_plan.py": "approve-plan.sh"}[name]
         block("%s is the module behind the gate script %s: a gate action runs as `%s <args>` (full path, no interpreter), so the permission prompt "
               "on that path is the user's yes" % (name, shname, os.path.join(SKILL_SCRIPTS, shname)))
     elif name in GATE_SCRIPTS:
