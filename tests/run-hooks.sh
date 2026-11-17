@@ -456,6 +456,37 @@ done
 out=$(jq -nc --arg cwd "$W" --arg f "$HOME/.gitconfig" '{session_id:"s1",cwd:$cwd,hook_event_name:"PreToolUse",tool_name:"Write",tool_input:{file_path:$f,content:"x"}}' | "$SK/hooks/worktree-guard.sh" 2>&1); req "$?" 2 "Write on ~/.gitconfig ($out)"
 out=$(jq -nc --arg cwd "$W" --arg f "$HOME/.config/git/config" '{session_id:"u1",cwd:$cwd,hook_event_name:"PreToolUse",tool_name:"Edit",tool_input:{file_path:$f,old_string:"a",new_string:"b"}}' | "$SK/hooks/worktree-guard.sh" 2>&1); req "$?" 2 "Edit on ~/.config/git/config ($out)"
 out=$(XDG_CONFIG_HOME="$S/xdg" jq -nc --arg cwd "$W" --arg f "$S/xdg/git/config" '{session_id:"s1",cwd:$cwd,hook_event_name:"PreToolUse",tool_name:"Write",tool_input:{file_path:$f,content:"x"}}' | XDG_CONFIG_HOME="$S/xdg" "$SK/hooks/worktree-guard.sh" 2>&1); req "$?" 2 "Write on \$XDG_CONFIG_HOME/git/config ($out)"
+echo "# C9a: ssh config, .netrc and the gh / glab configs join the protected group; <root>/starts/ is protected state"
+for sid in s1 u1; do
+  for c in 'echo x >> ~/.ssh/config' 'echo x > ~/.ssh/config.local' 'tee ~/.ssh/config' 'cp /dev/null ~/.ssh/config' 'echo x >> ~/.netrc' 'echo x > ~/.config/gh/config.yml' 'echo x >> ~/.config/gh/hosts.yml' \
+    'echo x > ~/.config/glab-cli/config.yml' 'touch ~/.config/glab-cli/aliases.yml' 'git config --file ~/.config/gh/config.yml a.b c' "echo x > $DT/starts/rec9" "touch $DT/starts/rec9" "rm $DT/starts/rec9" "rm -rf $DT/starts" \
+    "mv $DT/starts $DT/starts.old" "cp -R $S/x/approvals $DT/starts" "ln -s $S/x $DT/starts" "rm $DT/starts/*" "tee $DT/starts/rec9"; do tsid 2 guard.sh $sid "$W" "$c"; done
+  for c in 'cat ~/.ssh/config' 'ls ~/.config/gh' 'cat ~/.netrc' "cat $DT/starts/rec1" "ls $DT/starts"; do tsid 0 guard.sh $sid "$W" "$c"; done
+done
+tsid 0 guard.sh u1 "$R" 'echo x >> ~/.ssh/known_hosts'; tsid 0 guard.sh u1 "$R" 'echo x > ~/.config/other-tool/config'
+for tool in Write Edit; do wsid 2 s1 "$W" $tool "{\"file_path\":\"$HOME/.ssh/config\"}"; wsid 2 u1 "$W" $tool "{\"file_path\":\"$HOME/.netrc\"}"; wsid 2 u1 "$W" $tool "{\"file_path\":\"$DT/starts/rec1\"}"; done
+echo "# C9a: session-record.sh writes <root>/starts/<session_id> once (first record wins), never blocks, ignores a bad id / cwd / planted link"
+sr() { jq -nc --arg sid "$1" --arg cwd "$2" --arg src "${3:-startup}" '{session_id:$sid,cwd:$cwd,hook_event_name:"SessionStart",source:$src}' | env "${@:4}" "$SK/hooks/session-record.sh" >"$S/sr.out" 2>&1; echo $?; }
+SRD=$S/srroot; mkdir -p "$S/start-a" "$S/start-b" "$S/elsewhere"; ln -s "$S/start-a" "$S/start-lnk"
+req "$(sr rec1 "$S/start-a" startup DELIVER_TICKET_HOME=$SRD)" 0 "session-record exits 0"
+req "$(cat "$SRD/starts/rec1")" "$S/start-a" "the record is the start directory"
+req "$(sr rec1 "$S/start-b" resume DELIVER_TICKET_HOME=$SRD)" 0 "resume exits 0"
+req "$(cat "$SRD/starts/rec1")" "$S/start-a" "resume does not change the record (first record wins)"
+req "$(sr rec1 "$S/start-b" clear DELIVER_TICKET_HOME=$SRD)" 0 "second start exits 0"
+req "$(cat "$SRD/starts/rec1")" "$S/start-a" "a second SessionStart of the same id does not change it"
+req "$(sr rec2 "$S/start-lnk" startup DELIVER_TICKET_HOME=$SRD)" 0 "symlinked cwd"
+req "$(cat "$SRD/starts/rec2")" "$S/start-a" "the record is the physical path"
+n=$(ls "$SRD/starts" | wc -l | tr -d ' ')
+for bad in "" "../x" ".hid" "a b" 'a/b' 'a;b'; do sr "$bad" "$S/start-a" startup DELIVER_TICKET_HOME=$SRD >/dev/null; done
+req "$(ls "$SRD/starts" | wc -l | tr -d ' ')" "$n" "a bad session id writes nothing"
+sr rec3 "$S/no-such-dir" startup DELIVER_TICKET_HOME=$SRD >/dev/null; [ ! -e "$SRD/starts/rec3" ] && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL a missing cwd wrote a record"; }
+ln -s "$S/elsewhere/planted" "$SRD/starts/rec4"
+req "$(sr rec4 "$S/start-a" startup DELIVER_TICKET_HOME=$SRD)" 0 "planted symlink at the record: exits 0"
+[ ! -e "$S/elsewhere/planted" ] && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL the record was written through a planted symlink"; }
+mkdir -p "$S/srroot2"; ln -s "$S/elsewhere" "$S/srroot2/starts"
+req "$(sr rec5 "$S/start-a" startup DELIVER_TICKET_HOME=$S/srroot2)" 0 "starts/ is a symlink: exits 0"
+[ -z "$(ls -A "$S/elsewhere")" ] && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL the record went through a symlinked starts/"; ls -A "$S/elsewhere"; }
+printf '{"hook_event_name":"SessionStart"' | DELIVER_TICKET_HOME=$SRD "$SK/hooks/session-record.sh"; req "$?" 0 "garbage payload exits 0"
 python3 - "$SK/hooks" "$SK/scripts" <<'PY' && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL S1 unit: analyze prefix / nested, GATED_CLI vs CLI_ASK"; }
 import os, sys
 sys.path.insert(0, sys.argv[1]); sys.path.insert(0, sys.argv[2]); os.environ["DT_SETTINGS"] = "/nonexistent"
@@ -536,6 +567,8 @@ echo "## custom root (not under HOME, not the default name), symlinked root, phy
 nsr 2 worktree-guard.sh "$nostate" Write "$S/custom/dtstate/k/closed/T1" DELIVER_TICKET_HOME=$S/custom/dtstate
 nsr 2 guard.sh "$nostate" Bash "echo x > $S/custom/dtstate/k/closed/T1" DELIVER_TICKET_HOME=$S/custom/dtstate
 nsr 2 guard.sh "$nostate" Bash "echo x > $S/custom/dtstate/k/approvals/T1.plan" DELIVER_TICKET_HOME=$S/custom/dtstate
+nsr 2 guard.sh "$nostate" Bash "echo x > $S/custom/dtstate/starts/rec1" DELIVER_TICKET_HOME=$S/custom/dtstate
+nsr 2 worktree-guard.sh "$nostate" Write "$S/custom/dtstate/starts/rec1" DELIVER_TICKET_HOME=$S/custom/dtstate
 nsr 2 worktree-guard.sh "$nostate" Write "$S/custom/dtstate/k/approvals/T1.plan" DELIVER_TICKET_HOME=$S/custom/dtstate
 nsr 2 guard.sh "$X" Bash "cd $S/custom/dtstate/k && echo x > closed/T1" DELIVER_TICKET_HOME=$S/custom/dtstate
 nsr 2 worktree-guard.sh "$nostate" Write "$S/link-root/k/closed/T1" DELIVER_TICKET_HOME=$S/link-root

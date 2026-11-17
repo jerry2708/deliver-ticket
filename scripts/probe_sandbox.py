@@ -162,7 +162,7 @@ def settings_for(c, case):
     d = ih.sandbox_desired({}, sets, adds, m)
     sb = d["sandbox"]
     sb["allowUnsandboxedCommands"] = False
-    sb.setdefault("filesystem", {})["denyWrite"] = [c.ST + "/sessions", c.ST + "/*/closed", c.ST + "/*/guard.json", c.ST + "/*/delivery.log", c.ST + "/*/approvals"] + ih.sandbox_deny()[5:]       # [4:] = the user's git config entries (C5b)
+    sb.setdefault("filesystem", {})["denyWrite"] = [c.ST + "/sessions", c.ST + "/*/closed", c.ST + "/*/guard.json", c.ST + "/*/delivery.log", c.ST + "/*/approvals", c.ST + "/starts"] + ih.sandbox_deny()[6:]       # [4:] = the user's git config entries (C5b)
     d.setdefault("permissions", {}).setdefault("ask", []).extend(ih.ASK)
     mut = case.get("mutate")
     if mut:

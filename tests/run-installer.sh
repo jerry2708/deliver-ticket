@@ -90,6 +90,9 @@ assert sb["allowUnsandboxedCommands"] is False and sb["enabled"] is False and sb
 h = os.path.realpath(os.path.expanduser("~"))
 assert sb["filesystem"]["denyWrite"][:6] == ["/x/y", r + "/sessions", r + "/*/closed", r + "/*/guard.json", r + "/*/delivery.log", r + "/*/approvals"], sb["filesystem"]["denyWrite"]
 assert h + "/.gitconfig" in sb["filesystem"]["denyWrite"] and h + "/.config/git/**" in sb["filesystem"]["denyWrite"], sb["filesystem"]["denyWrite"]   # C5b: the user's git config
+assert r + "/starts" in sb["filesystem"]["denyWrite"], sb["filesystem"]["denyWrite"]   # C9a: the session start-dir records
+for x in ("/.ssh/config*", "/.netrc", "/.config/gh/**", "/.config/glab-cli/**"):
+    assert h + x in sb["filesystem"]["denyWrite"], (x, sb["filesystem"]["denyWrite"])   # C9a: what git-push.sh / gh / glab read and can execute from
 PY
 DT_SETTINGS="$D/sb1.json" "$SK/scripts/install-hooks.sh" status >/dev/null 2>&1 && echo "ok status with sandbox keys" || { fail=1; echo "FAIL status with sandbox keys"; }
 DT_SETTINGS="$D/sb1.json" "$SK/scripts/install-hooks.sh" apply --confirmed 2>&1 | grep -q "already installed" && echo "ok apply is idempotent" || { fail=1; echo "FAIL apply is not idempotent"; }

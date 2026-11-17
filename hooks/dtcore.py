@@ -470,7 +470,7 @@ def session_bound(payload, g, cwd):
 
 def protected_state(rp):
     """Written only by the bind hook and the skill's own scripts, in every session (guard.json: scripts/guard-write.sh)."""
-    if under(rp, os.path.join(DT_HOME, "sessions")):
+    if under(rp, os.path.join(DT_HOME, "sessions")) or under(rp, os.path.join(DT_HOME, "starts")):       # starts/: the SessionStart start-dir records (hooks/session-record.sh)
         return True
     return bool(re.match(re.escape(DT_HOME) + r"/[^/]+/(closed(/|$)|approvals(/|$)|delivery\.log$|guard\.json$)", rp, re.I if fs_ci(DT_HOME) else 0))
 
@@ -537,7 +537,7 @@ def state_reason(prog, t, cwd):
         return None
     if not any(_cmatch(tc[n], d, ci) for d in kids):
         return None
-    sess = _cmatch(tc[n], "sessions", ci)
+    sess = _cmatch(tc[n], "sessions", ci) or _cmatch(tc[n], "starts", ci)
     if len(tc) == n + 2 and (sess or any(_cmatch(tc[n + 1], x, ci) for x in ("guard.json", "delivery.log", "closed", "approvals"))):
         return STATE_WHY % ("a glob in the target of %s could match" % prog, "a protected file")
     if len(tc) > n + 2 and (sess or _cmatch(tc[n + 1], "closed", ci) or _cmatch(tc[n + 1], "approvals", ci)):
@@ -607,12 +607,17 @@ def gitconfig_paths():
     """(files, dirs) of the user's git config: git-push.sh / git-rename.sh run unsandboxed and trust these (scripts/git_safe.py), so a core.sshCommand or
     credential.helper written here would run with the user's full access. ~/.gitconfig, ~/.config/git/**, $XDG_CONFIG_HOME/git/** (Write / Edit and shell writes)."""
     xdg = os.environ.get("XDG_CONFIG_HOME") or os.path.join(HOME, ".config")
-    return [os.path.join(HOME, ".gitconfig")], [os.path.join(HOME, ".config", "git"), os.path.join(xdg, "git")]
+    return ([os.path.join(HOME, ".gitconfig"), os.path.join(HOME, ".netrc")],
+            [os.path.join(HOME, ".config", "git"), os.path.join(xdg, "git"), os.path.join(HOME, ".config", "gh"), os.path.join(xdg, "gh"),
+             os.path.join(HOME, ".config", "glab-cli"), os.path.join(xdg, "glab-cli")])
 
 
 def gitconfig_protected(rp):
     files, dirs = gitconfig_paths()
-    return any(under(rp, f) for f in files + dirs)
+    if any(under(rp, f) for f in files + dirs):
+        return True
+    ssh = os.path.join(HOME, ".ssh")                    # ~/.ssh/config* (ProxyCommand / LocalCommand / Match exec run client-side under the unsandboxed git-push.sh); ~/.ssh/rc is server-side
+    return os.path.dirname(rp) == ssh and fnmatch.fnmatch(os.path.basename(rp).lower(), "config*")
 
 
 # ---------------------------------------------------------------- the plan-approval lock (milestone 1c, plan.md section 3b)
@@ -849,8 +854,8 @@ def path_ok(p, g, payload, cwd):
     if rp.startswith("/dev/"):
         return None
     if gitconfig_protected(rp):
-        return ("%s is the user's git config: git-push.sh / git-rename.sh run git unsandboxed and trust it (a core.sshCommand or credential.helper there "
-                "would run with full access) - tell me the setting and I change it myself" % rp)
+        return ("%s is part of the configuration that the unsandboxed git-push.sh / git-rename.sh / gh / glab read and can execute from (git config, ssh config, .netrc, "
+                "the gh / glab configs: a core.sshCommand, ProxyCommand, credential.helper or alias there would run with full access) - tell me the setting and I change it myself" % rp)
     claude = os.path.join(HOME, ".claude")
     if under(rp, claude):
         if re.match(re.escape(claude) + r"/projects/[^/]+/memory(/|$)", rp, re.I if fs_ci(claude) else 0):

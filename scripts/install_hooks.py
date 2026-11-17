@@ -68,6 +68,7 @@ HOOK_SPECS = [
     ("PreToolUse", "Edit|Write|NotebookEdit|MultiEdit", "worktree-guard.sh", 10, True),
     ("PostToolUse", "EnterWorktree", "worktree-guard.sh", 10, False),
     ("SessionStart", "compact", "session-start.sh", 10, False),
+    ("SessionStart", "startup|resume|clear", "session-record.sh", 10, False),     # C9a: <root>/starts/<session_id> = the start directory, first record wins
 ]
 # registered per project (<repo>/.claude/settings.local.json), never at user level
 PROJECT_SPECS = [("WorktreeCreate", None, "worktree-create.sh", 900, False),
@@ -86,8 +87,11 @@ def sandbox_deny():
     home = os.path.realpath(os.path.expanduser("~"))
     xdg = os.environ.get("XDG_CONFIG_HOME") or os.path.join(home, ".config")
     git_cfg = [home + "/.gitconfig", home + "/.config/git/**"] + ([xdg + "/git/**"] if os.path.join(home, ".config") != xdg else [])
+    # what the unsandboxed git-push.sh / gh / glab read and may execute from: ssh_config (ProxyCommand / LocalCommand / Match exec), .netrc, the gh / glab configs
+    # (glab 1.124.0: an alias `!cmd` runs cmd; editor / browser run a command), see hooks/dtcore.py gitconfig_paths
+    tools_cfg = [home + "/.ssh/config*", home + "/.netrc", home + "/.config/gh/**", home + "/.config/glab-cli/**"]
     # the user's git config: git-push.sh / git-rename.sh run git unsandboxed and trust it (scripts/git_safe.py), so a sandboxed Bash must not write it
-    return [r + "/sessions", r + "/*/closed", r + "/*/guard.json", r + "/*/delivery.log", r + "/*/approvals"] + git_cfg
+    return [r + "/sessions", r + "/*/closed", r + "/*/guard.json", r + "/*/delivery.log", r + "/*/approvals", r + "/starts"] + git_cfg + tools_cfg
 
 
 # Every subcommand is one or the other (a test keeps hooks/dtcore.py INSTALLER_WRITING equal to WRITING_COMMANDS): the hook blocks a Claude call of a
