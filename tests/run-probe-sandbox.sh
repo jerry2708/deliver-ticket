@@ -48,7 +48,7 @@ extra = r.get("contains") or ""
 text = {"ok": (extra or "(Bash completed with no output)"), "prompt": "Claude requested permissions to use Bash, but you haven't granted it yet.",
         "denied": "Permission to use Bash with command x has been denied.", "eperm": "Exit code 1\n(eval):1: operation not permitted: x " + extra,
         "hook": "PreToolUse:Bash hook error: [guard.sh]: deliver-ticket: install-hooks.sh apply changes settings files " + extra,
-        "net": "curl: (56) CONNECT tunnel failed, response 403"}[kind]
+        "net": "curl: (56) CONNECT tunnel failed, response 403", "refused": "Exit code 2\ngit-safe: " + extra}[kind]
 if os.environ.get("FAKE_FLIP") != r["id"]:
     for k, p in r["disk"]:
         if k == "exists" and not os.path.isdir(p):
@@ -69,9 +69,13 @@ eq "$(run 1 X=1)" 0 "clean pass"
 has "$(head -1 "$S/out1.txt")" "$N runs" "run count up front"
 has "$(head -1 "$S/out1.txt")" "9.9.9" "claude version up front"
 eq "$(grep -c '| PASS |' "$S/out1.txt")" "$N" "every row passes"
+eq "$(ls "$S/r1/raw" | wc -l | tr -d ' ')" "$N" "one raw file per run"
+has "$(cat "$S/r1/raw/auto_allow-default.json")" '"bash_calls"' "raw file holds the calls"
 echo "# a design property that breaks: FAIL, exit 1; an informational row that differs: CHANGED, exit 3; a rewritten or skipped call: INCONCLUSIVE, exit 4"
 eq "$(run 2 FAKE_FLIP=deny_guard_json)" 1 "flipped design row exits 1"
 grep -q '| deny_guard_json | default | FAIL |' "$S/out2.txt" && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL row deny_guard_json is not FAIL"; }
+has "$(grep '| deny_guard_json |' "$S/out2.txt")" "raw: raw/deny_guard_json-default.json" "a FAIL row names its raw file"
+eq "$(run 11 FAKE_FLIP=git_push_script_refuses_options)" 1 "a script that does not refuse is a FAIL"
 eq "$(run 3 FAKE_FLIP=no_sandbox_control)" 3 "flipped info row exits 3"
 grep -q '| no_sandbox_control | default | CHANGED |' "$S/out3.txt" && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL row no_sandbox_control is not CHANGED"; }
 eq "$(run 4 FAKE_REWRITE=auto_allow)" 4 "rewritten command exits 4"
@@ -89,7 +93,7 @@ mkdir -p "$S/r10" && touch "$S/r10/x"; $PS "$S/r10" --outside "$S/ro10" --claude
 [ ! -e /tmp/zz-probe-never-created ] && [ ! -e /tmp/zz-probe-out-never-created ] && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL the refused runs created /tmp dirs"; }
 echo "# the case table covers what the design relies on"
 for id in auto_allow rename_key_dir excluded_script_after_cd excluded_chained_to_unlisted settings_local_by_bash localhost_client_with_binding localhost_listen_without_binding \
-  git_rename_script_excluded gate_script_asks gate_script_no_ask_rule_control gh_unlisted_sandboxed installer_apply_blocked allowwrite_glob_unsupported; do
+  git_rename_script_excluded git_push_script_refuses_options gate_script_asks gate_script_no_ask_rule_control gh_unlisted_sandboxed installer_apply_blocked allowwrite_glob_unsupported; do
   grep -q "\"id\": \"$id\"" "$S/table.json" && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL case $id missing from the probe"; }
 done
 echo "pass=$pass fail=$fail"; [ $fail = 0 ]

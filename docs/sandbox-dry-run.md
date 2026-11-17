@@ -19,7 +19,8 @@ Fill in before starting:
 ## A. Before anything (the user, own terminal tab; Claude only reads)
 1. `git -C <skill checkout> status` clean; note the branch.
 2. `scripts/probe-sandbox.sh <new scratch dir>` - the full pass (about 40 short Haiku runs). Expected: exit 0, or only rows you understand (`CHANGED` = this Claude Code
-   behaves differently from the last probe: read the row before going on). `INCONCLUSIVE` rows: run them again with `--only`.
+   behaves differently from the last probe: read the row before going on). `INCONCLUSIVE` rows: run them again with `--only`. A row that is not
+   PASS names `raw/<case>-<mode>.json` in the scratch dir: the Bash calls, tool results and Haiku's reply of that run.
 3. Record the result block: version, `summary:` line.
 
 ## B. Run 1 - v0.1 on `main`, no sandbox (the baseline)
