@@ -25,8 +25,10 @@ J
 # ticket session of T1: its map says project + ticket, and tickets/T1.md exists. This is not there to make old tests pass:
 # those tests exercise the guard of a ticket session, which must still hold.
 mkdir -p "$DELIVER_TICKET_HOME/$key/tickets" "$DELIVER_TICKET_HOME/sessions"
-printf 'stage: 3\nnext: read stages/3-build.md\nstate: active\nworktree: %s\n' "$R/.claude/worktrees/T1" > "$DELIVER_TICKET_HOME/$key/tickets/T1.md"
+printf 'stage: 3\nnext: read stages/3-build.md\nstate: active\nworktree: %s\n\n## Plan\n- step 1\n' "$R/.claude/worktrees/T1" > "$DELIVER_TICKET_HOME/$key/tickets/T1.md"
 printf 'project=%s\nticket=T1\nworktree=%s\n' "$key" "$R/.claude/worktrees/T1" > "$DELIVER_TICKET_HOME/sessions/s1"
+# C8: a ticket worktree is locked until its plan is approved (marker via the real gate script); the older tests below write T1's worktree, so T1 is approved here
+"$SK/scripts/approve-plan.sh" T1 --sha "$("$SK/scripts/plan-hash.sh" T1 --repo "$R" | awk '{print $3}')" --repo "$R" --session s1 >/dev/null || { echo "fixture: approve-plan.sh failed" >&2; exit 2; }
 pass=0; fail=0
 payload() { jq -nc --arg cwd "$1" --arg tool "$2" --arg cmd "$3" --arg sid "${4:-s1}" --arg ev "${5:-PreToolUse}" \
   '{session_id:$sid,cwd:$cwd,hook_event_name:$ev,tool_name:$tool,tool_input:{command:$cmd}}'; }
@@ -272,7 +274,7 @@ for c in "grep -r --exclude='.env*' foo se" 'grep -rn --exclude=.env* foo se/wit
 # the block message names the fixed command
 out=$(payload "$W" Bash 'grep -r foo se' | "$SK/hooks/guard.sh" 2>&1); echo "$out" | grep -q "exclude='.env\*'" && echo "$out" | grep -q "rg --hidden -g '!.env\*'" && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL search block message: $out"; }
 echo "# session-start (compact)"
-mkdir -p "$DELIVER_TICKET_HOME/$key/tickets"; printf 'stage: 3\nnext: read stages/3-build.md\n' > "$DELIVER_TICKET_HOME/$key/tickets/T1.md"
+mkdir -p "$DELIVER_TICKET_HOME/$key/tickets"; printf 'stage: 3\nnext: read stages/3-build.md\n\n## Plan\n- step 1\n' > "$DELIVER_TICKET_HOME/$key/tickets/T1.md"
 printf 'ticket=T1\n' >> "$DELIVER_TICKET_HOME/sessions/sess-9"
 out=$(jq -nc --arg cwd "$W" '{session_id:"sess-9",cwd:$cwd,hook_event_name:"SessionStart",source:"compact"}' | "$SK/hooks/session-start.sh"); rc=$?
 echo "$out" | jq -e '.hookSpecificOutput.additionalContext|test("ticket T1.*stage 3")' >/dev/null && [ $rc = 0 ] && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL session-start out=$out"; }
@@ -335,7 +337,7 @@ mkdir -p "$DT/$key/closed"; printf 'x\n' > "$DT/$key/closed/T5"
 wsid 0 nomap "$W5" Write "{\"file_path\":\"$R/docs/x.md\"}"                       # closed -> no longer bound
 printf 'stage: 3\nstate: done\n' > "$DT/$key/tickets/T1.md.test"; mv "$DT/$key/tickets/T1.md.test" "$DT/$key/tickets/T1.md"
 wsid 2 s1 "$R" Write "{\"file_path\":\"$R/docs/x.md\"}"                           # `state: done` TEXT does not unbind (only the marker does)
-printf 'stage: 3\nnext: read stages/3-build.md\nstate: active\nworktree: %s\n' "$W" > "$DT/$key/tickets/T1.md"
+printf 'stage: 3\nnext: read stages/3-build.md\nstate: active\nworktree: %s\n\n## Plan\n- step 1\n' "$W" > "$DT/$key/tickets/T1.md"
 printf 'project=%s\nticket=T9\npaused=T9\n' "$key" > "$DT/sessions/p1"
 wsid 0 p1 "$R" Write "{\"file_path\":\"$R/docs/x.md\"}"                           # paused (DoR stop) -> not bound
 bind() { jq -nc --arg cwd "$2" --arg sid "$1" --arg p "$3" '{session_id:$sid,cwd:$cwd,hook_event_name:"UserPromptSubmit",prompt:$p}' | "$SK/hooks/bind-session.sh"; }

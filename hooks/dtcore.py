@@ -615,6 +615,188 @@ def gitconfig_protected(rp):
     return any(under(rp, f) for f in files + dirs)
 
 
+# ---------------------------------------------------------------- the plan-approval lock (milestone 1c, plan.md section 3b)
+
+def _fold(x, ci):
+    return x.casefold() if ci else x
+
+
+def registered_tickets():
+    """IDs that some session map names with a `ticket=` line (written only by the bind hook / session-map.sh: protected state, so Claude cannot un-register a
+    ticket by renaming its ticket file) plus every tickets/<ID>.md that exists (the stricter union). Folded on a case-insensitive filesystem."""
+    ci = fs_ci(DT_HOME)
+    ids = set()
+    try:
+        for f in os.listdir(os.path.join(DT_HOME, "sessions")):
+            try:
+                for line in open(os.path.join(DT_HOME, "sessions", f)):
+                    if line.startswith("ticket="):
+                        ids.add(_fold(line.split("=", 1)[1].strip(), ci))
+            except OSError:
+                pass
+    except OSError:
+        pass
+    try:
+        for f in os.listdir(os.path.join(STATE, "tickets")):
+            if f.endswith(".md"):
+                ids.add(_fold(f[:-3], ci))
+    except OSError:
+        pass
+    return ids
+
+
+def lock_problem(tid):
+    """None when ticket tid is not locked, else the reason. Locked = open (no closed/<ID>) and the plan not approved; any read / parse problem is locked."""
+    if os.path.lexists(os.path.join(STATE, "closed", tid)):
+        return None
+    sys.path.insert(0, SKILL_SCRIPTS)
+    try:
+        import plan_lock
+        try:
+            txt = open(os.path.join(STATE, "tickets", tid + ".md")).read()
+        except OSError:
+            return "the ticket file tickets/%s.md is missing or unreadable (a registered ticket without its file stays locked)" % tid
+        ok, why = plan_lock.plan_approved(STATE, tid, txt)
+    except Exception as e:                      # fail-closed
+        return "the plan lock cannot be evaluated (%s)" % e.__class__.__name__
+    return None if ok else why
+
+
+def plan_lock_reason(g, rp):
+    """A reason when rp is inside the worktree of a ticket whose plan is not approved (or whose state cannot be read), else None."""
+    wt_root = real(os.path.join(g["repo_root"], ".claude", "worktrees"))
+    if not under(rp, wt_root) or rp == wt_root:
+        return None
+    comp = first_component(rp, wt_root)
+    ci = fs_ci(wt_root)
+    tid = comp
+    try:
+        hits = [d for d in os.listdir(wt_root) if _fold(d, ci) == _fold(comp, ci)]
+        tid = hits[0] if hits else comp
+    except OSError:
+        pass
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", tid) or _fold(tid, ci) not in registered_tickets():
+        return None
+    why = lock_problem(tid)
+    if why is None:
+        return None
+    return ("%s is in the worktree of ticket %s, whose plan is not approved (%s). Show me the plan with `%s %s --repo <repo_root>`, ask for my yes, then run "
+            "`%s %s --sha <the 12 hex shown> --repo <repo_root> --session <id>` (stage 2); reading is fine" %
+            (rp, tid, why, os.path.join(SKILL_SCRIPTS, "plan-hash.sh"), tid, os.path.join(SKILL_SCRIPTS, "approve-plan.sh"), tid))
+
+
+def locked_tickets(g):
+    """Worktree IDs (directories under <repo>/.claude/worktrees) that are registered tickets with an unapproved plan."""
+    wt_root = real(os.path.join(g["repo_root"], ".claude", "worktrees"))
+    ci = fs_ci(wt_root)
+    reg = registered_tickets()
+    out = []
+    try:
+        names = sorted(os.listdir(wt_root))
+    except OSError:
+        return out
+    for d in names:
+        if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", d) and _fold(d, ci) in reg and lock_problem(d):
+            out.append(d)
+    return out
+
+
+def locked_branches(g):
+    """{branch: ticket} for the branches checked out in locked ticket worktrees: moving such a ref changes the worktree's files without a write to it."""
+    wt_root = real(os.path.join(g["repo_root"], ".claude", "worktrees"))
+    out = {}
+    for tid in locked_tickets(g):
+        try:
+            r = subprocess.run(["git", "-C", os.path.join(wt_root, tid), "symbolic-ref", "--short", "-q", "HEAD"], capture_output=True, text=True, timeout=5)
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if r.returncode == 0 and r.stdout.strip():
+            out[r.stdout.strip()] = tid
+    return out
+
+
+def _branch_name(ref):
+    return ref[len("refs/heads/"):] if ref.startswith("refs/heads/") else ref
+
+
+def ref_move_reason(g, sub, rest, cwd):
+    """A reason when a git command could move the branch checked out in a locked ticket worktree from elsewhere (`git update-ref refs/heads/<b> <sha>` from the main
+    checkout): the files of that worktree change without any write to it. Git itself refuses `branch -f` / `checkout -B` / `fetch . x:<b>` for a checked-out branch
+    (we refuse them too), but `update-ref` has no such guard. The final stop would be verify-record's clean-tree check (the worktree turns dirty)."""
+    if sub not in ("update-ref", "branch", "fetch", "worktree"):
+        return None
+    pos = [t for t in rest if not t.startswith("-")]
+    if sub == "worktree":
+        if pos and pos[0] in ("remove", "move", "prune"):
+            for t in pos[1:]:
+                tp = os.path.expanduser(t)
+                if not os.path.isabs(tp):
+                    if cwd is None:
+                        continue
+                    tp = os.path.join(cwd, tp)
+                why = plan_lock_reason(g, real(tp)) if (SUBST not in tp and "$" not in tp) else None
+                if why:
+                    return "git worktree %s on a locked ticket worktree: %s" % (pos[0], why)
+        return None
+    lb = locked_branches(g)
+    if not lb:
+        return None
+    hit = None
+    if sub == "update-ref":
+        if "--stdin" in rest:
+            return "git update-ref --stdin cannot be checked while a ticket worktree is locked (%s): approve the plan first" % ", ".join(sorted(set(lb.values())))
+        words, skip = [], False
+        for t in rest:
+            if skip:
+                skip = False
+            elif t == "-m":
+                skip = True
+            elif not t.startswith("-"):
+                words.append(t)
+        hit = _branch_name(words[0]) if words else None
+    elif sub == "branch":
+        forcing = any(t in ("--force", "--copy", "--delete") or (t.startswith("-") and not t.startswith("--") and any(ch in t[1:] for ch in "fFCdD")) for t in rest)
+        if forcing:
+            hit = next((_branch_name(t) for t in pos if _branch_name(t) in lb), None)
+    elif sub == "fetch":
+        if "--update-head-ok" in rest or "-u" in rest:
+            return "git fetch --update-head-ok could move a checked-out branch of a locked ticket worktree (%s): approve the plan first" % ", ".join(sorted(set(lb.values())))
+        hit = next((_branch_name(t.rsplit(":", 1)[1]) for t in pos if ":" in t and _branch_name(t.rsplit(":", 1)[1]) in lb), None)
+    if hit in lb:
+        return ("git %s would move the branch %s, checked out in the worktree of ticket %s whose plan is not approved (its files would change without a write to it): "
+                "approve the plan first (stage 2: plan-hash.sh, then approve-plan.sh)" % (sub, hit, lb[hit]))
+    return None
+
+
+RECURSIVE_ALWAYS = {"rsync", "ditto", "tar", "bsdtar", "gtar", "gnutar", "unzip", "pax", "cpio", "7z", "7za", "7zr", "7zz", "7zip"}   # their write_targets only fire when extracting / copying
+
+
+def locked_ancestor_reason(g, prog, a, t, cwd):
+    """A recursive copy / extract whose destination is an ancestor of a locked worktree (the repo root, <repo>/.claude, <repo>/.claude/worktrees): `rsync -a src/ <repo>/.claude/worktrees/`
+    copies T1/... whatever the source is called. Non-recursive single-file cp / mv / ln / install are not affected."""
+    recursive = prog in RECURSIVE_ALWAYS
+    if prog == "cp":
+        recursive = any(f in ("--recursive", "--archive") or (f.startswith("-") and not f.startswith("--") and any(ch in f[1:] for ch in "rRa")) for f in a[1:])
+    if not recursive:
+        return None
+    p = resolve_vars(os.path.expanduser(t))
+    if SUBST in p or "$" in p:
+        return None
+    if not os.path.isabs(p):
+        if cwd is None:
+            return None
+        p = os.path.join(cwd, p)
+    rp = real(p)
+    repo = real(g["repo_root"])
+    if not any(rp == x or (fs_ci(repo) and rp.casefold() == x.casefold()) for x in (repo, os.path.join(repo, ".claude"), os.path.join(repo, ".claude", "worktrees"))):
+        return None
+    locked = locked_tickets(g)
+    if not locked:
+        return None
+    return ("%s of a directory tree into %s could create files in the worktree of %s, whose plan is not approved (a contents copy names no worktree path): "
+            "approve the plan first (stage 2: plan-hash.sh, then approve-plan.sh)" % (prog, rp, ", ".join(locked)))
+
+
 GITCFG_WRITE_FLAGS = {"--add", "--unset", "--unset-all", "--replace-all", "--rename-section", "--remove-section", "-e", "--edit", "--set", "set", "unset", "edit",
                       "rename-section", "remove-section"}
 GITCFG_READ_FLAGS = {"--get", "--get-all", "--get-regexp", "--get-urlmatch", "-l", "--list", "get", "list", "--show-origin", "--show-scope", "--name-only"}
@@ -677,6 +859,9 @@ def path_ok(p, g, payload, cwd):
     if protected_state(rp):
         return ("%s is session / ticket-state bookkeeping: written only by the bind hook and scripts/session-map.sh, "
                 "scripts/ticket-state.sh" % rp)
+    why = plan_lock_reason(g, rp)
+    if why:
+        return why
     if bound is None:
         return None          # no open ticket in this session: Claude Code's normal behaviour (always-on rules live elsewhere)
     hint = ""
@@ -1252,6 +1437,29 @@ def check_cmd(c, g, payload, all_cmds=()):
             check_push(rest, g)
         if sub == "merge":
             check_merge(c, over, g, all_cmds)
+        # paths a git command writes without being a mutating subcommand: --work-tree (any subcommand then acts on that tree), --output[=] (diff / log / show ...),
+        # format-patch -o <dir>, archive -o <file>
+        gbase = c.cwd
+        if over and gbase:
+            gbase = os.path.join(gbase, over)
+        gpaths = []
+        for i, t in enumerate(a):
+            nxt = a[i + 1] if i + 1 < len(a) else None
+            if t.startswith("--work-tree=") or t.startswith("--output="):
+                gpaths.append(t.split("=", 1)[1])
+            elif t in ("--work-tree", "--output") and nxt:
+                gpaths.append(nxt)
+            elif sub in ("format-patch", "archive") and t in ("-o", "--output-directory") and nxt:
+                gpaths.append(nxt)
+            elif sub in ("format-patch", "archive") and t.startswith("--output-directory="):
+                gpaths.append(t.split("=", 1)[1])
+        for gp in gpaths:
+            why = path_ok(gp, g, payload, gbase)
+            if why:
+                block("git %s would write %s: %s" % (sub, gp, why))
+        why = ref_move_reason(g, sub, rest, gbase)
+        if why:
+            block(why)
         if sub in GIT_MUTATING or sub in ("clone", "init", "worktree"):
             base = c.cwd
             if over and base:
@@ -1301,6 +1509,9 @@ def check_cmd(c, g, payload, all_cmds=()):
         if why:
             block("write blocked: %s" % why)
         why = state_dir_target_reason(prog, t, c.cwd) if not exempt else None
+        if why:
+            block("write blocked: %s" % why)
+        why = locked_ancestor_reason(g, prog, a, t, c.cwd) if not exempt else None
         if why:
             block("write blocked: %s" % why)
         why = path_ok(t, g, payload, c.cwd)
@@ -1354,6 +1565,23 @@ def write_targets(a, prog, c):
     elif prog == "unzip":
         ch = [a[i + 1] for i, t in enumerate(a) if t == "-d" and i + 1 < len(a)]
         out = ch or [c.cwd or "."]
+    elif prog == "find":
+        # -delete removes files under the start paths; -exec / -execdir / -ok / -okdir run a command on them: a write unless that command is a known reader.
+        # -fprint* / -fls write the file named after them.
+        FIND_READERS = {"cat", "grep", "egrep", "fgrep", "rg", "ls", "head", "tail", "wc", "file", "stat", "du", "diff", "cmp", "shasum", "sha1sum", "sha256sum",
+                        "md5", "md5sum", "basename", "dirname", "realpath", "readlink", "test", "echo", "printf", "true"}
+        writes = "-delete" in a[1:]
+        for i, t in enumerate(a):
+            if t in ("-exec", "-execdir", "-ok", "-okdir") and (i + 1 >= len(a) or pname(a[i + 1]) not in FIND_READERS):
+                writes = True
+        if writes:
+            start = []
+            for t in a[1:]:
+                if t.startswith("-") and t != "-" or t in ("(", "!"):
+                    break
+                start.append(t)
+            out = start or [c.cwd or "."]
+        out += [a[i + 1] for i, t in enumerate(a[:-1]) if t in ("-fprint", "-fprint0", "-fprintf", "-fls")]
     elif prog == "ditto":
         out = pos[-1:] if len(pos) >= 2 else []                        # ditto [opts] src... dst, also `ditto -x archive dst`
     elif prog == "pax":

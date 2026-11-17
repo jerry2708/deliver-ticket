@@ -202,6 +202,8 @@ def main():
                 sys.exit("refused: tickets/%s.md exists, so %s is a real ticket, not a wrong token" % (old, old))
             if any(k == "worktree" and os.path.basename(v.rstrip("/")) == old for k, v in lines):
                 sys.exit("refused: a worktree is recorded under %s" % old)
+            if wt_exists(old):
+                sys.exit("refused: the worktree .claude/worktrees/%s exists on disk, so %s is a real ticket (dropping its binding would unregister its plan lock)" % (old, old))
             out = [kv for kv in lines if kv not in (("ticket", old), ("paused", old))]
             if ("ticket", new) not in out:
                 out.append(("ticket", new))
