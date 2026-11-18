@@ -224,6 +224,7 @@ for n in ("session-map.sh", "pending-ticket.sh", "project-map-stale.sh"):
     assert "Bash(%s/scripts/%s *)" % (sk, n) in al and "Bash(%s/scripts/%s *)" % (sk, n) not in ask
 assert "Bash(%s/scripts/plan-hash.sh *)" % sk in al and "Bash(%s/scripts/plan-hash.sh *)" % sk not in ask and (sk + "/scripts/plan-hash.sh *") not in ex   # read-only, sandboxed, allow rule
 assert "Bash(%s/scripts/verify-record.sh *)" % sk in al and "Bash(%s/scripts/verify-record.sh *)" % sk not in ask and (sk + "/scripts/verify-record.sh *") not in ex   # sandboxed on purpose
+assert "Bash(%s/scripts/lock-trace.sh *)" % sk in al and "Bash(%s/scripts/lock-trace.sh *)" % sk not in ask and (sk + "/scripts/lock-trace.sh *") not in ex   # read-only stage 8 trace, sandboxed
 for n in ("ticket-state.sh", "guard-apply.sh"):
     assert "Bash(%s/scripts/%s *)" % (sk, n) in ask and "Bash(%s/scripts/%s *)" % (sk, n) not in al, n
 assert ask[0] == "Bash(git push:*)"

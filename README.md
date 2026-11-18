@@ -102,4 +102,5 @@ tests/run-guard-write.sh <new scratch dir>     # guard-write.sh (diff/verify) an
 tests/run-base-worktree.sh <new scratch dir>   # shared detached _base worktree: acquire / move / lock / dirty / main checkout untouched
 tests/run-install.sh <new scratch dir>         # scripts/install.sh with a fake HOME: n / empty input write nothing, y applies + backup + status, wrong clone path refused
 tests/run-evals.sh <new scratch dir>           # phase-6 eval tooling (truth.json, runner, scorer) against a fake `claude`; starts no real session
+tests/run-lock-trace.sh <new scratch dir>      # stage 8 lock trace on fixture transcripts: missing sessions, unparsed calls before/after the marker, approvals/, the three plan hashes + user turn, start records, read-only
 ```

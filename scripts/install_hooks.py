@@ -42,7 +42,7 @@ HOOKS = os.path.join(SKILL, "hooks")
 SETTINGS = os.path.realpath(os.environ.get("DT_SETTINGS") or os.path.expanduser("~/.claude/settings.json"))
 
 BOOKKEEPING = ["session-map.sh", "pending-ticket.sh", "project-map-stale.sh", "git-rename.sh"]   # sandbox: excluded + allow rule: no prompt
-SANDBOXED = ["verify-record.sh", "plan-hash.sh"]                                                    # NOT excluded: runs inside the sandbox; allow rule only (no prompt)
+SANDBOXED = ["verify-record.sh", "plan-hash.sh", "lock-trace.sh"]                                   # NOT excluded: runs inside the sandbox; allow rule only (no prompt)
 GATES = ["ticket-state.sh", "guard-apply.sh", "git-push.sh", "approve-plan.sh"]                                     # excluded + ask rule on the full path: the prompt is the user's yes
 # The gate scripts' ask rules are USER level too: with the sandbox off (or in a project that never enabled it) nothing else would ask, and auto mode
 # ran an excluded command without a prompt (probe V8 d4).
