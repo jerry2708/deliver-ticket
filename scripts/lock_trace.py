@@ -18,6 +18,10 @@ Listed (each counts):
               delivery.log; and a `plan-approve` line in delivery.log that no scanned approve-plan.sh call explains
   session     a session id (--session or from delivery.log) that is not a plain id (no "/", no ".."): not looked up
   projects    --projects other than ~/.claude/projects (realpath): only the tests pass it; stage 8 never does
+  verify      a call naming evidence/<ID>/verify.json that is not a plain verify-record.sh <ID> call (a Read tool call is printed as `read-verify`, not counted:
+              stages 4 and 7 name the file, reading it forges nothing; a Bash `cat` is counted, it can carry a redirect); and an existing evidence/<ID>/verify.json whose mtime is
+              later (2 s slack) than the result of the last verify-record.sh <ID> call in the scanned transcripts, or with no such call at all ("verify.json not
+              explained by verify-record.sh"). A trace too: `touch -t` forges an mtime.
   start       a session with no <state root>/starts/<sid> record, or whose transcript has a cwd that is neither under the record nor under <repo>/.claude/worktrees
 A user turn: a `user` entry that is not isMeta, not a compact summary, not a tool result, not "[Request interrupted...".
 Writes nothing. Exit 0 = nothing listed, 1 = at least one line listed, 2 = bad input. Standard library only.
@@ -189,7 +193,9 @@ def main(argv):
     mprob, mepoch, mline = marker_info(state, a.ticket, ticket)
     if mprob:
         lst("marker", mprob)
-    info, approves, found = [], [], 0
+    info, approves, found, vr_ends = [], [], 0, []
+    vfile = "evidence/%s/verify.json" % a.ticket
+    vr_call = re.compile(r"\S*/scripts/verify-record\.sh\s+%s(?:\s+[^;&|<>`$()\n]*)?" % re.escape(a.ticket))      # one plain call, nothing chained
     for sid in sids:
         if not SID_RE.fullmatch(sid):
             lst("session", "%r is not a plain session id (%s): not looked up" % (sid[:80], "--session" if sid == a.session else "delivery.log"))
@@ -209,6 +215,7 @@ def main(argv):
                 continue
             where = "%s%s" % (sid[:8], "/" + os.path.basename(path)[:-6] if sub else "")
             errs = {x.get("tool_use_id") for _, e in ents for x in blocks(e, "tool_result") if x.get("is_error")}
+            done_at = {x.get("tool_use_id"): e.get("timestamp") for _, e in ents for x in blocks(e, "tool_result")}
             shown, shown_at, turn_since = None, None, False
             for n, e in ents:
                 if not sub and e.get("cwd"):
@@ -226,6 +233,15 @@ def main(argv):
                     at = "%s line %d %s" % (where, n, ts[:19])
                     if re.search(r"\bapprovals/|/approvals\b", text):
                         lst("approvals", "%s %s: %s" % (at, u.get("name"), text[:200]))
+                    vr = u.get("name") == "Bash" and isinstance(inp.get("command"), str) and vr_call.fullmatch(inp["command"].strip())
+                    if vr:
+                        end = epoch_utc(done_at.get(u.get("id")) or ts)
+                        if end is not None:
+                            vr_ends.append(end)
+                    elif vfile in text and u.get("name") == "Read":
+                        info.append("read-verify  %s Read %s" % (at, inp.get("file_path", "")))
+                    elif vfile in text:
+                        lst("verify", "%s %s names %s: %s" % (at, u.get("name"), vfile, text[:200]))
                     cmd = inp.get("command") if u.get("name") == "Bash" and isinstance(inp.get("command"), str) else None
                     if cmd is None:
                         continue
@@ -272,6 +288,14 @@ def main(argv):
                              and not (os.path.realpath(c) + os.sep).startswith(wts))
                 if odd:
                     lst("start", "%s: started in %s; transcript cwd(s) outside it and outside the worktrees: %s" % (sid, rec, ", ".join(odd)))
+    vpath = os.path.join(state, "evidence", a.ticket, "verify.json")
+    if os.path.lexists(vpath):
+        mt = os.lstat(vpath).st_mtime
+        if not vr_ends:
+            lst("verify", "%s exists, but no verify-record.sh %s call in the scanned transcripts: verify.json not explained by verify-record.sh" % (vpath, a.ticket))
+        elif mt > max(vr_ends) + 2:
+            lst("verify", "%s changed at %s, after the last verify-record.sh %s call ended (%s): verify.json not explained by verify-record.sh"
+                % (vpath, time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(mt)), a.ticket, time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(max(vr_ends)))))
     for ts, s, act, det in log:
         if act == "plan-approve":
             h = det[7:19] if det.startswith("sha256=") else "?"

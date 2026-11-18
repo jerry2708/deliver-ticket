@@ -30,7 +30,7 @@ start() { printf '%s\n' "$2" > "$DELIVER_TICKET_HOME/starts/$1"; }
 # tx <file>: a transcript from a spec on stdin, one entry per line. Minutes are relative to now (the marker is written now):
 #   C <cwd>         cwd of the following entries              U <text>   user turn          M <text>   isMeta user entry
 #   A <text>        assistant text                            B <min> <command>   Bash call (ok)   E <min> <command>   Bash call (is_error)
-#   W <min> <path>  Write call
+#   W <min> <path>  Write call                                R <min> <path>   Read call
 TXPY=$(cat <<'PY'
 import datetime, json, sys
 now = datetime.datetime.now(datetime.timezone.utc)
@@ -48,9 +48,9 @@ for l in sys.stdin.read().splitlines():
         out.append(dict(base, type="user", isMeta=(k == "M"), message={"role": "user", "content": rest}))
     elif k == "A":
         out.append(dict(base, type="assistant", message={"role": "assistant", "content": [{"type": "text", "text": rest}]}))
-    elif k in ("B", "E", "W"):
+    elif k in ("B", "E", "W", "R"):
         m, _, arg = rest.partition(" ")
-        name, inp = ("Write", {"file_path": arg, "content": "x"}) if k == "W" else ("Bash", {"command": arg})
+        name, inp = {"W": ("Write", {"file_path": arg, "content": "x"}), "R": ("Read", {"file_path": arg})}.get(k, ("Bash", {"command": arg}))
         out.append(dict(base, timestamp=ts(m), type="assistant", message={"role": "assistant", "content": [{"type": "tool_use", "id": "t%d" % n, "name": name, "input": inp}]}))
         out.append(dict(base, timestamp=ts(m), type="user", message={"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t%d" % n, "content": "r", "is_error": k == "E"}]}))
         # api-request-blob repeats tool_use blocks: the scan must not count them twice
@@ -254,6 +254,55 @@ U hi
 EOF
 lt T8 s-ln >/dev/null
 has "symlinked record ignored" "no starts/s-ln record (or a symlink)"
+
+echo "# verify.json: calls naming it, and a file the last verify-record.sh call does not explain (mtime; a trace: touch -t forges it)"
+tk T10 $'# T10\n## Plan\n- ten\n'
+H10=$(shown T10)
+approve T10 s-v
+start s-v "$R"
+mkdir -p "$ST/evidence/T10" && printf '{}\n' > "$ST/evidence/T10/verify.json"
+touch -t "$(date -v-6M +%Y%m%d%H%M.%S)" "$ST/evidence/T10/verify.json"       # written before the call below ended: explained
+tx "$P/-repo/s-v.jsonl" <<EOF
+C $R
+A plan hash $H10
+U yes
+B -30 $SK/scripts/approve-plan.sh T10 --sha $H10 --repo $R --session s-v
+B -5 $SK/scripts/verify-record.sh T10 --guard $ST/guard.json
+EOF
+req "$(lt T10 s-v)" 1 "verify: only the fixture --projects is listed"
+hasnt "verify-record.sh call itself" "verify     "
+touch "$ST/evidence/T10/verify.json"                                          # now: later than the last call's end
+lt T10 s-v >/dev/null
+has "mtime after the last call" "after the last verify-record.sh T10 call ended"
+has "mtime after the last call" "verify.json not explained by verify-record.sh"
+tx "$P/-repo/s-v.jsonl" <<EOF
+C $R
+A plan hash $H10
+U yes
+B -30 $SK/scripts/approve-plan.sh T10 --sha $H10 --repo $R --session s-v
+B -5 $SK/scripts/verify-record.sh T10 --guard $ST/guard.json
+W 1 $ST/evidence/T10/verify.json
+R 1 $ST/evidence/T10/verify.json
+B 2 cat $ST/evidence/T10/verify.json
+B 3 $SK/scripts/verify-record.sh T10 --guard $ST/guard.json; echo '{}' > $ST/evidence/T10/verify.json
+B 4 $SK/scripts/verify-record.sh T10 --guard $ST/guard.json && echo done
+EOF
+lt T10 s-v >/dev/null
+req "$(grep -c '^verify .* names evidence/T10/verify.json' "$S/out.txt")" 3 "Write, cat and a chained call naming verify.json are listed"
+has "a Read is printed, not counted" "read-verify"
+hasnt "a Read is printed, not counted" "Read names evidence/T10"
+has "a chained verify-record.sh is not an explaining call" "after the last verify-record.sh T10 call ended"
+tk T11 $'# T11\n## Plan\n- eleven\n'
+mkdir -p "$ST/evidence/T11" && printf '{}\n' > "$ST/evidence/T11/verify.json"
+start s-w "$R"
+tx "$P/-repo/s-w.jsonl" <<EOF
+C $R
+U hi
+EOF
+lt T11 s-w >/dev/null
+has "no verify-record.sh call at all" "but no verify-record.sh T11 call in the scanned transcripts: verify.json not explained by verify-record.sh"
+lt T1 s-ok >/dev/null
+hasnt "no verify.json: no verify line" "verify     "
 
 echo "# read-only: the state root and the transcripts are unchanged by every run above and by one more"
 snap() { (cd "$S" && find state projects -print0 | sort -z | xargs -0 shasum 2>/dev/null; find state projects | sort) | shasum; }
