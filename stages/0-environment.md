@@ -18,4 +18,4 @@ Nothing is written in the repo in this stage, and nothing in the state dir excep
 A short table: check, result, what it means for this ticket. Then continue to stage 1 (new ticket) or the recorded stage (resume). A FAIL in 2 or 10 stops here.
 
 ## Resume only
-If the ticket file records a worktree and this session is not inside it, call `EnterWorktree` with that `path` (under `<repo>/.claude/worktrees/`) before check 5, then run the checks again from inside it.
+If the ticket file records a worktree and this session is not inside it, call `EnterWorktree` with that `path` (under `<repo>/.claude/worktrees/`) before check 5, then run the checks again from inside it. A resumed ticket past stage 2 whose writes are blocked with "approve the plan first" (opened before the lock, or the plan edited since my yes) goes through the stage 2 gate once before any other work (SKILL.md section 5).

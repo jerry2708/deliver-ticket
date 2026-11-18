@@ -109,7 +109,7 @@ After a long ticket the conversation is auto-compacted, and the skill text is go
 
 A `SessionStart` hook may inject "ticket X, stage N: re-read ..." after a compaction. Treat that as the same instruction.
 
-**Resume** (any surface): read the ticket file. If this session is not inside the ticket's worktree, call `EnterWorktree` with the recorded `path` (always under `<repo>/.claude/worktrees/`). Then re-run the hook self-test (`init.md`, step 4); failing -> soft mode and tell me.
+**Resume** (any surface): read the ticket file. If this session is not inside the ticket's worktree, call `EnterWorktree` with the recorded `path` (always under `<repo>/.claude/worktrees/`). Then re-run the hook self-test (`init.md`, step 4); failing -> soft mode and tell me. A ticket with no approval marker for its current plan (one opened before the lock, or a plan edited after my yes) is locked: its worktree takes no writes until the stage 2 gate has run once (`stages/2-plan.md`, "The lock holds for every open ticket"), whatever its recorded stage.
 
 **Soft mode** (settings write declined, or the self-test fails): the hard stops are off. Say so; cap every tier's stop point at `local`; ask before every commit; repeat the hard rules at the start of each stage; record it in the ticket file (and the Delivery log, if on).
 
