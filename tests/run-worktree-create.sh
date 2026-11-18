@@ -2,6 +2,7 @@
 # Dry runs of hooks/worktree-create.sh + setup-worktree.sh + env-keys.sh. Usage: tests/run-worktree-create.sh <new scratch dir>
 set -u
 S=${1:?new scratch dir}; SK=$(cd "$(dirname "$0")/.." && pwd)
+[ "$(cd "$SK" && pwd -P)" = "$(cd "$HOME/.claude/skills/deliver-ticket" 2>/dev/null && pwd -P)" ] && echo "warning: this suite tests the LIVE checkout $SK - build and test in the dev clone (docs/plan.md, dev-copy process)" >&2
 [ -e "$S" ] && { echo "scratch dir exists: $S (never deletes; pick a new one)" >&2; exit 2; }
 mkdir -p "$S" && S=$(cd "$S" && pwd -P)
 export DELIVER_TICKET_HOME=$S/state; mkdir -p "$DELIVER_TICKET_HOME"

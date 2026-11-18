@@ -3,6 +3,7 @@
 # usage: tests/run-installer.sh <new-or-empty scratch dir> [settings file to copy; default ~/.claude/settings.json]
 set -u
 SK="$(cd "$(dirname "$0")/.." && pwd)"
+[ "$(cd "$SK" && pwd -P)" = "$(cd "$HOME/.claude/skills/deliver-ticket" 2>/dev/null && pwd -P)" ] && echo "warning: this suite tests the LIVE checkout $SK - build and test in the dev clone (docs/plan.md, dev-copy process)" >&2
 D="${1:?scratch dir (must be empty or new)}"
 SRC="${2:-$HOME/.claude/settings.json}"
 mkdir -p "$D"; [ -z "$(ls -A "$D")" ] || { echo "scratch dir not empty" >&2; exit 1; }

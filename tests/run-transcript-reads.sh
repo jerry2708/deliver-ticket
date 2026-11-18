@@ -5,6 +5,7 @@
 set -u
 S=${1:?scratch dir (must be empty or new)}
 SK=$(cd "$(dirname "$0")/.." && pwd)
+[ "$(cd "$SK" && pwd -P)" = "$(cd "$HOME/.claude/skills/deliver-ticket" 2>/dev/null && pwd -P)" ] && echo "warning: this suite tests the LIVE checkout $SK - build and test in the dev clone (docs/plan.md, dev-copy process)" >&2
 mkdir -p "$S" && S=$(cd "$S" && pwd -P)
 [ -z "$(ls -A "$S")" ] || { echo "scratch dir not empty" >&2; exit 2; }
 pass=0; fail=0

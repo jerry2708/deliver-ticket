@@ -2,6 +2,7 @@
 # Static checks on the skill's own instructions (they only prove the text is there; behaviour is proven by dry runs).
 # Usage: tests/run-docs-lint.sh   (reads the skill files, writes nothing)
 SK=$(cd "$(dirname "$0")/.." && pwd); cd "$SK" || exit 1
+[ "$(cd "$SK" && pwd -P)" = "$(cd "$HOME/.claude/skills/deliver-ticket" 2>/dev/null && pwd -P)" ] && echo "warning: this suite tests the LIVE checkout $SK - build and test in the dev clone (docs/plan.md, dev-copy process)" >&2
 pass=0; fail=0
 ok() { if [ "$1" = 0 ]; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL $2"; fi; }
 has() { grep -q -- "$2" "$1"; ok $? "$1 should contain: $2"; }
