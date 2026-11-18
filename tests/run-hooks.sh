@@ -816,8 +816,11 @@ for c in "$SKS/guard-apply.sh c.json --repo $R" "$SKS/guard-apply.sh --repo $R c
 if [ -d "${SK/deliver-ticket/DELIVER-TICKET}" ]; then
   UP=${SK/deliver-ticket/DELIVER-TICKET}; DOT=${SKS/.claude/.CLAUDE}
   for c in "$SKS/GUARD-APPLY.sh c.json --repo $R" "$SKS/Guard-Apply.sh c.json --repo $R" "$SKS/Ticket-State.sh done T1 --reason x --repo $R" "$SKS/TICKET-STATE.SH done T1 --reason x --repo $R" \
-    "$UP/scripts/guard-apply.sh c.json --repo $R" "$DOT/guard-apply.sh c.json --repo $R" "$DOT/ticket-state.sh done T1 --reason x --repo $R" "python3 $SKS/GUARD_APPLY.PY c.json --repo $R" \
-    "python3 $SKS/Ticket_Ctl.py ticket-state done T1 --reason x --repo $R"; do gx 2 Bash "$c"; done
+    "python3 $SKS/GUARD_APPLY.PY c.json --repo $R" "python3 $SKS/Ticket_Ctl.py ticket-state done T1 --reason x --repo $R"; do gx 2 Bash "$c"; done
+  # a skill dir outside ~/.claude/skills/deliver-ticket (the dev clone) has no such part to change: the "variant" would be the exact spelling
+  if [ "$UP" != "$SK" ]; then gx 2 Bash "$UP/scripts/guard-apply.sh c.json --repo $R"; else echo "skipped: 1 case-variant case = 6 checks (no deliver-ticket in $SK)"; fi
+  if [ "$DOT" != "$SKS" ]; then for c in "$DOT/guard-apply.sh c.json --repo $R" "$DOT/ticket-state.sh done T1 --reason x --repo $R"; do gx 2 Bash "$c"; done
+  else echo "skipped: 2 case-variant cases = 12 checks (no .claude in $SKS)"; fi
   gx 0 Bash "$SKS/guard-apply.sh c.json --repo $R"
 fi
 python3 - "$SK/hooks" "$SK/scripts" <<'PY' && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL G1 unit: hook GATE_SCRIPTS vs install_hooks.GATES"; }

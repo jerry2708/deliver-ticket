@@ -64,7 +64,9 @@ dt_nostate() {
     # C9b: the configuration the hooks and gate scripts trust (dtcore.py config_reason: ~/.claude/settings*, the skill dir, a delivery repo's
     # .claude/settings*.json, ~/.ssh, ~/.netrc, the git / gh / glab configs and `git config`) - tested with the skill dir still in the text.
     # Not NAMED: a target it cannot resolve passes (known limit, as for the delete-verb trigger).
-    case "$tx" in *.claude*|*.ssh*|*.netrc*|*config*) hit=1 ;; esac
+    # "$sk": the skill dir itself (realpath). It holds no .claude when ~/.claude is a symlink, or in a clone elsewhere (the dev copy): without it
+    # writes into the skill dir never reached dtcore's SKILL_DIR rule.
+    case "$tx" in *"$sk"*|*.claude*|*.ssh*|*.netrc*|*config*) hit=1 ;; esac
   fi
   if [ $hit = 0 ]; then
     # a gate script or its backing module (their calls must be spelled one way, dtcore.py check_gate)
