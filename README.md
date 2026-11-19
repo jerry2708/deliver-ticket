@@ -2,13 +2,15 @@
 
 `/deliver-ticket init | <ticket-id|file> | <ID> cancel`. Run it only by typing it. Design rationale: `docs/plan.md`. `<state root>` below = `$DELIVER_TICKET_HOME`, default `~/.local/share/deliver-ticket` (defined in `SKILL.md` section 3).
 
-## Permission mode: launch in auto mode, no plan mode
-The skill is meant for **auto mode**: the gates are the skill's, the safety is the hooks'. A skill cannot set the mode. In Claude Code 2.1.311 auto is granted only from user or policy settings or the `--permission-mode` flag (a project or local `defaultMode: "auto"` is ignored; verified in the 2.1.311 binary: "only policy/user/flag settings may grant auto mode"). Launch with:
+## Permission mode: launch in default mode, no auto mode, no plan mode
+Ticket sessions run in **default mode**; **auto mode is not supported** (C11d, 2026-11-19). The gates are the skill's; the goal of milestone C11 is that nothing else prompts (permission rules, sandbox, hooks; not yet measured, C11g). Why not auto: probe `bash_allowed_domains_param` (Claude Code 2.1.311) showed that in auto mode a Bash call with the per-call `allowed_domains` parameter reached a host outside the project allowlist without a prompt. The hook now blocks the two known per-call widening parameters (`allowed_domains`, `dangerouslyDisableSandbox`), but it covers only those; auto mode may approve other things that default mode would ask about. A skill cannot set the mode. Launch with:
 
 ```
-claude --permission-mode auto
-CLAUDE_CODE_DISABLE_AUTO_MEMORY=1 claude --permission-mode auto     # eval runs
+claude
+CLAUDE_CODE_DISABLE_AUTO_MEMORY=1 claude     # eval runs
 ```
+
+Do not pass `--permission-mode auto` and do not set `defaultMode: "auto"` in your user settings for these sessions.
 
 The skill does not use plan mode (`EnterPlanMode` / `ExitPlanMode`): plan mode writes its plan under `~/.claude/plans/`, which the guard blocks (dry runs 2 and 3); its exit dialog switches the session to default mode; its "approved" came back although the user had seen no plan (dry run 3), so it is never the user's approval. Stage 2 writes the plan into the ticket file and stops at the gate.
 
@@ -17,7 +19,7 @@ Requirements: Claude Code (tested on **2.1.311**; stage 0 warns below it), `git`
 
 1. Clone to **exactly** `~/.claude/skills/deliver-ticket` (the hooks and `SKILL.md` use that path): `git clone <this repo's URL> ~/.claude/skills/deliver-ticket` (the clone path matters, not where it comes from).
 2. Run `~/.claude/skills/deliver-ticket/scripts/install.sh`. It checks the tools and the clone path, prints the `~/.claude/settings.json` diff, asks y/n, and only on `y` runs `install-hooks.sh apply --confirmed` (a backup is made) and `install-hooks.sh status`. By hand it is the same three steps: `scripts/install-hooks.sh diff`, then `apply --confirmed`, then `status`.
-3. Per project, in its **main checkout**, start Claude Code (`claude --permission-mode auto`, see above) and run `/deliver-ticket init`. Init asks its questions and writes the project's state under the state root (`<state root>/<project-key>/`), not into this repo and not into the client repo; the per-project `WorktreeCreate` and `UserPromptSubmit` hooks go into `<repo>/.claude/settings.local.json` through `install-hooks.sh project-apply` (diff and your yes first).
+3. Per project, in its **main checkout**, start Claude Code (`claude`, default mode, see above) and run `/deliver-ticket init`. Init asks its questions and writes the project's state under the state root (`<state root>/<project-key>/`), not into this repo and not into the client repo; the per-project `WorktreeCreate` and `UserPromptSubmit` hooks go into `<repo>/.claude/settings.local.json` through `install-hooks.sh project-apply` (diff and your yes first).
 4. The user-level rules that `apply` adds are global: **`glab mr merge` and `gh pr merge` are denied in every project** (merge in the GitLab UI), and pushes / MR creation ask first. See "Global permission rules" below.
 
 Update: `git pull` in the clone, then `scripts/install-hooks.sh status`; it says if the registered hooks or rules differ from this version (then `diff`, your yes, `apply --confirmed`).
