@@ -1141,7 +1141,7 @@ def check_push(rest, g):
     return dry
 
 
-# Gated commands: the permission `ask` rules (user level: Bash(git push:*), glab/gh mr|pr create; project sandbox: the CLI_ASK list of
+# Gated commands: the permission `ask` rules (user level: Bash(git push:*), glab/gh mr|pr create; a project's own Bash(git commit:*); project sandbox: the CLI_ASK list of
 # scripts/install_hooks.py) match the command TEXT as a prefix. Any other spelling - git -C x push, /usr/bin/git, env / command / xargs in front,
 # bash -c "...", an option between the subcommand words - does not match, and with the sandbox on it would run auto-approved. So the hook only lets
 # these commands through in the one spelling the rule matches.
@@ -1169,7 +1169,7 @@ def _cli_positionals(toks):
 
 
 def check_canonical(c):
-    """Block a gated command (git push, gh / glab writes) that is not spelled the way its ask rule matches."""
+    """Block a gated command (git push, git commit, gh / glab writes) that is not spelled the way its ask rule matches."""
     a = c.argv
     if not a:
         return
@@ -1183,6 +1183,12 @@ def check_canonical(c):
         if sub == "branch" and any(t in ("-m", "-M", "--move") or (t.startswith("-") and not t.startswith("--") and ("m" in t[1:] or "M" in t[1:])) for t in a):
             block("git branch -m is not run by Claude (the repo's own hooks would run unsandboxed under the excluded git): use `%s <old> <new>` from the "
                   "worktree directory" % os.path.join(SKILL_SCRIPTS, "git-rename.sh"))
+        # the commit gate: a project ask rule `Bash(git commit:*)` (and CLAUDE.md "never commit without asking") sees only the plain spelling; probe
+        # commit_bypass_dir_flag (2.1.311): `git -C <worktree> commit` ran sandboxed with no prompt and moved the branch
+        if sub == "commit" and not (plain and a[1:2] == ["commit"]):
+            block("git commit is spelled so the permission ask rule `git commit` would not match it (a global option such as -C / -c / --git-dir before "
+                  "`commit`, a path, a wrapper, an env assignment, bash -c / eval / $( )): run `cd <worktree>` as its own call, then plain `git commit ...` "
+                  "in the next call")
     elif prog in GATED_CLI:
         toks = a[1:]
         pos = _cli_positionals(toks)

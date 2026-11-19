@@ -465,6 +465,20 @@ for sid in s1 u1; do
   tsid 0 guard.sh $sid "$W" "$SK/scripts/git-rename.sh work/t1 feat/t1"
   for c in "bash $SK/scripts/git-push.sh mirror feat-T1" "python3 $SK/scripts/git_push.py mirror feat-T1" "FOO=1 $SK/scripts/git-push.sh mirror feat-T1" "env $SK/scripts/git-push.sh mirror feat-T1" "cd . && python3 -I $SK/scripts/git_push.py mirror x"; do tsid 2 guard.sh $sid "$W" "$c"; done
 done
+echo "# C11 commit gate: git commit only as plain \`git commit ...\` (a project ask rule Bash(git commit:*) matches the text as a prefix; probe commit_bypass_dir_flag)"
+for sid in s1 u1; do
+  for cwd in "$W" "$R"; do
+    for c in 'git -C . commit -m x' "git -C $W commit --allow-empty -m probe" 'git -c user.name=x commit -m x' 'git --git-dir=.git commit -m x' 'git --work-tree=. commit -m x' \
+      'git --namespace=x commit -m x' 'git -P commit -m x' 'git --no-pager commit -m x' 'git -p commit -m x' '/usr/bin/git commit -m x' 'GIT commit -m x' 'env git commit -m x' \
+      '/usr/bin/env git commit -m x' 'FOO=1 git commit -m x' 'command git commit -m x' 'nohup git commit -m x' 'time git commit -m x' 'echo x | xargs git commit -m' \
+      'bash -c "git commit -m x"' "sh -c 'git commit -m x'" 'eval "git commit -m x"' 'echo $(git commit -m x)' 'cd . && git -C . commit -m x' 'git add -A && FOO=1 git commit -m x'; do
+      tsid 2 guard.sh $sid "$cwd" "$c"; done
+  done
+  for c in 'git commit -m x' 'git commit --allow-empty -m probe' 'cd . && git commit -m x' 'git add -A && git commit -m "feat: x"' 'git -C . status' 'git -c core.quotepath=off log -1'; do
+    tsid 0 guard.sh $sid "$W" "$c"; done
+done
+out=$(payload "$W" Bash "git -C $W commit -m x" u1 | "$SK/hooks/guard.sh" 2>&1); printf '%s' "$out" | grep -q 'run `cd <worktree>` as its own call, then plain `git commit ...`' && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL commit-gate block message: $out"; }
+out=$(payload "$S/nostate" Bash "git -C . commit -m x" u1 | "$SK/hooks/guard.sh" 2>&1); req "$?" 0 "no delivery state: git -C commit is not this skill's business ($out)"
 echo "# C5b: the user's git config (~/.gitconfig, ~/.config/git/**, \$XDG_CONFIG_HOME/git/**) is not written by Claude: git-push.sh trusts it and runs unsandboxed"
 for sid in s1 u1; do
   for c in 'echo x >> ~/.gitconfig' 'echo x > ~/.config/git/config' 'echo x >> ~/.config/git/ignore' 'touch ~/.gitconfig' 'tee ~/.gitconfig' 'cp /dev/null ~/.config/git/config' \
