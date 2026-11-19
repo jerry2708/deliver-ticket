@@ -115,7 +115,9 @@ has "$(grep '| tool_edit_evidence_allow | default |' "$S/out18.txt")" "INCONCLUS
 eq "$(run 19 FAKE_FLIP=tool_write_no_rule_control)" 1 "a Write without a rule that does not prompt FAILs the control"
 has "$(grep '| tool_write_edit_allow_tilde | default |' "$S/out19.txt")" "control tool_write_no_rule_control is FAIL in this run" "allow row after a failed control"
 has "$(cat "$S/r1/settings-tool_write_edit_allow_abs-default.json")" "Edit(/$S/ro1/state/\*/evidence/\*\*)" "// spelling of the state root"
-has "$(cat "$S/r1/settings-tool_write_verify_json_denied-default.json")" "Edit(~/OUTSIDE-NOT-UNDER-HOME/\*/evidence/\*/verify.json)" "~/ spelling needs the outside dir under home"
+has "$(cat "$S/r1/settings-tool_write_edit_allow_tilde-default.json")" "Edit(~/OUTSIDE-NOT-UNDER-HOME/\*/evidence/\*\*)" "~/ spelling needs the outside dir under home"
+has "$(cat "$S/r1/settings-tool_edit_delivery_log_denied-default.json")" "Edit(/$S/ro1/state/\*/delivery.log)" "deny rules are the installer's (protected list)"
+has "$(cat "$S/r1/settings-tool_edit_delivery_log_denied-default.json")" "Edit(/$S/ro1/state/\*/evidence/\*/verify.json)" "deny rules are the installer's (push record)"
 has "$(cat "$S/r1/raw/tool_edit_evidence_allow-default.json")" '"tool": "Edit"' "raw file names the tool"
 echo "# arguments"
 env FAKE_RUN_S="$S/r7" FAKE_RUN_OUT="$S/ro7" FAKE_DUMP_S="$S/d0" FAKE_DUMP_OUT="$S/o0" $PS "$S/r7" --outside "$S/ro7" --claude "$S/fake-claude" --only auto_allow,deny_sessions > "$S/out7.txt" 2>&1; eq "$?" 0 "--only"
@@ -130,7 +132,8 @@ echo "# the case table covers what the design relies on"
 for id in auto_allow rename_key_dir excluded_script_after_cd excluded_chained_to_unlisted settings_local_by_bash localhost_client_with_binding localhost_listen_without_binding \
   git_rename_script_excluded git_push_script_refuses_options gate_script_asks gate_script_no_ask_rule_control gh_unlisted_sandboxed installer_apply_blocked allowwrite_glob_unsupported \
   bash_allowed_domains_param bash_allowed_domains_control bash_disable_sandbox_param tool_write_no_rule_control tool_write_edit_allow_tilde tool_write_edit_allow_abs \
-  tool_write_rule_of_its_own tool_edit_evidence_allow tool_write_verify_json_denied tool_edit_verify_json_denied tool_read_skill_tilde; do
+  tool_write_rule_of_its_own tool_edit_evidence_allow tool_write_verify_json_denied tool_edit_verify_json_denied tool_read_skill_tilde tool_edit_delivery_log_denied \
+  tool_read_skill_no_rule tool_read_skill_installer_rule; do
   grep -q "\"id\": \"$id\"" "$S/table.json" && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL case $id missing from the probe"; }
 done
 echo "pass=$pass fail=$fail"; [ $fail = 0 ]

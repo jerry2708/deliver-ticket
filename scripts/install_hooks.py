@@ -40,6 +40,8 @@ import time
 SKILL = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 HOOKS = os.path.join(SKILL, "hooks")
 SETTINGS = os.path.realpath(os.environ.get("DT_SETTINGS") or os.path.expanduser("~/.claude/settings.json"))
+sys.path.insert(0, HOOKS)
+import dtcore  # noqa: E402  (constants only at import time; PROTECTED_STATE is the one list of the protected state)
 
 BOOKKEEPING = ["session-map.sh", "pending-ticket.sh", "project-map-stale.sh", "git-rename.sh"]   # sandbox: excluded + allow rule: no prompt
 SANDBOXED = ["verify-record.sh", "plan-hash.sh", "lock-trace.sh"]                                   # NOT excluded: runs inside the sandbox; allow rule only (no prompt)
@@ -92,7 +94,28 @@ def sandbox_deny():
     tools_cfg = [home + "/.ssh/**", home + "/.netrc", home + "/.config/gh/**", home + "/.config/glab-cli/**"]       # ~/.ssh/** (C9b): Include targets, config.d, keys too
     # the user's git config: git-push.sh / git-rename.sh run git unsandboxed and trust it (scripts/git_safe.py), so a sandboxed Bash must not write it
     # C9b: the Claude Code settings (hooks, permissions, sandbox) - changed only by this installer, run by the user unsandboxed
-    return [r + "/sessions", r + "/*/closed", r + "/*/guard.json", r + "/*/delivery.log", r + "/*/approvals", r + "/starts"] + git_cfg + tools_cfg + [home + "/.claude/settings*"]
+    return [r + "/" + p for p, _ in dtcore.PROTECTED_STATE] + git_cfg + tools_cfg + [home + "/.claude/settings*"]
+
+
+# C11a: user-level file-tool rules (probe tool_* cases, Claude Code 2.1.311): an Edit(...) rule covers the Write tool too (a Write(...) allow does not), the
+# sandbox denyWrite does not reach the file tools, //<abs> is an absolute path. Read: the skill and the whole state root; Edit: tickets/ and evidence/ only,
+# minus the push record (verify-record.sh writes it through Bash, scripts/verify_record.py) and the protected state. `root` / `skill` are for the probe.
+VERIFY_RECORD = ("verify.json", ".verify.json.tmp")
+
+
+def file_allow(root=None, skill=SKILL):
+    r = "/" + (root or state_root())
+    return ["Read(/%s/**)" % skill, "Read(%s/**)" % r, "Edit(%s/*/tickets/**)" % r, "Edit(%s/*/evidence/**)" % r]
+
+
+def file_deny(root=None):
+    r = "/" + (root or state_root())
+    return ["Edit(%s/%s%s)" % (r, p, "/**" if d else "") for p, d in dtcore.PROTECTED_STATE] + ["Edit(%s/*/evidence/*/%s)" % (r, n) for n in VERIFY_RECORD]
+
+
+def perm_rules():
+    """The user-level permission rules apply adds, per key."""
+    return (("allow", file_allow()), ("ask", ASK), ("deny", DENY + file_deny()))
 
 
 # Every subcommand is one or the other (a test keeps hooks/dtcore.py INSTALLER_WRITING equal to WRITING_COMMANDS): the hook blocks a Claude call of a
@@ -151,7 +174,7 @@ def desired(cur):
             lst[:] = [h for h in lst if not (ours(h) and os.path.basename(h["command"]) == script)]
             lst.append(want)
     perms = new.setdefault("permissions", {})
-    for key, rules in (("ask", ASK), ("deny", DENY)):
+    for key, rules in perm_rules():
         lst = perms.setdefault(key, [])
         for r in rules:
             if r not in lst:
@@ -180,13 +203,14 @@ def load_manifest():
 
 def build_manifest(cur, old_manifest):
     """What apply adds to `cur` beyond what was already there (so uninstall removes only that)."""
-    m = old_manifest or {"perm_added": {"ask": [], "deny": []}, "perm_keys_created": [],
+    m = old_manifest or {"perm_added": {"allow": [], "ask": [], "deny": []}, "perm_keys_created": [],
                          "permissions_created": False, "hooks_created": False, "events_created": []}
+    m["perm_added"].setdefault("allow", [])          # a manifest from before C11a has no allow rules
     perms = cur.get("permissions")
     if old_manifest is None:
         m["permissions_created"] = perms is None
         m["hooks_created"] = "hooks" not in cur
-    for key, rules in (("ask", ASK), ("deny", DENY)):
+    for key, rules in perm_rules():
         have = (perms or {}).get(key)
         if have is None and key not in m["perm_keys_created"]:
             m["perm_keys_created"].append(key)
@@ -225,7 +249,7 @@ def removed(cur, m):
     if "hooks" in new and not new["hooks"] and (m is None or m["hooks_created"]):
         del new["hooks"]
     perms = new.get("permissions", {})
-    for key, rules in (("ask", ASK), ("deny", DENY)):
+    for key, rules in perm_rules():
         drop = rules if m is None else m["perm_added"].get(key, [])
         if key in perms:
             perms[key] = [r for r in perms[key] if r not in drop]
@@ -277,7 +301,7 @@ def problems(cur):
                 if ours(h) and os.path.basename(h["command"]) in RETIRED_USER:
                     out.append("retired: %s %s must not be registered at user level (project level only); run apply" % (ev, os.path.basename(h["command"])))
     perms = cur.get("permissions", {})
-    for key, rules in (("ask", ASK), ("deny", DENY)):
+    for key, rules in perm_rules():
         for r in rules:
             if r not in perms.get(key, []):
                 out.append("missing permission %s: %s" % (key, r))
@@ -295,7 +319,7 @@ def cmd_status():
     p = problems(load())
     if not p:
         print("ok: all %d hooks and %d permission rules registered, sandbox.allowUnsandboxedCommands false and %d denyWrite entries, in %s"
-              % (len(HOOK_SPECS), len(ASK) + len(DENY), len(sandbox_deny()), SETTINGS))
+              % (len(HOOK_SPECS), sum(len(r) for _, r in perm_rules()), len(sandbox_deny()), SETTINGS))
         return 0
     print("not installed in %s:" % SETTINGS)
     for x in p:
@@ -814,7 +838,7 @@ def cmd_selftest(args=()):
         good = bool(found) and "timeout" in found[0] and (found[0].get("onFailure") == "block") == block \
             and os.access(found[0]["command"], os.X_OK)
         check(good, "registered with timeout%s: %s %s" % (" + onFailure block" if block else "", ev, script))
-    for key, rules in (("ask", ASK), ("deny", DENY)):
+    for key, rules in perm_rules():
         for r in rules:
             check(r in cur.get("permissions", {}).get(key, []), "permission %s %s" % (key, r))
     retired = [p for p in problems(cur) if p.startswith("retired")]

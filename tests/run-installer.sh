@@ -117,6 +117,57 @@ DT_SETTINGS="$D/sb2.json" "$SK/scripts/install-hooks.sh" apply --confirmed >/dev
 python3 -I -c "import json,sys; d=json.load(open(sys.argv[1])); assert d['sandbox']['allowUnsandboxedCommands'] is False and len(d['sandbox']['filesystem']['denyWrite'])>=6" "$D/sb2.json" && echo "ok sandbox block created" || { fail=1; echo "FAIL sandbox block not created"; }
 DT_SETTINGS="$D/sb2.json" "$SK/scripts/install-hooks.sh" uninstall --confirmed >/dev/null 2>&1
 cmp -s "$D/sb2-orig.json" "$D/sb2.json" && echo "ok byte-identical after uninstall (no sandbox keys before)" || { fail=1; echo "FAIL not restored (no sandbox keys before)"; }
+# --- C11a: user-level file-tool rules: Read the skill and the state root, Edit tickets/ and evidence/; Edit denied on the protected state and the push record
+printf '{\n  "theme": "dark",\n  "permissions": {\n    "allow": [\n      "Bash(ls:*)"\n    ],\n    "deny": [\n      "Read(./secret)"\n    ]\n  }\n}\n' > "$D/ft.json"; cp "$D/ft.json" "$D/ft-orig.json"
+DT_SETTINGS="$D/ft.json" "$SK/scripts/install-hooks.sh" apply --confirmed >/dev/null 2>&1 && echo "ok apply with own allow / deny rules" || { fail=1; echo "FAIL apply with own allow / deny rules"; }
+python3 -I - "$D/ft.json" "$DELIVER_TICKET_HOME" "$SK" <<'PY' && echo "ok file-tool allow and deny rules after apply" || { fail=1; echo "FAIL file-tool rules after apply"; }
+import json, os, sys
+p = json.load(open(sys.argv[1]))["permissions"]; r = "/" + os.path.realpath(sys.argv[2]); sk = "/" + os.path.realpath(sys.argv[3])
+assert p["allow"] == ["Bash(ls:*)", "Read(%s/**)" % sk, "Read(%s/**)" % r, "Edit(%s/*/tickets/**)" % r, "Edit(%s/*/evidence/**)" % r], p["allow"]
+for x in ("sessions/**", "starts/**", "*/closed/**", "*/approvals/**", "*/delivery.log", "*/guard.json", "*/evidence/*/verify.json", "*/evidence/*/.verify.json.tmp"):
+    assert "Edit(%s/%s)" % (r, x) in p["deny"], (x, p["deny"])
+assert "Read(./secret)" in p["deny"] and not [x for k in p for x in p[k] if x.startswith("Write(")], p      # Edit rules cover Write (probe tool_write_rule_of_its_own)
+PY
+DT_SETTINGS="$D/ft.json" "$SK/scripts/install-hooks.sh" status >/dev/null 2>&1 && echo "ok status with file-tool rules" || { fail=1; echo "FAIL status with file-tool rules"; }
+python3 -I - "$D/ft.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1])); d["permissions"]["deny"] = [x for x in d["permissions"]["deny"] if not x.endswith("/*/delivery.log)")]
+json.dump(d, open(sys.argv[1], "w"), indent=2)
+PY
+DT_SETTINGS="$D/ft.json" "$SK/scripts/install-hooks.sh" status 2>&1 | grep -q 'missing permission deny: Edit(//.*/\*/delivery.log)' && echo "ok status flags a missing file-tool deny rule" || { fail=1; echo "FAIL status misses a file-tool deny rule"; }
+DT_SETTINGS="$D/ft.json" "$SK/scripts/install-hooks.sh" apply --confirmed >/dev/null 2>&1
+DT_SETTINGS="$D/ft.json" "$SK/scripts/install-hooks.sh" uninstall --confirmed >/dev/null 2>&1
+cmp -s "$D/ft-orig.json" "$D/ft.json" && echo "ok byte-identical after uninstall (own allow / deny rules kept)" || { fail=1; echo "FAIL not restored (own allow / deny rules)"; }
+# an install from before C11a (manifest without allow rules, no allow key in the file): apply adds them, uninstall removes them and the allow key it created
+cp "$D/sb2-orig.json" "$D/old.json"
+DT_SETTINGS="$D/old.json" "$SK/scripts/install-hooks.sh" apply --confirmed >/dev/null 2>&1
+python3 -I - "$D/old.json" "$D/old.json.deliver-ticket-manifest.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1])); del d["permissions"]["allow"]; json.dump(d, open(sys.argv[1], "w"), indent=2)
+m = json.load(open(sys.argv[2])); del m["perm_added"]["allow"]; m["perm_keys_created"].remove("allow"); json.dump(m, open(sys.argv[2], "w"), indent=2)
+PY
+DT_SETTINGS="$D/old.json" "$SK/scripts/install-hooks.sh" status 2>&1 | grep -q 'missing permission allow: Read(//' && echo "ok status flags a pre-C11a install" || { fail=1; echo "FAIL status misses the allow rules of a pre-C11a install"; }
+DT_SETTINGS="$D/old.json" "$SK/scripts/install-hooks.sh" apply --confirmed >/dev/null 2>&1 && DT_SETTINGS="$D/old.json" "$SK/scripts/install-hooks.sh" status >/dev/null 2>&1 \
+  && echo "ok apply over a pre-C11a manifest" || { fail=1; echo "FAIL apply over a pre-C11a manifest"; }
+DT_SETTINGS="$D/old.json" "$SK/scripts/install-hooks.sh" uninstall --confirmed >/dev/null 2>&1
+cmp -s "$D/sb2-orig.json" "$D/old.json" && echo "ok byte-identical after uninstall (pre-C11a manifest)" || { fail=1; echo "FAIL not restored (pre-C11a manifest)"; }
+# one list of the protected state: every PROTECTED_STATE entry is protected by the hooks; sandbox denyWrite and the Edit deny rules come from it; the push record names
+python3 -I - "$SK" "$DELIVER_TICKET_HOME" <<'PY' && echo "ok PROTECTED_STATE = protected_state, the installer derives from it, VERIFY_RECORD = verify_record.py" || { fail=1; echo "FAIL protected-state list"; }
+import os, sys
+sk, root = sys.argv[1], os.path.realpath(sys.argv[2])
+os.environ.update(DT_SETTINGS="/nonexistent", DT_HOME=root, DELIVER_TICKET_HOME=root)
+sys.path.insert(0, sk + "/scripts")
+import install_hooks as ih
+dt = ih.dtcore
+for p, isdir in dt.PROTECTED_STATE:
+    path = root + "/" + p.replace("*", "proj-0123abcd")
+    assert dt.protected_state(path) and (not isdir or dt.protected_state(path + "/x")), p
+assert not dt.protected_state(root + "/proj-0123abcd/evidence/T1/verify.json") and not dt.protected_state(root + "/proj-0123abcd/tickets/T1.md")
+assert ih.sandbox_deny()[:len(dt.PROTECTED_STATE)] == [root + "/" + p for p, _ in dt.PROTECTED_STATE]
+assert len(ih.file_deny()) == len(dt.PROTECTED_STATE) + len(ih.VERIFY_RECORD)
+src = open(sk + "/scripts/verify_record.py").read()
+assert all('"%s"' % n in src for n in ih.VERIFY_RECORD), ih.VERIFY_RECORD
+PY
 unset DELIVER_TICKET_HOME
 # the user's own global gitignore must not decide these cases: isolate git's global/system config and XDG ignore
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null XDG_CONFIG_HOME="$D/xdg"

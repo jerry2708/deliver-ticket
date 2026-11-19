@@ -468,6 +468,11 @@ def session_bound(payload, g, cwd):
     return None
 
 
+# The protected state under the state root, relative; True = a dir (everything below it too). protected_state() is the check; install_hooks.py derives the
+# user-level sandbox denyWrite and the Edit deny rules from this list (tests/run-installer.sh asserts that each entry satisfies protected_state).
+PROTECTED_STATE = (("sessions", True), ("*/closed", True), ("*/guard.json", False), ("*/delivery.log", False), ("*/approvals", True), ("starts", True))
+
+
 def protected_state(rp):
     """Written only by the bind hook and the skill's own scripts, in every session (guard.json: scripts/guard-write.sh)."""
     if under(rp, os.path.join(DT_HOME, "sessions")) or under(rp, os.path.join(DT_HOME, "starts")):       # starts/: the SessionStart start-dir records (hooks/session-record.sh)

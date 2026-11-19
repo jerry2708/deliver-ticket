@@ -170,8 +170,10 @@ def settings_for(c, case):
     d = ih.sandbox_desired({}, sets, adds, m)
     sb = d["sandbox"]
     sb["allowUnsandboxedCommands"] = False
-    # extend, not replace: sandbox_plan has its own project denyWrite (C9b settings files); [6:] = everything after the state entries (git / ssh / gh / glab config, ~/.claude/settings*)
-    sb.setdefault("filesystem", {}).setdefault("denyWrite", []).extend([c.ST + "/sessions", c.ST + "/*/closed", c.ST + "/*/guard.json", c.ST + "/*/delivery.log", c.ST + "/*/approvals", c.ST + "/starts"] + ih.sandbox_deny()[6:])
+    # extend, not replace: sandbox_plan has its own project denyWrite (C9b settings files); the state entries for the fixture root, then everything after them in
+    # sandbox_deny() (git / ssh / gh / glab config, ~/.claude/settings*)
+    ps = ih.dtcore.PROTECTED_STATE
+    sb.setdefault("filesystem", {}).setdefault("denyWrite", []).extend([c.ST + "/" + p for p, _ in ps] + ih.sandbox_deny()[len(ps):])
     d.setdefault("permissions", {}).setdefault("ask", []).extend(ih.ASK)
     for kind, rules in sorted(case.get("rules", {}).items()):
         d["permissions"].setdefault(kind, []).extend(c.fmt(r) for r in rules)
@@ -235,8 +237,9 @@ def m_noask_off(c, d):
 BOTH = ["default", "auto"]
 NOUSER = "project,local"     # --setting-sources: the verdict must come from the fixture settings (--settings) alone; the real ~/.claude/settings.json (ask rules, hooks) is not loaded
 SID = "--reason probe --session {id} --repo {PROJ}"
-TOOL_ALLOW = ["Read({TST}/**)", "Edit({TST}/*/tickets/**)", "Edit({TST}/*/evidence/**)"]
-TOOL_DENY = ["Edit({TST}/*/evidence/*/verify.json)", "Edit({TST}/*/evidence/*/.verify.json.tmp)", "Edit({TST}/*/approvals/**)", "Edit({TST}/*/guard.json)"]
+# the user-level file-tool rules exactly as install-hooks.sh apply writes them (//<abs>), for the fixture state root and the live skill path
+TOOL_ALLOW = ih.file_allow("{ST}", "{HOME}/.claude/skills/deliver-ticket")
+TOOL_DENY = ih.file_deny("{ST}")
 CASES = [
     # group, id, command, cwd, modes, mutate/options, expectation {kind, contains, disk, info}
     dict(id="auto_allow", cmd="bash {S}/canary.sh auto_allow", expect="ok", disk=[("exists", "{PROJ}/.probe-markers/auto_allow")]),
@@ -341,9 +344,9 @@ CASES = [
     # match; does an Edit allow cover a Write of a new file; does an Edit deny stop a Write; is Write(...) a rule of its own. No hooks: the verdict is the rules.
     # The allow cases are PASS only when the no-rule control prompted in the same run (`needs`). Default mode only (auto mode is not supported, C11d).
     dict(id="tool_write_no_rule_control", tool="Write", cmd="{KD}/evidence/P1/ctl.txt", expect="prompt", disk=[("absent", "{KD}/evidence/P1/ctl.txt")]),
-    dict(id="tool_write_edit_allow_tilde", tool="Write", cmd="{KD}/evidence/P1/t.txt", rules=dict(allow=TOOL_ALLOW), expect="ok", needs="tool_write_no_rule_control",
-         disk=[("exists", "{KD}/evidence/P1/t.txt")]),
-    dict(id="tool_write_edit_allow_abs", tool="Write", cmd="{KD}/evidence/P1/a.txt", rules=dict(allow=[r.replace("{TST}", "{AST}") for r in TOOL_ALLOW]), expect="ok",
+    dict(id="tool_write_edit_allow_tilde", tool="Write", cmd="{KD}/evidence/P1/t.txt", rules=dict(allow=[r.replace("/{ST}", "{TST}") for r in TOOL_ALLOW]), expect="ok",
+         needs="tool_write_no_rule_control", disk=[("exists", "{KD}/evidence/P1/t.txt")]),
+    dict(id="tool_write_edit_allow_abs", tool="Write", cmd="{KD}/evidence/P1/a.txt", rules=dict(allow=TOOL_ALLOW), expect="ok",
          needs="tool_write_no_rule_control", disk=[("exists", "{KD}/evidence/P1/a.txt")]),
     dict(id="tool_write_tickets_allow", tool="Write", cmd="{KD}/tickets/P1.md", rules=dict(allow=TOOL_ALLOW), expect="ok", needs="tool_write_no_rule_control",
          disk=[("exists", "{KD}/tickets/P1.md")]),
@@ -365,8 +368,14 @@ CASES = [
          disk=[("absent", "{KD}/approvals/P1.plan")]),
     dict(id="tool_edit_guard_json_denied", tool="Edit", cmd="{KD}/guard.json", edit=('"project_key"', '"project_kez"'), rules=dict(allow=TOOL_ALLOW, deny=TOOL_DENY),
          expect="denied", disk=[("same", "{KD}/guard.json")]),
+    dict(id="tool_edit_delivery_log_denied", tool="Edit", cmd="{KD}/delivery.log", seed=[("{KD}/delivery.log", "aaa\n")], rules=dict(allow=TOOL_ALLOW, deny=TOOL_DENY),
+         expect="denied", disk=[("same", "{KD}/delivery.log")]),
     dict(id="tool_read_state_control", tool="Read", cmd="{KD}/guard.json", expect="prompt", info=True),
     dict(id="tool_read_state_allow", tool="Read", cmd="{KD}/guard.json", rules=dict(allow=TOOL_ALLOW), expect="ok", contains="project_key"),
+    # 2.1.311, 2026-11-19: reading the skill without a rule prompts (in -p, user settings not loaded; a TUI session with the skill loaded: unverified), so apply allows it
+    dict(id="tool_read_skill_no_rule", tool="Read", cmd="{HOME}/.claude/skills/deliver-ticket/SKILL.md", expect="prompt", info=True),
+    dict(id="tool_read_skill_installer_rule", tool="Read", cmd="{HOME}/.claude/skills/deliver-ticket/SKILL.md", rules=dict(allow=TOOL_ALLOW), expect="ok",
+         contains="deliver-ticket", needs="tool_read_skill_no_rule"),
     dict(id="tool_read_skill_tilde", tool="Read", cmd="{HOME}/.claude/skills/deliver-ticket/SKILL.md", rules=dict(allow=["Read(~/.claude/skills/deliver-ticket/**)"]), expect="ok",
          contains="deliver-ticket"),
 ]]
