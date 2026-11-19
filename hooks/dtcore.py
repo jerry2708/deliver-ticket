@@ -1755,17 +1755,37 @@ def write_targets(a, prog, c):
     return out
 
 
+# C11d: Bash tool parameters that widen the sandbox for one call. Probe bash_allowed_domains_param (Claude Code 2.1.311, 2026-11-18): in auto mode a call with
+# allowed_domains reached a host outside the project allowlist without a prompt. Present with any value (an empty list too) = blocked; dangerouslyDisableSandbox
+# when truthy. Always on in a repo with delivery state (bound or not, also with an unreadable guard.json). On every Claude Code upgrade diff the Bash tool's
+# input parameters (docs/plan.md) and add any new one that widens the sandbox here.
+def sandbox_widening_reason(ti, g):
+    repo = g["repo_root"] if isinstance(g, dict) and isinstance(g.get("repo_root"), str) else "<repo>"
+    inst = os.path.join(SKILL_DIR, "scripts", "install-hooks.sh")
+    add = ("ask the user to add the host to the project allowlist in their own terminal: %s project-sandbox-diff --repo %s --domains <host>, "
+           "then %s project-sandbox-apply --repo %s --domains <host> --confirmed (adds the host, keeps the others); a new session may be needed" % (inst, repo, inst, repo))
+    if "allowed_domains" in ti:
+        return "Bash parameter allowed_domains blocked: no per-call network widening. Run the call without it; if it needs a host, " + add
+    if ti.get("dangerouslyDisableSandbox"):
+        return "Bash parameter dangerouslyDisableSandbox blocked: no per-call sandbox escape. Run the call without it; if it cannot run sandboxed, tell the user why. For a missing host, " + add
+    return None
+
+
 # ---------------------------------------------------------------- modes
 
 def mode_guard(payload, g):
     if payload.get("tool_name") != "Bash":
         return
-    cmd = (payload.get("tool_input") or {}).get("command")
+    ti = payload.get("tool_input") or {}
+    cmd = ti.get("command")
     if not isinstance(cmd, str):
         block("Bash payload without a command string - blocked (fail-closed)")
     cwd = payload.get("cwd") if isinstance(payload.get("cwd"), str) else None
     if "DELIVER_TICKET_SELFTEST" in cmd:
         block("self-test marker DELIVER_TICKET_SELFTEST - this block is expected and proves the hooks run")
+    why = sandbox_widening_reason(ti, g)
+    if why:
+        block(why)
     try:
         cmds = analyze(cmd, cwd)
     except ParseError as e:

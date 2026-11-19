@@ -406,6 +406,26 @@ wsid 2 u1 "$R" Write "{\"file_path\":\"$HOME/.claude/settings.json\"}"
 for c in 'cat .env.local' 'git push -f mirror main' 'git push origin main' 'git push' 'git commit --no-verify -m x' 'git -c core.hooksPath=/dev/null commit -m x' \
   'git merge feat-T1' 'glab mr merge 5' 'grep -r foo sr' 'echo DELIVER_TICKET_SELFTEST'; do tsid 2 guard.sh u1 "$R" "$c"; done
 tsid 2 verify-on-push.sh u1 "$W" 'git push mirror feat-T1'
+echo "## C11d: Bash tool parameters that widen the sandbox for one call are blocked in every session (open ticket s1, none u1); the same call without them runs"
+# bx <expect-rc> <sid> <cwd> <tool_input json> [text the block message must hold]
+bx() { local exp=$1 sid=$2 cwd=$3 ti=$4 want=${5:-} out rc
+  out=$(jq -nc --arg cwd "$cwd" --arg sid "$sid" --argjson ti "$ti" '{session_id:$sid,cwd:$cwd,hook_event_name:"PreToolUse",tool_name:"Bash",tool_input:$ti}' | "$SK/hooks/guard.sh" 2>&1); rc=$?
+  if [ "$rc" = "$exp" ] && { [ -z "$want" ] || printf '%s' "$out" | grep -qF -- "$want"; }; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL bx rc=$rc want=$exp sid=$sid $ti"; echo "   $out" | head -2; fi; }
+for sid in s1 u1; do
+  for cwd in "$W" "$R"; do
+    bx 2 $sid "$cwd" '{"command":"curl -sS https://example.com","allowed_domains":["example.com"]}' "no per-call network widening"
+    bx 2 $sid "$cwd" '{"command":"ls","allowed_domains":[]}'                         # any value, an empty list too
+    bx 2 $sid "$cwd" '{"command":"ls","allowed_domains":null}'
+    bx 2 $sid "$cwd" '{"command":"ls","dangerouslyDisableSandbox":true}' "no per-call sandbox escape"
+    bx 2 $sid "$cwd" '{"command":"ls","dangerouslyDisableSandbox":"true"}'
+    bx 2 $sid "$cwd" "{\"command\":\"$SK/scripts/session-map.sh show T1 --session $sid --repo $R\",\"dangerouslyDisableSandbox\":true}"   # skill scripts too
+    bx 0 $sid "$cwd" '{"command":"ls","dangerouslyDisableSandbox":false}'
+    bx 0 $sid "$cwd" '{"command":"curl -sS https://example.com","description":"x","timeout":1000,"run_in_background":false}'
+  done
+done
+bx 2 u1 "$R" '{"command":"ls","allowed_domains":["a.example"]}' "install-hooks.sh project-sandbox-apply --repo $R --domains <host> --confirmed"
+nsc11d=$S/nostate-c11d; mkdir -p "$nsc11d" && git -C "$nsc11d" init -q -b main
+bx 0 u1 "$nsc11d" '{"command":"ls","allowed_domains":["example.com"]}'                # scope: repos with delivery state only, like the other always-on rules
 echo "## bind hook (UserPromptSubmit): maps /deliver-ticket <token> to the session"
 nostate=$S/nostate; mkdir -p "$nostate" && git -C "$nostate" init -q -b main
 bind nb1 "$R" '/deliver-ticket WL-05 add a wishlist thing'; grep -qx 'ticket=WL-05' "$DT/sessions/nb1" && grep -qx "project=$key" "$DT/sessions/nb1" && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL bind: map for WL-05"; }
@@ -864,6 +884,7 @@ echo '{broken' > "$DELIVER_TICKET_HOME/$key/guard.json"
 t 2 guard.sh "$W" 'ls'
 tsid 2 guard.sh u1 "$R" 'ls'                                  # an unbound session is fail-closed too
 t 0 guard.sh "$W" "python3 $SK/scripts/validate-guard.py $DELIVER_TICKET_HOME/$key/guard.json"
+bx 2 s1 "$W" "{\"command\":\"python3 $SK/scripts/validate-guard.py $DELIVER_TICKET_HOME/$key/guard.json\",\"allowed_domains\":[\"x.example\"]}" "--repo <repo>"   # C11d holds with guard.json broken
 w 2 Write "{\"file_path\":\"$W/a\"}"
 w 2 Write "{\"file_path\":\"$DELIVER_TICKET_HOME/$key/guard.json\"}"              # B1: protected even when it is broken; the repair is scripts/guard-write.sh
 w 0 Write "{\"file_path\":\"$DELIVER_TICKET_HOME/$key/guard.candidate.json\"}"

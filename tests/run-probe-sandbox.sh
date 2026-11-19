@@ -84,15 +84,17 @@ eq "$(run 4 FAKE_REWRITE=auto_allow)" 4 "rewritten command exits 4"
 grep -q '| auto_allow | default | INCONCLUSIVE | command rewritten' "$S/out4.txt" && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL rewritten row"; }
 eq "$(run 5 FAKE_SKIP=evidence_writable)" 4 "skipped call exits 4"
 eq "$(run 6 FAKE_FLIP=deny_guard_json FAKE_REWRITE=auto_allow)" 1 "FAIL beats INCONCLUSIVE"
-echo "# C11d: a call without the asked tool parameter proves nothing (INCONCLUSIVE); the parameter widening the network (ok) is a FAIL"
+echo "# C11d: a call without the asked tool parameter proves nothing (INCONCLUSIVE); the parameter widening the network past the hook (ok) is a FAIL"
 eq "$(run 12 FAKE_DROPPARAM=bash_allowed_domains_param)" 4 "dropped parameter exits 4"
 has "$(grep '| bash_allowed_domains_param | default |' "$S/out12.txt")" "INCONCLUSIVE | parameter allowed_domains missing" "dropped parameter row"
 eq "$(run 13 FAKE_FLIP=bash_allowed_domains_param)" 1 "allowed_domains widening the network is a FAIL"
-has "$(grep '| bash_allowed_domains_param | default |' "$S/out13.txt")" "got ok, want prompt/denied/net" "hole row names every accepted verdict"
+has "$(grep '| bash_allowed_domains_param | default |' "$S/out13.txt")" "got ok, want hook" "hole row"
 has "$(cat "$S/r1/raw/bash_allowed_domains_param-default.json")" '"allowed_domains"' "raw file keeps the tool parameters"
+eq "$(run 16 FAKE_FLIP=bash_disable_sandbox_param)" 1 "dangerouslyDisableSandbox past the hook is a FAIL"
+has "$(cat "$S/r16/settings-bash_disable_sandbox_param-auto.json")" "$SK/hooks/guard.sh" "hooks=True registers this checkout's guard.sh"
 echo "# C11d: the param case is PASS only when its positive control reached example.com in the same run and mode"
 eq "$(run 14 FAKE_FLIP=bash_allowed_domains_control)" 1 "control not reaching the site exits 1 (the control row FAILs)"
-has "$(grep '| bash_allowed_domains_param | default |' "$S/out14.txt")" "INCONCLUSIVE | prompt, but control bash_allowed_domains_control is FAIL in this run" "param row after a failed control"
+has "$(grep '| bash_allowed_domains_param | default |' "$S/out14.txt")" "INCONCLUSIVE | hook, but control bash_allowed_domains_control is FAIL in this run" "param row after a failed control"
 env FAKE_RUN_S="$S/r15" FAKE_RUN_OUT="$S/ro15" FAKE_DUMP_S="$S/d0" FAKE_DUMP_OUT="$S/o0" $PS "$S/r15" --outside "$S/ro15" --claude "$S/fake-claude" --only bash_allowed_domains_param > "$S/out15.txt" 2>&1
 eq "$?" 4 "param case without its control exits 4"
 has "$(grep '| bash_allowed_domains_param | auto |' "$S/out15.txt")" "control bash_allowed_domains_control is not run in this run" "param row without its control"
@@ -108,7 +110,7 @@ mkdir -p "$S/r10" && touch "$S/r10/x"; $PS "$S/r10" --outside "$S/ro10" --claude
 echo "# the case table covers what the design relies on"
 for id in auto_allow rename_key_dir excluded_script_after_cd excluded_chained_to_unlisted settings_local_by_bash localhost_client_with_binding localhost_listen_without_binding \
   git_rename_script_excluded git_push_script_refuses_options gate_script_asks gate_script_no_ask_rule_control gh_unlisted_sandboxed installer_apply_blocked allowwrite_glob_unsupported \
-  bash_allowed_domains_param bash_allowed_domains_control; do
+  bash_allowed_domains_param bash_allowed_domains_control bash_disable_sandbox_param; do
   grep -q "\"id\": \"$id\"" "$S/table.json" && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL case $id missing from the probe"; }
 done
 echo "pass=$pass fail=$fail"; [ $fail = 0 ]
