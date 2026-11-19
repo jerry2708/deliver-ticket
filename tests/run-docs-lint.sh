@@ -38,6 +38,11 @@ for good in '`<skill dir>/scripts/ticket-state.sh done|cancelled <ID>`' '`claude
   python3 tests/lint_script_calls.py --text "$good" >/dev/null; ok $? "lint must accept (C11a): $good"; done
 has SKILL.md 'One script per Bash call'
 has stages/0-environment.md 'Each command below is its own Bash call'
+has stages/3-build.md 'Code edits with the Edit / Write tools'
+has stages/3-build.md 'only after the plan is approved, only on files inside the ticket worktree'
+has stages/3-build.md 'shasum -a 256'
+has stages/3-build.md '`CLAUDE.md`, `CLAUDE.local.md`, `AGENTS.md`, `GEMINI.md`, `.cursorrules`, `.npmrc`'
+has stages/3-build.md '`.vscode/` or `.github/`'
 for good in 'run `<skill dir>/scripts/ticket-state.sh done T1`' '`<skill dir>/scripts/session-map.sh show`' '`<skill dir>/scripts/guard-write.sh diff`' 'git -C <wt> status' '`git branch -m a b`' 'from the worktree directory: `git push <remote> <branch>`' 'cd <wt>, then (second call) git push mirror x'; do python3 tests/lint_script_calls.py --text "$good" >/dev/null; ok $? "lint must accept: $good"; done
 echo "# skill files are read with absolute paths (backlog item 2)"
 hasnt "$FILES" 'cd [^;&|]*deliver-ticket[^;&|]*&&[^;&|]*\(cat\|head\|sed\)'

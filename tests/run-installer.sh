@@ -200,6 +200,57 @@ grep -q '"baseRef": "head"' "$R/.claude/settings.local.json" && grep -q 'Bash(ls
 "$SK/scripts/install-hooks.sh" project-uninstall --repo "$R" --confirmed >/dev/null 2>&1 && echo "ok project-uninstall" || { fail=1; echo "FAIL project-uninstall"; }
 python3 -I -c 'import json,sys; sys.exit(0 if json.load(open(sys.argv[1]))==json.load(open(sys.argv[2])) else 1)' "$R/.claude/settings.local.json" "$D/proj-orig.json" && echo "ok project settings restored (semantically identical)" || { fail=1; echo "FAIL project settings not restored"; }
 "$SK/scripts/install-hooks.sh" project-status --repo "$R" >/dev/null 2>&1 && { fail=1; echo "FAIL project-status says installed after uninstall"; } || echo "ok project-status: not installed"
+# --- C11b: project-apply also adds the worktree Edit allow and the ask rules (_base, per worktree .claude/**, .git, .git/**, .mcp.json, .husky/**)
+R11="$D/proj11"; mkdir -p "$R11/.claude" && git -C "$R11" init -q -b main && printf '.claude/settings.local.json\n' > "$R11/.gitignore"
+key11=$(bash -c ". \"$SK/hooks/lib.sh\"; dt_key \"$R11\""); ST11="$DELIVER_TICKET_HOME/$key11"; mkdir -p "$ST11"; printf '{"version":1}\n' > "$ST11/guard.json"
+printf '{\n  "permissions": {\n    "ask": [\n      "Bash(x)"\n    ]\n  }\n}\n' > "$R11/.claude/settings.local.json"; cp "$R11/.claude/settings.local.json" "$D/proj11-orig.json"
+"$SK/scripts/install-hooks.sh" project-diff --repo "$R11" 2>&1 | grep -q 'Edit(//.*/.claude/worktrees/\*\*)' && echo "ok project-diff shows the worktree Edit allow" || { fail=1; echo "FAIL project-diff misses the worktree Edit allow"; }
+"$SK/scripts/install-hooks.sh" project-apply --repo "$R11" --confirmed >/dev/null 2>&1 && echo "ok project-apply with worktree rules" || { fail=1; echo "FAIL project-apply with worktree rules"; }
+python3 -I - "$R11/.claude/settings.local.json" "$R11" <<'PY' && echo "ok worktree Edit allow + ask rules (exact)" || { fail=1; echo "FAIL worktree rules"; }
+import json, os, sys
+p = json.load(open(sys.argv[1]))["permissions"]; w = "/" + os.path.realpath(sys.argv[2]) + "/.claude/worktrees"
+assert p["allow"] == ["Edit(%s/**)" % w], p
+assert p["ask"] == (["Bash(x)", "Edit(%s/_base/**)" % w] + ["Edit(%s/*/%s)" % (w, x) for x in (".claude/**", ".git", ".git/**", ".mcp.json", ".husky/**", ".vscode/**", ".github/**", ".gitmodules")] +
+                    ["Edit(%s/*/**/%s)" % (w, x) for x in ("CLAUDE.md", "CLAUDE.local.md", "AGENTS.md", "GEMINI.md", ".cursorrules", ".npmrc")]), p["ask"]
+assert not [r for k in p for r in p[k] if r.startswith("Write(")], p
+PY
+python3 -I - "$R11/.claude/settings.local.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1])); d["permissions"]["ask"] = [r for r in d["permissions"]["ask"] if not r.endswith("/.mcp.json)")]
+json.dump(d, open(sys.argv[1], "w"), indent=2)
+PY
+"$SK/scripts/install-hooks.sh" project-status --repo "$R11" 2>&1 | grep -q 'missing permission ask: Edit(//.*/\*/.mcp.json)' && echo "ok project-status flags a missing worktree ask rule" || { fail=1; echo "FAIL project-status misses a worktree ask rule"; }
+"$SK/scripts/install-hooks.sh" project-apply --repo "$R11" --confirmed >/dev/null 2>&1 && "$SK/scripts/install-hooks.sh" project-status --repo "$R11" >/dev/null 2>&1 && echo "ok project-apply re-adds it" || { fail=1; echo "FAIL project-apply re-add"; }
+# the sandbox block in the same file keeps its own allow / ask rules: project-uninstall removes only ours, project-sandbox-off then restores the file
+DT_SETTINGS="$D/user-sb11.json" "$SK/scripts/install-hooks.sh" apply --confirmed >/dev/null 2>&1
+DT_SETTINGS="$D/user-sb11.json" "$SK/scripts/install-hooks.sh" project-sandbox-apply --repo "$R11" --confirmed >/dev/null 2>&1 && echo "ok sandbox-apply next to the worktree rules" || { fail=1; echo "FAIL sandbox-apply next to the worktree rules"; }
+"$SK/scripts/install-hooks.sh" project-uninstall --repo "$R11" --confirmed >/dev/null 2>&1
+python3 -I - "$R11/.claude/settings.local.json" <<'PY' && echo "ok project-uninstall keeps the sandbox rules, removes the worktree rules" || { fail=1; echo "FAIL project-uninstall vs sandbox rules"; }
+import json, sys
+p = json.load(open(sys.argv[1]))["permissions"]
+assert not [r for k in p for r in p[k] if "/.claude/worktrees" in r], p
+assert any("session-map.sh" in r for r in p["allow"]) and any("guard-apply.sh" in r for r in p["ask"]) and "Bash(x)" in p["ask"], p
+PY
+DT_SETTINGS="$D/user-sb11.json" "$SK/scripts/install-hooks.sh" project-sandbox-off --repo "$R11" --confirmed >/dev/null 2>&1
+# known limit (C11b): in this order the allow list that project-apply created still held the sandbox rules at project-uninstall, and sandbox-off did not create
+# it, so an empty "allow": [] stays (harmless). Pinned here so a change shows; the other order restores exactly (below).
+python3 -I -c 'import json,sys; a=json.load(open(sys.argv[1])); b=json.load(open(sys.argv[2])); b["permissions"]["allow"]=[]; sys.exit(0 if a==b else 1)' "$R11/.claude/settings.local.json" "$D/proj11-orig.json" && echo "ok project-uninstall then sandbox-off: original plus an empty allow list (known limit)" || { fail=1; echo "FAIL project-uninstall then sandbox-off: $(tr -d ' \n' < "$R11/.claude/settings.local.json" | head -c 300)"; }
+cp "$D/proj11-orig.json" "$R11/.claude/settings.local.json"
+"$SK/scripts/install-hooks.sh" project-apply --repo "$R11" --confirmed >/dev/null 2>&1
+DT_SETTINGS="$D/user-sb11.json" "$SK/scripts/install-hooks.sh" project-sandbox-apply --repo "$R11" --confirmed >/dev/null 2>&1
+DT_SETTINGS="$D/user-sb11.json" "$SK/scripts/install-hooks.sh" project-sandbox-off --repo "$R11" --confirmed >/dev/null 2>&1
+"$SK/scripts/install-hooks.sh" project-uninstall --repo "$R11" --confirmed >/dev/null 2>&1
+python3 -I -c 'import json,sys; sys.exit(0 if json.load(open(sys.argv[1]))==json.load(open(sys.argv[2])) else 1)' "$R11/.claude/settings.local.json" "$D/proj11-orig.json" && echo "ok sandbox-off then project-uninstall restores the original" || { fail=1; echo "FAIL not restored after sandbox-off + project-uninstall"; }
+# a manifest from before C11b (no rules recorded): status flags the missing rules, apply adds and records them, uninstall restores
+"$SK/scripts/install-hooks.sh" project-apply --repo "$R11" --confirmed >/dev/null 2>&1
+python3 -I - "$R11/.claude/settings.local.json" "$ST11/worktree-hook-manifest.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1])); d["permissions"]["ask"] = ["Bash(x)"]; del d["permissions"]["allow"]; json.dump(d, open(sys.argv[1], "w"), indent=2)
+m = json.load(open(sys.argv[2])); [m.pop(k) for k in ("perm_added", "perm_keys_created", "permissions_created")]; json.dump(m, open(sys.argv[2], "w"), indent=2)
+PY
+"$SK/scripts/install-hooks.sh" project-status --repo "$R11" 2>&1 | grep -q 'missing permission allow: Edit(//' && echo "ok project-status flags a pre-C11b install" || { fail=1; echo "FAIL project-status misses a pre-C11b install"; }
+"$SK/scripts/install-hooks.sh" project-apply --repo "$R11" --confirmed >/dev/null 2>&1 && "$SK/scripts/install-hooks.sh" project-uninstall --repo "$R11" --confirmed >/dev/null 2>&1
+python3 -I -c 'import json,sys; sys.exit(0 if json.load(open(sys.argv[1]))==json.load(open(sys.argv[2])) else 1)' "$R11/.claude/settings.local.json" "$D/proj11-orig.json" && echo "ok restored after a pre-C11b manifest" || { fail=1; echo "FAIL not restored after a pre-C11b manifest"; }
 # an earlier version registered only WorktreeCreate: status reports the missing bind hook, apply completes it
 R5="$D/proj5"; mkdir -p "$R5/.claude" && git -C "$R5" init -q -b main && printf '.claude/settings.local.json\n' > "$R5/.gitignore"
 key5=$(bash -c ". \"$SK/hooks/lib.sh\"; dt_key \"$R5\""); mkdir -p "$DELIVER_TICKET_HOME/$key5"; printf '{"version":1}\n' > "$DELIVER_TICKET_HOME/$key5/guard.json"

@@ -463,8 +463,25 @@ def project_load(path):
     return d
 
 
-def project_desired(cur):
+# C11b: code edits in a ticket worktree need no prompt (the plan lock and the other hooks still decide), but an ask rule (ask beats allow) keeps a prompt on the
+# shared base worktree (stage 4, base-worktree.sh) and, per worktree, on what configures Claude Code, git, MCP servers, git hooks, the editor, CI or submodules, and on agent
+# instruction files and npm config at any depth (`*` = one path segment, probe tool_wt_star_one_segment).
+WT_ASK = (".claude/**", ".git", ".git/**", ".mcp.json", ".husky/**", ".vscode/**", ".github/**", ".gitmodules")      # .github: CI runs with repo secrets on push
+WT_ASK_ANY_DEPTH = ("CLAUDE.md", "CLAUDE.local.md", "AGENTS.md", "GEMINI.md", ".cursorrules", ".npmrc")
+
+
+def project_rules(repo):
+    wt = "/" + os.path.join(repo, ".claude", "worktrees")
+    return (("allow", ["Edit(%s/**)" % wt]), ("ask", ["Edit(%s/_base/**)" % wt] + ["Edit(%s/*/%s)" % (wt, p) for p in WT_ASK] +
+                                                   ["Edit(%s/*/**/%s)" % (wt, n) for n in WT_ASK_ANY_DEPTH]))
+
+
+def project_desired(cur, repo):
     new = copy.deepcopy(cur)
+    perms = new.setdefault("permissions", {})
+    for key, rules in project_rules(repo):
+        lst = perms.setdefault(key, [])
+        lst += [r for r in rules if r not in lst]
     hooks = new.setdefault("hooks", {})
     for ev, matcher, script, timeout, block in PROJECT_SPECS:
         groups = hooks.setdefault(ev, [])
@@ -478,7 +495,7 @@ def project_desired(cur):
     return new
 
 
-def project_problems(cur):
+def project_problems(cur, repo):
     out = []
     for ev, matcher, script, timeout, block in PROJECT_SPECS:
         want = entry(script, timeout, block)
@@ -488,11 +505,23 @@ def project_problems(cur):
             out.append("missing: %s %s" % (ev, script))
         elif found[0] != want or len(found) > 1:
             out.append("differs: %s %s: have %s, want %s" % (ev, script, found, want))
+    perms = cur.get("permissions") if isinstance(cur.get("permissions"), dict) else {}
+    for key, rules in project_rules(repo):
+        out += ["missing permission %s: %s" % (key, r) for r in rules if r not in perms.get(key, [])]
     return out
 
 
-def project_removed(cur, manifest):
+def project_removed(cur, manifest, repo):
     new = copy.deepcopy(cur)
+    perms = new.get("permissions", {})
+    for key, rules in project_rules(repo):
+        drop = rules if manifest is None else manifest.get("perm_added", {}).get(key, [])
+        if key in perms:
+            perms[key] = [r for r in perms[key] if r not in drop]
+            if not perms[key] and (manifest is None or key in manifest.get("perm_keys_created", [])):
+                del perms[key]
+    if "permissions" in new and not new["permissions"] and (manifest is None or manifest.get("permissions_created")):
+        del new["permissions"]
     hooks = new.get("hooks", {})
     for ev in list(hooks):
         for g in hooks[ev]:
@@ -529,11 +558,11 @@ def cmd_project(cmd, args):
     path, state, mpath = project_paths(repo)
     cur = project_load(path)
     if cmd == "project-status":
-        p = project_problems(cur)
-        print("ok: %s registered in %s" % (", ".join(e for e, *_ in PROJECT_SPECS), path) if not p else "not installed in %s:\n  %s" % (path, "\n  ".join(p)))
+        p = project_problems(cur, repo)
+        print("ok: %s and the worktree Edit rules registered in %s" % (", ".join(e for e, *_ in PROJECT_SPECS), path) if not p else "not installed in %s:\n  %s" % (path, "\n  ".join(p)))
         return 1 if p else 0
     if cmd == "project-diff":
-        new = project_desired(cur)
+        new = project_desired(cur, repo)
         if dump(cur) == dump(new) and os.path.exists(path):
             print("no change: already installed"); return 0
         sys.stdout.writelines(difflib.unified_diff((dump(cur) if os.path.exists(path) else "").splitlines(True),
@@ -573,7 +602,7 @@ def cmd_project(cmd, args):
                 print("added %s to %s but git still does not ignore the file; not registering" % (EXCLUDE_LINE, excl), file=sys.stderr)
                 return 3
             print("added %s to %s" % (EXCLUDE_LINE, excl))
-        new = project_desired(cur)
+        new = project_desired(cur, repo)
         if dump(cur) == dump(new) and os.path.exists(path):
             print("already installed, nothing written"); return 0
         bak = project_backup(path, state)
@@ -582,14 +611,23 @@ def cmd_project(cmd, args):
             old_m = json.load(open(mpath))
         except (OSError, ValueError):
             old_m = None
-        events = sorted(set((old_m or {}).get("events_created", [])) |
+        om = old_m or {}
+        events = sorted(set(om.get("events_created", [])) |
                         {ev for ev, *_ in PROJECT_SPECS if ev not in cur.get("hooks", {})})
+        # the rules this apply adds beyond what was there (a manifest from before C11b has none): project-uninstall removes exactly these
+        perms = cur.get("permissions") if isinstance(cur.get("permissions"), dict) else {}
+        added = {k: list(om.get("perm_added", {}).get(k, [])) for k, _ in project_rules(repo)}
+        for k, rules in project_rules(repo):
+            added[k] += [r for r in rules if r not in perms.get(k, []) and r not in added[k]]
+        keys_created = sorted(set(om.get("perm_keys_created", [])) | {k for k, _ in project_rules(repo) if k not in perms})
         with open(mpath, "w") as f:
-            json.dump({"settings_created": (old_m or {}).get("settings_created", not os.path.exists(path)),
-                       "hooks_created": (old_m or {}).get("hooks_created", "hooks" not in cur),
-                       "events_created": events}, f, indent=2)
+            json.dump({"settings_created": om.get("settings_created", not os.path.exists(path)),
+                       "hooks_created": om.get("hooks_created", "hooks" not in cur),
+                       "events_created": events,
+                       "permissions_created": om.get("permissions_created", "permissions" not in cur),
+                       "perm_added": added, "perm_keys_created": keys_created}, f, indent=2)
         project_write(path, dump(new))
-        if project_problems(project_load(path)):
+        if project_problems(project_load(path), repo):
             print("written file does not verify - restore from %s" % bak, file=sys.stderr); return 1
         print("written %s; backup: %s" % (path, bak))
         return 0
@@ -598,7 +636,7 @@ def cmd_project(cmd, args):
             m = json.load(open(mpath))
         except (OSError, ValueError):
             m = None
-        new = project_removed(cur, m)
+        new = project_removed(cur, m, repo)
         if dump(cur) == dump(new):
             print("nothing to remove"); return 0
         if rest != ["--confirmed"]:
@@ -846,8 +884,8 @@ def cmd_selftest(args=()):
     if args:
         rest, repo = parse_repo(list(args))
         path, state, mpath = project_paths(repo)
-        pp = project_problems(project_load(path))
-        check(not pp, "project-level hooks (WorktreeCreate, UserPromptSubmit) registered in %s%s" % (path, "" if not pp else ": " + "; ".join(pp)))
+        pp = project_problems(project_load(path), repo)
+        check(not pp, "project-level hooks (WorktreeCreate, UserPromptSubmit) and worktree Edit rules registered in %s%s" % (path, "" if not pp else ": " + "; ".join(pp)))
 
     base = os.path.join(os.environ.get("TMPDIR", "/tmp"), "deliver-ticket-selftest")  # reused, never deleted
     os.makedirs(base, exist_ok=True)

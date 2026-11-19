@@ -54,7 +54,7 @@ class Ctx:
         home = os.path.realpath(os.path.expanduser("~"))
         # permission-rule spellings of the state root: ~/<rel> and //<abs> (both independent of the settings file's location); TST needs the outside dir under home
         tst = "~/" + os.path.relpath(self.ST, home) if self.ST.startswith(home + "/") else "~/OUTSIDE-NOT-UNDER-HOME"
-        return s.format(HOME=home, TST=tst, AST="/" + self.ST, S=self.S, OUT=self.OUT, PROJ=self.PROJ, ST=self.ST, KD=self.KD, SK=SK, PORT=PORT, WT1=self.PROJ + "/.claude/worktrees/T1",
+        return s.format(HOME=home, TST=tst, AST="/" + self.ST, WT=self.PROJ + "/.claude/worktrees", S=self.S, OUT=self.OUT, PROJ=self.PROJ, ST=self.ST, KD=self.KD, SK=SK, PORT=PORT, WT1=self.PROJ + "/.claude/worktrees/T1",
                         WT2=self.PROJ + "/.claude/worktrees/T2", WT3=self.PROJ + "/.claude/worktrees/T3",
                         F1A=self.S + "/f1-a/.claude/worktrees/F1A", F1B=self.S + "/f1-b/.claude/worktrees/F1B", F1C=self.S + "/f1-c/.claude/worktrees/F1C", F1D=self.S + "/f1-d/.claude/worktrees/F1D")
 
@@ -160,6 +160,27 @@ def make_v1(c):
     open(c.KD + "/guard.json", "w").write(json.dumps(g, indent=1))
 
 
+def make_c11b(c):
+    """C11b fixture: worktree T4 = a registered ticket (tickets/T4.md) with no approval (locked); T5 = the same with its plan approved through approve-plan
+    (the gate script, run here as fixture setup); <worktrees>/_base as a plain dir. Idempotent; never deletes."""
+    sys.path.insert(0, HERE)
+    import plan_lock
+    for t in ("T4", "T5"):
+        wt = c.PROJ + "/.claude/worktrees/" + t
+        if not os.path.isdir(wt):
+            sh("git", "-C", c.PROJ, "worktree", "add", "-q", wt, "-b", "work/" + t.lower())
+        p = c.KD + "/tickets/%s.md" % t
+        if not os.path.exists(p):
+            open(p, "w").write("# %s\n\nstate: active\nworktree: %s\n\n## Plan\n\n1. probe step\n" % (t, wt))
+    os.makedirs(c.PROJ + "/.claude/worktrees/_base", exist_ok=True)
+    if not os.path.exists(c.KD + "/approvals/T5.plan"):
+        h, why = plan_lock.plan_hash(open(c.KD + "/tickets/T5.md").read())
+        r = subprocess.run([os.path.join(HERE, "approve-plan.sh"), "T5", "--sha", h[:12], "--repo", c.PROJ, "--session", "probe-c11b"],
+                           env=dict(os.environ, DELIVER_TICKET_HOME=c.ST), capture_output=True, text=True)
+        if r.returncode != 0:
+            raise SystemExit("probe fixture: approve-plan T5 failed: %s %s" % (why, r.stderr[-300:]))
+
+
 def expand(c, k, s):
     return c.fmt(s.replace("{id}", k["id"]))
 
@@ -177,8 +198,8 @@ def settings_for(c, case):
     d.setdefault("permissions", {}).setdefault("ask", []).extend(ih.ASK)
     for kind, rules in sorted(case.get("rules", {}).items()):
         d["permissions"].setdefault(kind, []).extend(c.fmt(r) for r in rules)
-    if case.get("hooks"):          # this checkout's guard hook, registered the way install-hooks.sh does (not the installed one): the verdict is the code under test
-        d["hooks"] = {"PreToolUse": [{"matcher": "Bash", "hooks": [ih.entry("guard.sh", 10, True)]}]}
+    if case.get("hooks"):          # this checkout's PreToolUse hooks (Bash and Edit / Write), registered the way install-hooks.sh does (not the installed ones)
+        d["hooks"] = {"PreToolUse": [{"matcher": m, "hooks": [ih.entry(s, t, b)]} for ev, m, s, t, b in ih.HOOK_SPECS if ev == "PreToolUse"]}
     mut = case.get("mutate")
     if mut:
         mut(c, d)
@@ -240,6 +261,7 @@ SID = "--reason probe --session {id} --repo {PROJ}"
 # the user-level file-tool rules exactly as install-hooks.sh apply writes them (//<abs>), for the fixture state root and the live skill path
 TOOL_ALLOW = ih.file_allow("{ST}", "{HOME}/.claude/skills/deliver-ticket")
 TOOL_DENY = ih.file_deny("{ST}")
+WT_RULES = dict(ih.project_rules("{PROJ}"))          # C11b: what project-apply writes, for the fixture repo
 CASES = [
     # group, id, command, cwd, modes, mutate/options, expectation {kind, contains, disk, info}
     dict(id="auto_allow", cmd="bash {S}/canary.sh auto_allow", expect="ok", disk=[("exists", "{PROJ}/.probe-markers/auto_allow")]),
@@ -378,7 +400,55 @@ CASES = [
          contains="deliver-ticket", needs="tool_read_skill_no_rule"),
     dict(id="tool_read_skill_tilde", tool="Read", cmd="{HOME}/.claude/skills/deliver-ticket/SKILL.md", rules=dict(allow=["Read(~/.claude/skills/deliver-ticket/**)"]), expect="ok",
          contains="deliver-ticket"),
-]]
+] + [dict(k, setup=make_c11b) for k in [
+    # C11b, rules only (no hooks): project-apply's worktree Edit allow and its ask rules (ask beats allow), exactly as install_hooks.project_rules writes them.
+    # T5 = an approved ticket worktree (the plan lock would not block it anyway; no hooks here).
+    dict(id="tool_wt_no_rule_control", tool="Write", cmd="{WT}/T5/src/c.ts", expect="prompt", disk=[("absent", "{WT}/T5/src/c.ts")]),
+    dict(id="tool_wt_edit_allowed", tool="Write", cmd="{WT}/T5/src/a.ts", rules=WT_RULES, expect="ok", needs="tool_wt_no_rule_control", disk=[("exists", "{WT}/T5/src/a.ts")]),
+    dict(id="tool_wt_claude_settings_asks", tool="Write", cmd="{WT}/T5/.claude/settings.local.json", rules=WT_RULES, expect="prompt",
+         disk=[("absent", "{WT}/T5/.claude/settings.local.json")]),
+    dict(id="tool_wt_claude_hooks_asks", tool="Write", cmd="{WT}/T5/.claude/hooks/x.sh", rules=WT_RULES, expect="prompt", disk=[("absent", "{WT}/T5/.claude/hooks/x.sh")]),
+    dict(id="tool_wt_mcp_asks", tool="Write", cmd="{WT}/T5/.mcp.json", rules=WT_RULES, expect="prompt", disk=[("absent", "{WT}/T5/.mcp.json")]),
+    dict(id="tool_wt_husky_asks", tool="Write", cmd="{WT}/T5/.husky/pre-commit", rules=WT_RULES, expect="prompt", disk=[("absent", "{WT}/T5/.husky/pre-commit")]),
+    dict(id="tool_wt_base_asks", tool="Write", cmd="{WT}/_base/f.txt", rules=WT_RULES, expect="prompt", disk=[("absent", "{WT}/_base/f.txt")]),
+    # `*` in <wt>/*/.mcp.json matches one path segment (2.1.311, 2026-11-19: a nested sub/.mcp.json is not asked); CHANGED here = the ask rules need a review
+    dict(id="tool_wt_star_one_segment", tool="Write", cmd="{WT}/T5/sub/.mcp.json", rules=WT_RULES, expect="ok", info=True),
+    dict(id="tool_wt_git_pointer_asks", tool="Edit", cmd="{WT}/T5/.git", edit=("gitdir:", "gitdir-probe:"), rules=WT_RULES, expect="prompt", disk=[("same", "{WT}/T5/.git")]),
+    dict(id="tool_wt_vscode_asks", tool="Write", cmd="{WT}/T5/.vscode/settings.json", rules=WT_RULES, expect="prompt", disk=[("absent", "{WT}/T5/.vscode/settings.json")]),
+    # agent instruction files and .npmrc at any depth: `<wt>/*/**/<name>`; does `**/` also match zero segments (the worktree root)?
+    dict(id="tool_wt_claude_md_root_asks", tool="Write", cmd="{WT}/T5/CLAUDE.md", rules=WT_RULES, expect="prompt", disk=[("absent", "{WT}/T5/CLAUDE.md")]),
+    dict(id="tool_wt_claude_local_md_root_asks", tool="Write", cmd="{WT}/T5/CLAUDE.local.md", rules=WT_RULES, expect="prompt", disk=[("absent", "{WT}/T5/CLAUDE.local.md")]),
+    dict(id="tool_wt_claude_md_nested_asks", tool="Write", cmd="{WT}/T5/apps/web/CLAUDE.md", rules=WT_RULES, expect="prompt", disk=[("absent", "{WT}/T5/apps/web/CLAUDE.md")]),
+    dict(id="tool_wt_agents_md_nested_asks", tool="Write", cmd="{WT}/T5/apps/agent/AGENTS.md", rules=WT_RULES, expect="prompt", disk=[("absent", "{WT}/T5/apps/agent/AGENTS.md")]),
+    dict(id="tool_wt_npmrc_nested_asks", tool="Write", cmd="{WT}/T5/apps/web/.npmrc", rules=WT_RULES, expect="prompt", disk=[("absent", "{WT}/T5/apps/web/.npmrc")]),
+    dict(id="tool_wt_github_workflow_asks", tool="Write", cmd="{WT}/T5/.github/workflows/ci.yml", rules=WT_RULES, expect="prompt",
+         disk=[("absent", "{WT}/T5/.github/workflows/ci.yml")]),
+    dict(id="tool_wt_gitmodules_asks", tool="Write", cmd="{WT}/T5/.gitmodules", rules=WT_RULES, expect="prompt", disk=[("absent", "{WT}/T5/.gitmodules")]),
+    dict(id="tool_wt_gemini_md_nested_asks", tool="Write", cmd="{WT}/T5/apps/web/GEMINI.md", rules=WT_RULES, expect="prompt", disk=[("absent", "{WT}/T5/apps/web/GEMINI.md")]),
+    dict(id="tool_wt_nested_plain_ok", tool="Write", cmd="{WT}/T5/apps/web/notes.md", rules=WT_RULES, expect="ok", disk=[("exists", "{WT}/T5/apps/web/notes.md")]),  # the ** rules do not over-match
+    # allow rule only, no ask rule: which prompts does Claude Code give by itself? 2.1.311, 2026-11-19: only .claude/settings.local.json (prompt); .mcp.json, .husky/,
+    # _base, CLAUDE.md and the .git pointer went through (ok), so those prompts come from project_rules' ask rules. CHANGED here = re-check the ask list.
+    dict(id="tool_wt_allow_only_claude_settings", tool="Write", cmd="{WT}/T5/.claude/settings.local.json", rules=dict(allow=WT_RULES["allow"]), expect="prompt", info=True),
+    dict(id="tool_wt_allow_only_mcp", tool="Write", cmd="{WT}/T5/.mcp.json", rules=dict(allow=WT_RULES["allow"]), expect="ok", info=True),
+    dict(id="tool_wt_allow_only_husky", tool="Write", cmd="{WT}/T5/.husky/pre-commit", rules=dict(allow=WT_RULES["allow"]), expect="ok", info=True),
+    dict(id="tool_wt_allow_only_base", tool="Write", cmd="{WT}/_base/f.txt", rules=dict(allow=WT_RULES["allow"]), expect="ok", info=True),
+    dict(id="tool_wt_allow_only_claude_md", tool="Write", cmd="{WT}/T5/CLAUDE.md", rules=dict(allow=WT_RULES["allow"]), expect="ok", info=True),
+    dict(id="tool_wt_allow_only_git_pointer", tool="Edit", cmd="{WT}/T5/.git", edit=("gitdir:", "gitdir-probe:"), rules=dict(allow=WT_RULES["allow"]), expect="ok",
+         info=True),
+    # C11b proof (plan): with the allow on and this checkout's hooks registered, the hooks still decide. T4 = a registered ticket whose plan is not approved.
+    dict(id="hook_wt_locked_write", tool="Write", cmd="{WT}/T4/src/a.ts", rules=WT_RULES, hooks=True, dt_home=True, expect="hook", contains="plan is not approved",
+         disk=[("absent", "{WT}/T4/src/a.ts")]),
+    dict(id="hook_wt_approved_write_ok", tool="Write", cmd="{WT}/T5/src/b.ts", rules=WT_RULES, hooks=True, dt_home=True, expect="ok", disk=[("exists", "{WT}/T5/src/b.ts")]),
+    # .envrc (direnv runs it) has no ask rule: the hooks' .env* rule must block it, also in an approved worktree under the allow
+    dict(id="hook_wt_envrc_write", tool="Write", cmd="{WT}/T5/.envrc", rules=WT_RULES, hooks=True, dt_home=True, expect="hook", disk=[("absent", "{WT}/T5/.envrc")]),
+    dict(id="hook_approvals_write", tool="Write", cmd="{KD}/approvals/T4.plan", rules=WT_RULES, hooks=True, dt_home=True, expect="hook", disk=[("absent", "{KD}/approvals/T4.plan")]),
+    dict(id="hook_guard_json_edit", tool="Edit", cmd="{KD}/guard.json", edit=('"project_key"', '"project_kez"'), rules=dict(allow=WT_RULES["allow"] + TOOL_ALLOW, ask=WT_RULES["ask"]),
+         hooks=True, dt_home=True, expect="hook", disk=[("same", "{KD}/guard.json")]),
+    dict(id="hook_bash_sed_locked", cmd="sed -i '' 's/1/2/' {WT}/T4/f.txt", cwd="{WT}/T4", rules=WT_RULES, hooks=True, dt_home=True, expect="hook",
+         disk=[("same", "{WT}/T4/f.txt")]),
+    dict(id="hook_bash_redirect_locked", cmd="echo x > {WT}/T4/new.txt", cwd="{WT}/T4", rules=WT_RULES, hooks=True, dt_home=True, expect="hook",
+         disk=[("absent", "{WT}/T4/new.txt")]),
+]]]
 
 
 def classify(texts):

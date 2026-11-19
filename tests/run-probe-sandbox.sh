@@ -119,6 +119,13 @@ has "$(cat "$S/r1/settings-tool_write_edit_allow_tilde-default.json")" "Edit(~/O
 has "$(cat "$S/r1/settings-tool_edit_delivery_log_denied-default.json")" "Edit(/$S/ro1/state/\*/delivery.log)" "deny rules are the installer's (protected list)"
 has "$(cat "$S/r1/settings-tool_edit_delivery_log_denied-default.json")" "Edit(/$S/ro1/state/\*/evidence/\*/verify.json)" "deny rules are the installer's (push record)"
 has "$(cat "$S/r1/raw/tool_edit_evidence_allow-default.json")" '"tool": "Edit"' "raw file names the tool"
+echo "# C11b: the worktree ask rules and the plan lock under the worktree Edit allow"
+eq "$(run 20 FAKE_FLIP=hook_wt_locked_write)" 1 "a Write in a locked worktree past the hook is a FAIL"
+has "$(grep '| hook_wt_locked_write | default |' "$S/out20.txt")" "got ok, want hook" "locked worktree row"
+eq "$(run 21 FAKE_FLIP=tool_wt_mcp_asks)" 1 "a .mcp.json Write without a prompt is a FAIL"
+has "$(cat "$S/r1/settings-hook_wt_locked_write-default.json")" "$SK/hooks/worktree-guard.sh" "hooks=True registers the Edit / Write hook too"
+has "$(cat "$S/r1/settings-tool_wt_edit_allowed-default.json")" "Edit(/$S/r1/proj/.claude/worktrees/\*\*)" "the worktree allow is project-apply's"
+[ -f "$S/ro1/state/$(ls "$S/ro1/state" | grep '^proj-')/approvals/T5.plan" ] && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL the C11b fixture has no approval for T5"; }
 echo "# arguments"
 env FAKE_RUN_S="$S/r7" FAKE_RUN_OUT="$S/ro7" FAKE_DUMP_S="$S/d0" FAKE_DUMP_OUT="$S/o0" $PS "$S/r7" --outside "$S/ro7" --claude "$S/fake-claude" --only auto_allow,deny_sessions > "$S/out7.txt" 2>&1; eq "$?" 0 "--only"
 eq "$(grep -c '| \(PASS\|FAIL\|CHANGED\|INCONCLUSIVE\) |' "$S/out7.txt")" 2 "--only runs two rows"
@@ -133,7 +140,10 @@ for id in auto_allow rename_key_dir excluded_script_after_cd excluded_chained_to
   git_rename_script_excluded git_push_script_refuses_options gate_script_asks gate_script_no_ask_rule_control gh_unlisted_sandboxed installer_apply_blocked allowwrite_glob_unsupported \
   bash_allowed_domains_param bash_allowed_domains_control bash_disable_sandbox_param tool_write_no_rule_control tool_write_edit_allow_tilde tool_write_edit_allow_abs \
   tool_write_rule_of_its_own tool_edit_evidence_allow tool_write_verify_json_denied tool_edit_verify_json_denied tool_read_skill_tilde tool_edit_delivery_log_denied \
-  tool_read_skill_no_rule tool_read_skill_installer_rule; do
+  tool_read_skill_no_rule tool_read_skill_installer_rule tool_wt_edit_allowed tool_wt_claude_settings_asks tool_wt_git_pointer_asks tool_wt_base_asks \
+  hook_wt_locked_write hook_wt_approved_write_ok hook_approvals_write hook_bash_sed_locked hook_bash_redirect_locked tool_wt_vscode_asks tool_wt_claude_md_root_asks \
+  tool_wt_claude_md_nested_asks tool_wt_agents_md_nested_asks tool_wt_npmrc_nested_asks tool_wt_nested_plain_ok tool_wt_allow_only_mcp tool_wt_allow_only_claude_settings \
+  tool_wt_github_workflow_asks tool_wt_gitmodules_asks tool_wt_gemini_md_nested_asks hook_wt_envrc_write; do
   grep -q "\"id\": \"$id\"" "$S/table.json" && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL case $id missing from the probe"; }
 done
 echo "pass=$pass fail=$fail"; [ $fail = 0 ]
