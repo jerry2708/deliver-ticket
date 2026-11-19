@@ -8,7 +8,10 @@ The Bash sandbox's excludedCommands and the permission ask / allow rules match t
     its user-level ask rule is missing);
   - `git -C <dir> push` or `git -C <dir> branch -m` is written (a `git -C` call stays sandboxed even when excluded);
   - `cd <dir> && git push|branch -m` (also `;`, `||`, `pushd`, inside a subshell) or an env assignment in front (`FOO=1 git push`) is written: the exclusion and the
-    ask rule match the command text as a prefix, so the push would run sandboxed (probe `push_after_cd_stays_sandboxed`) or miss its ask rule.
+    ask rule match the command text as a prefix, so the push would run sandboxed (probe `push_after_cd_stays_sandboxed`) or miss its ask rule;
+  - a skill script (any file in scripts/) or `claude --version` / `-v` shares one command (a `backtick` span, or a line of a fenced block) with `;`, `&&`, `||` or a
+    pipe (C11a: each is its own Bash call; DRY-01 stage 0 ran `claude --version; echo ...; validate-guard.py ...` as one). A `|` with no space on either side
+    (`done|cancelled`) is choice notation, not a pipe.
 Usage: lint_script_calls.py [skill root]      -> exit 1 and one line per violation
        lint_script_calls.py --text "<text>"   -> checks one string (used by run-docs-lint.sh to prove that bad forms are caught)
 """
@@ -35,10 +38,21 @@ def matches(cmd, pats):
     return any(cmd == p[:-2] or (p.endswith(" *") and cmd.startswith(p[:-1])) or cmd == p for p in pats)
 
 
+ONE_CALL = re.compile(r"scripts/(%s)\b|\bclaude (--version|-v)\b" % "|".join(re.escape(f) for f in sorted(os.listdir(os.path.join(ROOT, "scripts")))))
+CHAIN = re.compile(r";|&&|\|\||(?<=\s)\||\|(?=\s)")
+
+
 def check(text, label):
     out = []
     pats = excluded_patterns()
+    fence = False
     for n, line in enumerate(text.split("\n"), 1):
+        if line.lstrip().startswith("```"):
+            fence = not fence
+            continue
+        for span in ([line] if fence else re.findall(r"`([^`]+)`", line)):
+            if ONE_CALL.search(span) and CHAIN.search(span):
+                out.append("%s:%d: a skill script or `claude --version` is chained to another command (%r): make each its own Bash call" % (label, n, span.strip()[:60]))
         for name in NAMES:
             for m in re.finditer(re.escape("scripts/" + name), line):
                 prefix = line[:m.start()]

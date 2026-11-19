@@ -32,6 +32,12 @@ for bad in 'run `scripts/ticket-state.sh done T1`' 'run `bash <skill dir>/script
   'git -C <worktree> branch -m a b' 'git -C <wt> push mirror x' \
   'cd <wt> && git push mirror x' 'cd <wt>; git push mirror x' 'cd <wt> || git push mirror x' 'pushd <wt> && git push mirror x' '(cd <wt> && git push mirror x)' \
   'cd <wt> && git branch -m a b' 'FOO=1 git push mirror x' 'GIT_DIR=<wt>/.git git push mirror x' 'run `FOO=1 git branch -m a b`'; do python3 tests/lint_script_calls.py --text "$bad" >/dev/null; [ $? = 1 ]; ok $? "lint must flag: $bad"; done
+for bad in '`claude --version; echo x`' '`<skill dir>/scripts/validate-guard.py g.json && echo ok`' '`<skill dir>/scripts/session-map.sh show T1 | tail -3`' '`claude -v || true`' \
+  '`<skill dir>/scripts/env-keys.sh .env;echo`' $'```\nclaude --version; <skill dir>/scripts/validate-guard.py g\n```'; do python3 tests/lint_script_calls.py --text "$bad" >/dev/null; [ $? = 1 ]; ok $? "lint must flag (C11a, one script per call): $bad"; done
+for good in '`<skill dir>/scripts/ticket-state.sh done|cancelled <ID>`' '`claude --version`' 'run `claude --version`; then `<skill dir>/scripts/validate-guard.py g`' $'```\nclaude --version\n```\nthen; `claude --version`'; do
+  python3 tests/lint_script_calls.py --text "$good" >/dev/null; ok $? "lint must accept (C11a): $good"; done
+has SKILL.md 'One script per Bash call'
+has stages/0-environment.md 'Each command below is its own Bash call'
 for good in 'run `<skill dir>/scripts/ticket-state.sh done T1`' '`<skill dir>/scripts/session-map.sh show`' '`<skill dir>/scripts/guard-write.sh diff`' 'git -C <wt> status' '`git branch -m a b`' 'from the worktree directory: `git push <remote> <branch>`' 'cd <wt>, then (second call) git push mirror x'; do python3 tests/lint_script_calls.py --text "$good" >/dev/null; ok $? "lint must accept: $good"; done
 echo "# skill files are read with absolute paths (backlog item 2)"
 hasnt "$FILES" 'cd [^;&|]*deliver-ticket[^;&|]*&&[^;&|]*\(cat\|head\|sed\)'
