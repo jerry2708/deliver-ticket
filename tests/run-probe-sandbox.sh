@@ -55,7 +55,9 @@ extra = r.get("contains") or ""
 text = {"ok": (extra or "(Bash completed with no output)"), "prompt": "Claude requested permissions to use Bash, but you haven't granted it yet.",
         "denied": "Permission to use Bash with command x has been denied.", "eperm": "Exit code 1\n(eval):1: operation not permitted: x " + extra,
         "hook": "PreToolUse:Bash hook error: [guard.sh]: deliver-ticket: install-hooks.sh apply changes settings files " + extra,
-        "net": "curl: (56) CONNECT tunnel failed, response 403", "refused": "Exit code 2\ngit-safe: " + extra}[kind]
+        "net": "curl: (56) CONNECT tunnel failed, response 403", "refused": "Exit code 2\ngit-safe: " + extra, "error": "Exit code 1\nCannot save the current status"}[kind]
+if os.environ.get("FAKE_EXITFAIL") == r["id"]:      # the command failed with a message that names no known verdict: must not read as ok
+    text = "Exit code 1\nsomething went wrong"
 if os.environ.get("FAKE_FLIP") != r["id"]:
     for k, p in r["disk"]:
         if k == "exists" and not os.path.isdir(p):
@@ -140,6 +142,20 @@ eq "$(run 23 FAKE_FLIP=autoallow_deny_rule_kept)" 1 "an rm -rf past the deny rul
 eq "$(run 24 FAKE_MOVEREF=commit_bypass_cd)" 1 "a moved branch ref is a FAIL even when the answer looks like a prompt"
 has "$(grep '| commit_bypass_cd | default |' "$S/out24.txt")" "disk: want rev" "moved-ref row"
 eq "$(run 25 FAKE_FLIP=commit_bypass_dir_flag_hooks)" 1 "a git -C commit that runs is a FAIL"
+echo "# verdicts use the exit status: a failed command whose message names no known verdict is \`error\`, never ok"
+eq "$(run 28 FAKE_EXITFAIL=auto_allow)" 1 "a canary that exits 1 is a FAIL"
+has "$(grep '| auto_allow | default |' "$S/out28.txt")" "got error, want ok" "exit-status row"
+python3 - "$SK/scripts" <<'UNIT' && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL classify unit (exit status)"; }
+import os, sys
+sys.path.insert(0, sys.argv[1]); os.environ["DT_SETTINGS"] = "/nonexistent"
+import probe_sandbox as p
+c = p.classify
+assert c(["Exit code 1\nCannot save the current status"]) == "error"
+assert c(["<tool_use_error>String to replace not found in file.</tool_use_error>"]) == "error"
+assert c(["(Bash completed with no output)"]) == "ok" and c(["[work/t5 fc8751d] gate"]) == "ok" and c(["File created successfully at: /x"]) == "ok"
+assert c(["Exit code 128\nfatal: cannot lock ref 'HEAD': Unable to create '/r/.git/refs/heads/x.lock': Operation not permitted"]) == "eperm"
+assert c(["Exit code 2\ngit-safe: refused"]) == "refused" and c(["output mentions Exit code 0 only"]) == "ok"
+UNIT
 echo "# arguments"
 env FAKE_RUN_S="$S/r7" FAKE_RUN_OUT="$S/ro7" FAKE_DUMP_S="$S/d0" FAKE_DUMP_OUT="$S/o0" $PS "$S/r7" --outside "$S/ro7" --claude "$S/fake-claude" --only auto_allow,deny_sessions > "$S/out7.txt" 2>&1; eq "$?" 0 "--only"
 eq "$(grep -c '| \(PASS\|FAIL\|CHANGED\|INCONCLUSIVE\) |' "$S/out7.txt")" 2 "--only runs two rows"

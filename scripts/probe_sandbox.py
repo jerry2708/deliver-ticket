@@ -493,6 +493,10 @@ def classify(texts):
         return "eperm"
     if re.search(r"CONNECT tunnel failed|network-outbound|Connection refused|Could not connect|Failed to connect|Operation timed out", t):
         return "net"
+    # a failure with no more specific verdict is not `ok`: Claude Code prefixes a Bash result with a non-zero exit with "Exit code N", and a file tool's failure
+    # with <tool_use_error> (the C11 stash control exited 1 - "Cannot save the current status" - and used to read as ok)
+    if re.search(r"(^|\s)Exit code [1-9][0-9]*\b", t) or "<tool_use_error>" in t:
+        return "error"
     return "ok"
 
 
@@ -512,7 +516,7 @@ def run_claude(claude, cmd, settings, mode, cwd, env, raw, sources=None, model="
     args = claude + ["-p", prompt, "--model", model, "--output-format", "stream-json", "--verbose", "--max-turns", "6", "--max-budget-usd", "0.30", "--settings", settings,
                      "--permission-mode", mode] + (["--setting-sources", sources] if sources else [])
     r = subprocess.run(args, cwd=cwd, env=env, capture_output=True, text=True)
-    used, res, reply, inputs, ids = [], [], "", [], set()
+    used, res, reply, inputs, ids, errs = [], [], "", [], set(), []
     for l in r.stdout.splitlines():
         try:
             e = json.loads(l)
@@ -524,10 +528,12 @@ def run_claude(claude, cmd, settings, mode, cwd, env, raw, sources=None, model="
             used += [x["input"].get(key, "") for x in calls]
             ids |= {x.get("id") for x in calls}
         if e.get("type") == "user":            # a tool case counts only its own tool's results (the Read before an Edit does not)
-            res += [str(x.get("content")) for x in e["message"]["content"] if isinstance(x, dict) and x.get("type") == "tool_result" and (not tool or x.get("tool_use_id") in ids)]
+            got = [x for x in e["message"]["content"] if isinstance(x, dict) and x.get("type") == "tool_result" and (not tool or x.get("tool_use_id") in ids)]
+            res += [str(x.get("content")) for x in got]
+            errs += [bool(x.get("is_error")) for x in got]
         if e.get("type") == "result":
             reply = str(e.get("result", ""))
-    json.dump({"cwd": cwd, "asked": cmd, "tool": name, "params": params or {}, "exit": r.returncode, "bash_calls": used, "bash_inputs": inputs, "tool_results": res,
+    json.dump({"cwd": cwd, "asked": cmd, "tool": name, "params": params or {}, "exit": r.returncode, "bash_calls": used, "bash_inputs": inputs, "tool_results": res, "is_error": errs,
                "reply": reply[-2000:], "stderr": r.stderr[-4000:]}, open(raw, "w"), indent=1)
     return used, res, inputs
 
