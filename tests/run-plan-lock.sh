@@ -77,7 +77,8 @@ approve T1 && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL approve T1"; }
 for sid in s1 u1; do
   for tool in Write Edit NotebookEdit MultiEdit; do w 0 $sid $tool "$W1/src/a.ts"; done
   for c in "echo x > $W1/a" "touch $W1/a" "mkdir -p $W1/d" "tee $W1/a" "git diff --output=$W1/o"; do b 0 $sid "$R" "$c"; done
-  for c in "echo x > f" "git add ." "git commit --allow-empty -m x" "git checkout -b y" "git stash"; do b 0 $sid "$W1" "$c"; done
+  for c in "echo x > f" "git add ." "git checkout -b y" "git stash"; do b 0 $sid "$W1" "$c"; done
+  b 2 $sid "$W1" "git commit --allow-empty -m x"            # C11: approved or not, a commit in a ticket worktree goes only through scripts/git-commit.sh
   w 2 $sid Write "$W2/src/a.ts"; b 2 $sid "$R" "echo x > $W2/a"                        # another ticket's approval does not unlock this one
   b 2 $sid "$R" "rsync -a $S/src/ $R/.claude/worktrees/"                               # T2 is still locked: the ancestor rule still applies
 done

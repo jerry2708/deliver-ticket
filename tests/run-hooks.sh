@@ -48,7 +48,9 @@ for c in 'git push -f mirror main' 'git push --force mirror main' 'git push orig
   'HUSKY=0 git commit -m x' 'bash -c "git push -f mirror main"' 'echo $(git push -f mirror main)' 'eval git push -f mirror' \
   '/usr/bin/env git push -f mirror main' '/usr/bin/nice git push --force mirror main' '/usr/bin/env HUSKY=0 git commit -m x' 'glab mr merge 5' 'gh pr merge 5' 'glab mr update 5 -d -' 'glab mr update 5 --description=-' 'git config alias.p "push -f"'; do t 2 guard.sh "$W" "$c"; done
 echo "# push allowed through guard (rc 0)"
-for c in 'git status' 'git commit -m "fix: n"' 'git commit -am msg' 'ls -la' 'npm test'; do t 0 guard.sh "$W" "$c"; done
+for c in 'git status' 'ls -la' 'npm test'; do t 0 guard.sh "$W" "$c"; done
+# C11: in a ticket worktree a commit goes only through scripts/git-commit.sh (the project sandbox denies the ref store; the gate checks plan + recorded branch)
+for c in 'git commit -m "fix: n"' 'git commit -am msg'; do t 2 guard.sh "$W" "$c"; done
 echo "# git merge: only on a ticket branch"
 t 0 guard.sh "$W" 'git merge main'
 t 0 guard.sh "$W" 'git merge --no-edit main'
@@ -92,7 +94,7 @@ t 0 guard.sh "$W" 'cat > f.txt <<EOF
 hello
 EOF'
 t 0 guard.sh "$W" 'echo x > /dev/null 2>&1'
-t 0 guard.sh "$W" 'git add -A && git commit -m "feat: x"'
+t 2 guard.sh "$W" 'git add -A && git commit -m "feat: x"'
 t 0 guard.sh "$R" 'git status'
 t 2 guard.sh "$W" 'echo "unterminated'
 t 2 guard.sh "$W" 'echo $(unterminated'
@@ -231,6 +233,8 @@ gr 2 feat-T1 main
 gr 2 main x
 gr 2 feat-T1 'a:b'
 gr 2 feat-T1 '--x'
+gr 2 feat-T1 feat-T1b      # C11: no branch record for T1 yet -> refused (the record is what git-commit.sh trusts)
+python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import ticket_ctl; ticket_ctl.log(sys.argv[2], "-", "T1", "branch", "feat-T1")' "$SK/scripts" "$DELIVER_TICKET_HOME/$key"
 n0=$(hk)
 gr 0 feat-T1 feat-T1b
 [ "$(git -C "$W" symbolic-ref --short HEAD)" = feat-T1b ] && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL rename did not happen"; }
@@ -474,10 +478,15 @@ for sid in s1 u1; do
       'bash -c "git commit -m x"' "sh -c 'git commit -m x'" 'eval "git commit -m x"' 'echo $(git commit -m x)' 'cd . && git -C . commit -m x' 'git add -A && FOO=1 git commit -m x'; do
       tsid 2 guard.sh $sid "$cwd" "$c"; done
   done
-  for c in 'git commit -m x' 'git commit --allow-empty -m probe' 'cd . && git commit -m x' 'git add -A && git commit -m "feat: x"' 'git -C . status' 'git -c core.quotepath=off log -1'; do
-    tsid 0 guard.sh $sid "$W" "$c"; done
+  for c in 'git -C . status' 'git -c core.quotepath=off log -1'; do tsid 0 guard.sh $sid "$W" "$c"; done
+  # the plain spelling passes the spelling rule; in a ticket worktree the gate rule (C11) then blocks it, pointing to git-commit.sh
+  for c in 'git commit -m x' 'git commit --allow-empty -m probe' 'cd . && git commit -m x' 'git add -A && git commit -m "feat: x"'; do
+    tsid 2 guard.sh $sid "$W" "$c"; done
 done
 out=$(payload "$W" Bash "git -C $W commit -m x" u1 | "$SK/hooks/guard.sh" 2>&1); printf '%s' "$out" | grep -q 'run `cd <worktree>` as its own call, then plain `git commit ...`' && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL commit-gate block message: $out"; }
+out=$(payload "$W" Bash "git commit -m x" u1 | "$SK/hooks/guard.sh" 2>&1); printf '%s' "$out" | grep -q 'runs only through the gate: show `git diff --cached --stat` in one call, then run `.*scripts/git-commit.sh --session <id> -m' && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL worktree commit block message: $out"; }
+# outside a ticket worktree (an unbound session in the main checkout) the hook leaves a plain commit to the ask rule and the sandbox (EPERM under the ref deny)
+for c in 'git commit -m x' 'cd . && git commit -m x'; do tsid 0 guard.sh u1 "$R" "$c"; done
 out=$(payload "$S/nostate" Bash "git -C . commit -m x" u1 | "$SK/hooks/guard.sh" 2>&1); req "$?" 0 "no delivery state: git -C commit is not this skill's business ($out)"
 echo "# C5b: the user's git config (~/.gitconfig, ~/.config/git/**, \$XDG_CONFIG_HOME/git/**) is not written by Claude: git-push.sh trusts it and runs unsandboxed"
 for sid in s1 u1; do
@@ -865,7 +874,7 @@ import os, sys
 sys.path.insert(0, sys.argv[1]); sys.path.insert(0, sys.argv[2]); os.environ["DT_SETTINGS"] = "/nonexistent"
 import dtcore, install_hooks as ih
 assert dtcore.GATE_SCRIPTS == set(ih.GATES), (dtcore.GATE_SCRIPTS, ih.GATES)
-assert set(dtcore.GATE_MODULES) == {"guard_apply.py", "ticket_ctl.py", "git_push.py", "approve_plan.py"}
+assert set(dtcore.GATE_MODULES) == {"guard_apply.py", "ticket_ctl.py", "git_push.py", "approve_plan.py", "git_commit.py"}
 PY
 echo "# C6 audit: no excluded script (bookkeeping or gate) and no module behind one names approvals/ - only the C7 writer (ticket_ctl.py approve-plan, approve-plan.sh) will"
 python3 - "$SK/scripts" <<'PY' && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL C6 audit: a script names approvals/"; }

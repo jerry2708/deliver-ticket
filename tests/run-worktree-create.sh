@@ -16,6 +16,7 @@ mkrepo $S/plain; git -C $S/plain branch -q trunk
 out=$(hook $S/plain T1 2>$S/err); rc=$?
 ok $rc "plain: rc"; [ "$out" = "$S/plain/.claude/worktrees/T1" ]; ok $? "plain: path printed ($out)"
 [ "$(git -C $S/plain/.claude/worktrees/T1 rev-parse --abbrev-ref HEAD)" = worktree-T1 ]; ok $? "plain: branch worktree-T1"
+[ -z "$(ls $DELIVER_TICKET_HOME/*/delivery.log 2>/dev/null)" ]; ok $? "plain (no delivery state): no branch record written anywhere"
 out2=$(hook $S/plain T1 2>/dev/null); [ "$out2" = "$out" ]; ok $? "plain: idempotent (same path, rc 0)"
 git -C $S/plain worktree list | grep -c worktrees/T1 | grep -qx 1; ok $? "plain: exactly one worktree T1"
 hook $S/plain 'bad name' 2>/dev/null; [ $? != 0 ]; ok $? "plain: unsafe name rejected"
@@ -36,6 +37,9 @@ J
 out=$(hook $R WL-01 2>$S/err); rc=$?; ok $rc "state: rc ($(cat $S/err | tr '\n' ' '))"
 wt=$R/.claude/worktrees/WL-01; [ "$out" = "$wt" ]; ok $? "state: path $out"
 [ "$(git -C $wt rev-parse --abbrev-ref HEAD)" = feature/WL-01 ]; ok $? "state: branch from naming rule (feature/WL-01)"
+# C11: the branch record git-commit.sh / git-rename.sh trust (delivery.log, protected state); the ticket file is not used
+grep -q '| session=s | ticket=WL-01 | branch | feature/WL-01$' $DELIVER_TICKET_HOME/$key/delivery.log; ok $? "state: branch recorded in delivery.log"
+python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import git_safe; sys.exit(0 if git_safe.recorded_branch(sys.argv[2], "WL-01") == "feature/WL-01" else 1)' "$SK/scripts" $DELIVER_TICKET_HOME/$key; ok $? "state: git_safe.recorded_branch reads it"
 [ -L $wt/.env.local ] && [ "$(readlink $wt/.env.local)" = "$R/.env.local" ]; ok $? "state: env file symlinked to main checkout"
 [ ! -e $wt/missing ] && [ ! -e $wt/../escape ]; ok $? "state: missing / unsafe env names skipped"
 grep -q INSTALL-RAN $wt/installed.txt; ok $? "state: install ran in worktree"

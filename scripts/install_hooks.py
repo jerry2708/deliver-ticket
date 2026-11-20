@@ -45,7 +45,7 @@ import dtcore  # noqa: E402  (constants only at import time; PROTECTED_STATE is 
 
 BOOKKEEPING = ["session-map.sh", "pending-ticket.sh", "project-map-stale.sh", "git-rename.sh"]   # sandbox: excluded + allow rule: no prompt
 SANDBOXED = ["verify-record.sh", "plan-hash.sh", "lock-trace.sh"]                                   # NOT excluded: runs inside the sandbox; allow rule only (no prompt)
-GATES = ["ticket-state.sh", "guard-apply.sh", "git-push.sh", "approve-plan.sh"]                                     # excluded + ask rule on the full path: the prompt is the user's yes
+GATES = ["ticket-state.sh", "guard-apply.sh", "git-push.sh", "approve-plan.sh", "git-commit.sh"]                                     # excluded + ask rule on the full path: the prompt is the user's yes
 # The gate scripts' ask rules are USER level too: with the sandbox off (or in a project that never enabled it) nothing else would ask, and auto mode
 # ran an excluded command without a prompt (probe V8 d4).
 # An ask rule always beats an allow rule (docs, "Manage permissions": "rule specificity doesn't change the order"), so a broad `glab *` ask with narrow
@@ -418,7 +418,9 @@ def parse_repo(args):
     if top.returncode != 0:
         raise SystemExit("not a git repo: %s" % repo)
     common = top.stdout.strip()
-    main = common[:-5] if common.endswith("/.git") else common
+    if not common.endswith("/.git") or not os.path.isdir(common):
+        raise SystemExit("the git dir of %s is %s, not <main checkout>/.git (--separate-git-dir or a gitfile): not supported by this skill" % (repo, common))
+    main = common[:-5]
     if os.path.realpath(main) != repo:
         raise SystemExit("--repo must be the main checkout (%s), not %s" % (main, repo))
     return rest, repo
@@ -656,7 +658,20 @@ ABSENT = "__absent__"
 DOMAIN_RE = re.compile(r"[A-Za-z0-9*][A-Za-z0-9*.-]*")
 
 
-def sandbox_plan(repo, state, domains, local_binding):
+def git_common(repo):
+    """realpath of the repo's git common dir (the ref store lives there; parse_repo already refused a separate git dir)."""
+    r = subprocess.run(["git", "-C", repo, "rev-parse", "--path-format=absolute", "--git-common-dir"], capture_output=True, text=True)
+    if r.returncode != 0:
+        raise SystemExit("cannot read the git common dir of %s" % repo)
+    return os.path.realpath(r.stdout.strip())
+
+
+# C11: the git ref store under the common dir. With these denied a sandboxed command cannot move a branch (commit, merge, rebase, reset, update-ref,
+# fetch . x:<branch>, checkout -B ... - probe refs_*); commits go through the excluded gate git-commit.sh, renames through git-rename.sh, pushes through git-push.sh.
+REF_STORE = ("refs/**", "packed-refs", "logs/refs/**")
+
+
+def sandbox_plan(repo, state, domains, local_binding, common=None):
     sk = os.path.join(SKILL, "scripts")
     book, gate, boxed = [os.path.join(sk, x) for x in BOOKKEEPING], [os.path.join(sk, x) for x in GATES], [os.path.join(sk, x) for x in SANDBOXED]
     # C11c1: autoAllowBashIfSandboxed is the default on 2.1.311; from 2.1.325 it is false (changelog, docs/plan.md C11 record), and then every sandboxed command would prompt
@@ -667,7 +682,8 @@ def sandbox_plan(repo, state, domains, local_binding):
             (("sandbox", "filesystem", "allowWrite"), [os.path.join(state, "evidence"), os.path.join(repo, ".claude", "worktrees")]),
             # C9b: the project's own settings and every ticket worktree's (a deny wins over the worktrees allowWrite; a glob works on macOS only, V7c)
             (("sandbox", "filesystem", "denyWrite"), [os.path.join(repo, ".claude", "settings.json"), os.path.join(repo, ".claude", "settings.local.json"),
-                                                     os.path.join(repo, ".claude", "worktrees", "*", ".claude", "settings*.json")]),
+                                                     os.path.join(repo, ".claude", "worktrees", "*", ".claude", "settings*.json")] +
+                                                    ([os.path.join(common, x) for x in REF_STORE] if common else [])),
             (("sandbox", "network", "allowedDomains"), list(domains)),
             (("permissions", "allow"), ["Bash(%s *)" % p for p in book + boxed] + ["Bash(%s)" % c for c in CLI_ALLOW]),
             (("permissions", "ask"), ["Bash(%s *)" % p for p in gate] + ["Bash(%s)" % c for c in CLI_ASK])]
@@ -782,7 +798,7 @@ def cmd_sandbox(cmd, args):
     if cmd == "project-sandbox-status":
         if om is None:
             print("sandbox: off (no sandbox manifest in %s)" % state); return 1
-        sets, adds = sandbox_plan(repo, state, [], "sandbox/network/allowLocalBinding" in om["set_prev"])
+        sets, adds = sandbox_plan(repo, state, [], "sandbox/network/allowLocalBinding" in om["set_prev"], git_common(repo))
         p = sandbox_problems(cur, sets, adds) + [x for k, its in om["added"].items() if k == "sandbox/network/allowedDomains"
                                                   for x in ["missing domain: %s" % d for d in its if d not in (_node(cur, ["sandbox", "network"]) or {}).get("allowedDomains", [])]]
         print("sandbox: on in %s" % path if not p else "sandbox: DRIFT in %s:\n  %s" % (path, "\n  ".join(p)))
@@ -801,7 +817,7 @@ def cmd_sandbox(cmd, args):
         os.replace(spath, spath + ".removed")
         print("sandbox removed; backup: %s\nThe project can be checked out on v0.1 (main) now." % bak)
         return 0
-    sets, adds = sandbox_plan(repo, state, domains, local_binding)
+    sets, adds = sandbox_plan(repo, state, domains, local_binding, git_common(repo))
     m = fresh()
     new = sandbox_desired(cur, sets, adds, m)
     if cmd == "project-sandbox-diff":

@@ -9,9 +9,9 @@ set -u
 here=$(cd "$(dirname "$0")" && pwd)
 . "$here/lib.sh"
 PAYLOAD=$(cat)
-parsed=$(printf '%s' "$PAYLOAD" | python3 -I -c 'import json,sys; d=json.load(sys.stdin); print(d.get("name","")); print(d.get("cwd",""))') \
+parsed=$(printf '%s' "$PAYLOAD" | python3 -I -c 'import json,sys; d=json.load(sys.stdin); print(d.get("name","")); print(d.get("cwd","")); print(d.get("session_id") or "-")') \
   || { echo "worktree-create: payload is not valid JSON" >&2; exit 1; }
-name=$(printf '%s\n' "$parsed" | sed -n 1p); cwd=$(printf '%s\n' "$parsed" | sed -n 2p)
+name=$(printf '%s\n' "$parsed" | sed -n 1p); cwd=$(printf '%s\n' "$parsed" | sed -n 2p); sid=$(printf '%s\n' "$parsed" | sed -n 3p)
 case "$name" in ""|*[!A-Za-z0-9._-]*|.*) echo "worktree-create: unsafe or empty worktree name '$name'" >&2; exit 1;; esac
 [ -n "$cwd" ] && [ -d "$cwd" ] || { echo "worktree-create: payload cwd missing or not a directory" >&2; exit 1; }
 common=$(git -C "$cwd" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) \
@@ -61,4 +61,7 @@ else
 fi
 created_wt=1
 "$here/../scripts/setup-worktree.sh" "$root" "$wt" "$name" >&2 || fail "setup-worktree.sh failed"
+# C11: the ticket's branch record in delivery.log (protected state): git-commit.sh and git-rename.sh trust only this, not the ticket file
+python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import ticket_ctl; ticket_ctl.log(*sys.argv[2:])' "$here/../scripts" "$DT_HOME/$key" "$sid" "$name" branch "$branch" \
+  || fail "could not record the branch in delivery.log"
 printf '%s\n' "$wt"

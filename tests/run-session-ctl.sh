@@ -131,4 +131,15 @@ eq "$(jq -nc --arg cwd "$R" --arg f "$R/x.txt" '{session_id:"y1",cwd:$cwd,hook_e
 printf 'project=%s\nticket=O1\n' "$key" > $MAP/y2
 out=$(ew y2); grep -qx "project=$key2" $MAP/y2 && grep -qx "worktree=$R2/.claude/worktrees/B1" $MAP/y2 && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL map rewritten when the old ticket is closed: $(tr '\n' ' ' < $MAP/y2)"; }
 printf 'project=%s\nticket=O3\n' "$key2" > $MAP/y3; out=$(ew y3); grep -qx "worktree=$R2/.claude/worktrees/B1" $MAP/y3 && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL same project: worktree line added"; }
+echo "# one log entry = one line: \\r, \\n and other control characters in a field become spaces, | becomes /"
+python3 -I - "$SK/scripts" "$S/logtest" <<'UNIT' && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL ticket_ctl.log control characters"; }
+import os, sys
+sys.path.insert(0, sys.argv[1]); import ticket_ctl, git_safe
+ticket_ctl.log(sys.argv[2], "s\r1", "T1", "pause", "a\rb | ticket=T1 | branch | main\nx\x1b\x00\x7fy")
+raw = open(os.path.join(sys.argv[2], "delivery.log"), "rb").read()
+assert raw.count(b"\n") == 1 and raw.endswith(b"\n") and not any((c < 0x20 and c != 0x0a) or c == 0x7f for c in raw), raw
+lines = open(os.path.join(sys.argv[2], "delivery.log")).read().splitlines()      # universal newlines: a \r would split the entry here
+assert len(lines) == 1 and lines[0].count(" | ") == 4, lines
+assert git_safe.recorded_branch(sys.argv[2], "T1") is None      # the detail cannot forge a branch record
+UNIT
 echo "pass=$pass fail=$fail"; [ $fail = 0 ]

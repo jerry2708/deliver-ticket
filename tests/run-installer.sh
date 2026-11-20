@@ -300,10 +300,13 @@ assert sb["enabled"] is True and sb["failIfUnavailable"] is True and sb["network
 assert sb["autoAllowBashIfSandboxed"] is True, sb      # C11c1: the 2.1.325 default is false
 assert sb["network"]["allowedDomains"] == ["mine.example", "registry.npmjs.org"], sb["network"]
 assert sb["filesystem"]["allowWrite"] == [st + "/evidence", repo + "/.claude/worktrees"], sb["filesystem"]
-assert sb["filesystem"]["denyWrite"] == [repo + "/.claude/settings.json", repo + "/.claude/settings.local.json", repo + "/.claude/worktrees/*/.claude/settings*.json"], sb["filesystem"]   # C9b
+common = os.path.realpath(repo + "/.git")      # C11: the ref store of the git common dir (realpath), after the C9b settings files
+assert sb["filesystem"]["denyWrite"] == [repo + "/.claude/settings.json", repo + "/.claude/settings.local.json", repo + "/.claude/worktrees/*/.claude/settings*.json",
+                                         common + "/refs/**", common + "/packed-refs", common + "/logs/refs/**"], sb["filesystem"]
 ex = sb["excludedCommands"]
-for n in ("session-map.sh", "pending-ticket.sh", "project-map-stale.sh", "git-rename.sh", "ticket-state.sh", "guard-apply.sh", "git-push.sh", "approve-plan.sh"):
+for n in ("session-map.sh", "pending-ticket.sh", "project-map-stale.sh", "git-rename.sh", "ticket-state.sh", "guard-apply.sh", "git-push.sh", "approve-plan.sh", "git-commit.sh"):
     assert "%s/scripts/%s *" % (sk, n) in ex, n
+assert "Bash(%s/scripts/git-commit.sh *)" % sk in pm["ask"] and "Bash(%s/scripts/git-commit.sh *)" % sk not in pm["allow"]      # C11: the commit gate asks
 # C5: plain git push / git branch -m are NOT excluded (their hooks would run worktree code unsandboxed); only the scripts are
 assert "git push *" not in ex and "git branch -m *" not in ex and not any(e.startswith("git ") for e in ex), ex
 for e in ("gh api *", "glab api *", "gh pr create *", "glab mr create *", "gh pr view *", "glab mr list *", "gh -R *", "glab --repo *",
@@ -395,6 +398,13 @@ UH "$IH" project-sandbox-status --repo "$R12" 2>&1 | grep -q 'sandbox.autoAllowB
 UH "$IH" project-sandbox-apply --repo "$R12" --confirmed >/dev/null 2>&1
 UH "$IH" project-sandbox-off --repo "$R12" --confirmed >/dev/null 2>&1
 python3 -I -c 'import json,sys; sys.exit(0 if json.load(open(sys.argv[1]))==json.load(open(sys.argv[2])) else 1)' "$R12/.claude/settings.local.json" "$D/proj12-orig.json" && echo "ok sandbox-off restores autoAllowBashIfSandboxed false" || { fail=1; echo "FAIL autoAllowBashIfSandboxed not restored: $(tr -d ' \n' < "$R12/.claude/settings.local.json")"; }
+# C11: a --separate-git-dir repo (its git dir is not <repo>/.git): project-apply and project-sandbox-apply refuse with a clear message, write nothing
+R13="$D/proj13"; git init -q -b main --separate-git-dir "$D/proj13.git" "$R13" && printf '.claude/settings.local.json\n' > "$R13/.gitignore"
+key13=$(bash -c ". \"$SK/hooks/lib.sh\"; dt_key \"$R13\""); mkdir -p "$DELIVER_TICKET_HOME/$key13"; printf '{"version":1}\n' > "$DELIVER_TICKET_HOME/$key13/guard.json"
+for sub in project-apply project-sandbox-apply; do
+  UH "$IH" $sub --repo "$R13" --confirmed > "$D/sep13.txt" 2>&1; rc=$?
+  [ $rc != 0 ] && grep -q 'separate-git-dir' "$D/sep13.txt" && [ ! -e "$R13/.claude/settings.local.json" ] && echo "ok $sub refuses a --separate-git-dir repo" || { fail=1; echo "FAIL $sub on a separate git dir: rc=$rc $(head -c 200 "$D/sep13.txt")"; }
+done
 # a project with no sandbox keys at all: created by apply, gone after off
 R6="$D/proj6"; mkdir -p "$R6" && git -C "$R6" init -q -b main && printf '.claude/settings.local.json\n' > "$R6/.gitignore"
 key6=$(bash -c ". \"$SK/hooks/lib.sh\"; dt_key \"$R6\""); mkdir -p "$DELIVER_TICKET_HOME/$key6"; printf '{"version":1}\n' > "$DELIVER_TICKET_HOME/$key6/guard.json"

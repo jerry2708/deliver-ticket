@@ -63,8 +63,10 @@ def write_map(home, sid, lines):
 def log(state, sid, ticket, action, detail):
     os.makedirs(state, exist_ok=True)
     with open(os.path.join(state, "delivery.log"), "a") as f:
-        # "|" is the field separator (guard-write.sh verify parses these lines): it cannot appear inside a field
-        f.write("%s | session=%s | ticket=%s | %s | %s\n" % tuple([time.strftime("%Y-%m-%dT%H:%M:%S")] + [str(x).replace("\n", " ").replace("|", "/") for x in (sid, ticket, action, detail)]))
+        # "|" is the field separator (guard-write.sh verify parses these lines): it cannot appear inside a field. Control characters (\r, \n, ...) become a
+        # space: one entry = one line, also for a reader with universal newlines (\r would start a new line there)
+        f.write("%s | session=%s | ticket=%s | %s | %s\n" % tuple([time.strftime("%Y-%m-%dT%H:%M:%S")] + [re.sub(r"[\x00-\x1f\x7f]", " ", str(x)).replace("|", "/")
+                                                                                                         for x in (sid, ticket, action, detail)]))
 
 
 def old_binding(home, lines, key):

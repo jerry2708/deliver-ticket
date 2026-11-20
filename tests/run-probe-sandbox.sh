@@ -55,7 +55,8 @@ extra = r.get("contains") or ""
 text = {"ok": (extra or "(Bash completed with no output)"), "prompt": "Claude requested permissions to use Bash, but you haven't granted it yet.",
         "denied": "Permission to use Bash with command x has been denied.", "eperm": "Exit code 1\n(eval):1: operation not permitted: x " + extra,
         "hook": "PreToolUse:Bash hook error: [guard.sh]: deliver-ticket: install-hooks.sh apply changes settings files " + extra,
-        "net": "curl: (56) CONNECT tunnel failed, response 403", "refused": "Exit code 2\ngit-safe: " + extra, "error": "Exit code 1\nCannot save the current status"}[kind]
+        "net": "curl: (56) CONNECT tunnel failed, response 403", "refused": "Exit code 2\ngit-safe: " + extra, "error": "Exit code 1\nCannot save the current status",
+        "gitrefused": "Exit code 128\nfatal: refusing to fetch into branch 'refs/heads/x' checked out at '/x'"}[kind]
 if os.environ.get("FAKE_EXITFAIL") == r["id"]:      # the command failed with a message that names no known verdict: must not read as ok
     text = "Exit code 1\nsomething went wrong"
 if os.environ.get("FAKE_FLIP") != r["id"]:
@@ -64,10 +65,12 @@ if os.environ.get("FAKE_FLIP") != r["id"]:
             os.makedirs(os.path.dirname(p), exist_ok=True); open(p, "a").close()
         if k == "changed":
             open(p, "a").write(" ")
-if os.environ.get("FAKE_MOVEREF") == r["id"]:      # a commit that went through although the answer looks like a prompt: only the ref check can see it
+        if k == "has":
+            f, needle = p.split("::", 1); open(f, "a").write(needle + "\n")
+if True:      # FAKE_MOVEREF: a commit that went through although the answer looks like a prompt (only the ref check sees it); revmoved: the expected move
     import subprocess
     for k, p in r["disk"]:
-        if k == "rev":
+        if (k == "rev" and os.environ.get("FAKE_MOVEREF") == r["id"]) or (k == "revmoved" and os.environ.get("FAKE_FLIP") != r["id"]):
             repo, ref = p.split("::")
             g = lambda *x: subprocess.run(["git", "-C", repo] + list(x), capture_output=True, text=True).stdout.strip()
             g("update-ref", ref, g("commit-tree", g("rev-parse", ref + "^{tree}"), "-p", ref, "-m", "fake"))
@@ -142,9 +145,18 @@ eq "$(run 23 FAKE_FLIP=autoallow_deny_rule_kept)" 1 "an rm -rf past the deny rul
 eq "$(run 24 FAKE_MOVEREF=commit_bypass_cd)" 1 "a moved branch ref is a FAIL even when the answer looks like a prompt"
 has "$(grep '| commit_bypass_cd | default |' "$S/out24.txt")" "disk: want rev" "moved-ref row"
 eq "$(run 25 FAKE_FLIP=commit_bypass_dir_flag_hooks)" 1 "a git -C commit that runs is a FAIL"
+echo "# refs-deny probe: a ref move under the deny is a FAIL; the excluded gate control must move the ref"
+eq "$(run 26 FAKE_MOVEREF=refs_write_ref_file)" 1 "a ref file write that lands is a FAIL"
+eq "$(run 27 FAKE_FLIP=refs_ctl_gate_commit)" 1 "a gate commit that does not land is a FAIL"
+has "$(grep '| refs_ctl_gate_commit | default |' "$S/out27.txt")" "disk: want revmoved" "gate control row"
+echo "# C11 commit gate: a commit the gate should make that does not land, or a log line that is missing, is a FAIL"
+eq "$(run 29 FAKE_FLIP=gate_late_staged_logged)" 1 "a late-staged file missing from the log is a FAIL"
+has "$(grep '| gate_late_staged_logged | default |' "$S/out29.txt")" "disk: want has" "late-staged row"
+has "$(cat "$S/r1/settings-gate_commit_ok-default.json")" "Bash($SK/scripts/git-commit.sh \*)" "m_gate allows the gate"
+has "$(cat "$S/r1/settings-auto_allow-default.json")" "/.git/refs/\*\*" "the ref-store deny is in every generated sandbox"
 echo "# verdicts use the exit status: a failed command whose message names no known verdict is \`error\`, never ok"
-eq "$(run 28 FAKE_EXITFAIL=auto_allow)" 1 "a canary that exits 1 is a FAIL"
-has "$(grep '| auto_allow | default |' "$S/out28.txt")" "got error, want ok" "exit-status row"
+eq "$(run 28 FAKE_EXITFAIL=refs_ctl_add)" 1 "git add that exits 1 is a FAIL"
+has "$(grep '| refs_ctl_add | default |' "$S/out28.txt")" "got error, want ok" "exit-status row"
 python3 - "$SK/scripts" <<'UNIT' && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL classify unit (exit status)"; }
 import os, sys
 sys.path.insert(0, sys.argv[1]); os.environ["DT_SETTINGS"] = "/nonexistent"
@@ -154,6 +166,7 @@ assert c(["Exit code 1\nCannot save the current status"]) == "error"
 assert c(["<tool_use_error>String to replace not found in file.</tool_use_error>"]) == "error"
 assert c(["(Bash completed with no output)"]) == "ok" and c(["[work/t5 fc8751d] gate"]) == "ok" and c(["File created successfully at: /x"]) == "ok"
 assert c(["Exit code 128\nfatal: cannot lock ref 'HEAD': Unable to create '/r/.git/refs/heads/x.lock': Operation not permitted"]) == "eperm"
+assert c(["Exit code 128\nfatal: refusing to fetch into branch 'refs/heads/x' checked out at '/w'"]) == "gitrefused"
 assert c(["Exit code 2\ngit-safe: refused"]) == "refused" and c(["output mentions Exit code 0 only"]) == "ok"
 UNIT
 echo "# arguments"
@@ -174,7 +187,11 @@ for id in auto_allow rename_key_dir excluded_script_after_cd excluded_chained_to
   hook_wt_locked_write hook_wt_approved_write_ok hook_approvals_write hook_bash_sed_locked hook_bash_redirect_locked tool_wt_vscode_asks tool_wt_claude_md_root_asks \
   tool_wt_claude_md_nested_asks tool_wt_agents_md_nested_asks tool_wt_npmrc_nested_asks tool_wt_nested_plain_ok tool_wt_allow_only_mcp tool_wt_allow_only_claude_settings \
   tool_wt_github_workflow_asks tool_wt_gitmodules_asks tool_wt_gemini_md_nested_asks hook_wt_envrc_write autoallow_ask_rule_kept autoallow_deny_rule_kept \
-  commit_bypass_config_flag commit_bypass_cd commit_bypass_config_flag_hooks commit_bypass_cd_hooks commit_bypass_dir_flag_hooks; do
+  commit_bypass_config_flag commit_bypass_cd commit_bypass_dir_flag commit_bypass_config_flag_hooks commit_bypass_cd_hooks commit_bypass_dir_flag_hooks \
+  commit_bypass_dir_flag_wtcwd commit_bypass_dir_flag_wtcwd_hooks \
+  refs_cherry_pick refs_update_ref refs_write_ref_file refs_fetch_other_branch refs_branch_f_other_branch \
+  refs_checkout_B refs_commit_plain_noask refs_ctl_add refs_ctl_stash refs_ctl_gate_commit gate_commit_ok gate_late_staged_logged gate_refuses_detached \
+  gate_refuses_other_branch gate_refuses_unapproved gate_refuses_no_record gate_refuses_amend gate_refuses_separate_git_dir gate_plain_commit_in_worktree_hook; do
   grep -q "\"id\": \"$id\"" "$S/table.json" && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL case $id missing from the probe"; }
 done
 # raw / settings files are named after the case id: on a case-insensitive filesystem two ids that differ only in case overwrite each other

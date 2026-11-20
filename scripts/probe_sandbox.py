@@ -131,6 +131,9 @@ def make_f1(c, tag, hooks, where):
     g = json.loads(c.guard)
     g.update(project_key=key, repo_root=os.path.realpath(repo), remotes={"push": "f1remote", "allowed": ["f1remote"], "forbidden": []})
     open(c.ST + "/" + key + "/guard.json", "w").write(json.dumps(g, indent=1))
+    sys.path.insert(0, HERE)
+    import git_safe
+    git_safe.record_branch(c.ST + "/" + key, os.path.basename(wt), "work/f1", "probe-fixture")      # C11: what worktree-create.sh records; git-rename.sh needs it
     hdir = wt + "/.hooks" if where == "hookspath" else repo + "/.git/hooks"
     os.makedirs(hdir, exist_ok=True)
     for h in hooks:
@@ -181,12 +184,130 @@ def make_c11b(c):
             raise SystemExit("probe fixture: approve-plan T5 failed: %s %s" % (why, r.stderr[-300:]))
 
 
+def make_c11h(c):
+    """Commit-gate fixture (on top of make_c11b): branch probe-other = main + one commit, made in its own worktree outside the worktrees dir; {S}/probe.patch =
+    that commit as a mail patch; a package.json in T5 for the pnpm cases. Idempotent; never deletes."""
+    make_c11b(c)
+    other = c.S + "/other-wt"
+    if not os.path.isdir(other):
+        sh("git", "-C", c.PROJ, "worktree", "add", "-q", other, "-b", "probe-other", "main")
+        open(other + "/other.txt", "w").write("other\n")
+        sh("git", "-C", other, "add", "other.txt")
+        sh("git", "-C", other, "commit", "-q", "-m", "probe-other")
+    if not os.path.exists(c.S + "/probe.patch"):
+        open(c.S + "/probe.patch", "w").write(sh("git", "-C", c.PROJ, "format-patch", "-1", "probe-other", "--stdout").stdout)
+    pj = c.PROJ + "/.claude/worktrees/T5/package.json"
+    if not os.path.exists(pj):
+        open(pj, "w").write('{"name": "probe-t5", "version": "1.0.0", "private": true}\n')
+
+
+def m_ask_commit_pnpm(c, d):
+    """The dry-run project's ask rules (dryrun-ck/.claude/settings.json), exact spelling."""
+    d["permissions"]["ask"] += ["Bash(git commit:*)", "Bash(pnpm add:*)", "Bash(pnpm install:*)"]
+
+
+def reset_t5(c):
+    """Refs-deny probe: before every case T5 goes back to a clean `main` (the harness, outside any sandbox, on the scratch fixture only: abort an am / rebase /
+    merge / cherry-pick / revert in progress, then reset --hard), probe-target is set to main, and the fake gate script exists."""
+    make_c11h(c)
+    wt = c.PROJ + "/.claude/worktrees/T5"
+    for op in ("am", "rebase", "merge", "cherry-pick", "revert"):
+        subprocess.run(["git", "-C", wt, op, "--abort"], capture_output=True)
+    sh("git", "-C", wt, "checkout", "-q", "-f", "work/t5")          # a case may have left HEAD detached or on another branch
+    sh("git", "-C", wt, "reset", "-q", "--hard", "main")
+    sh("git", "-C", c.PROJ, "branch", "-f", "probe-target", "main")
+    gate = c.S + "/bin/fake-git-commit.sh"
+    if not os.path.exists(gate):
+        open(gate, "w").write('#!/bin/sh\n# stands in for an excluded gate script: unsandboxed, repo hooks off\nexec git -c core.hooksPath=/dev/null commit "$@"\n')
+        os.chmod(gate, 0o755)
+
+
+def m_refs_deny(c, d):
+    """The ref-store deny now comes from sandbox_plan (install_hooks.REF_STORE); this adds the dry-run project's ask rules."""
+    m_ask_commit_pnpm(c, d)
+
+
+def m_refs_deny_noask(c, d):
+    pass
+
+
+def m_refs_deny_gate(c, d):
+    """+ the fake gate excluded from the sandbox and allowed (no prompt hides the result): the commit path a git-commit.sh gate would take."""
+    m_refs_deny(c, d)
+    d["sandbox"]["excludedCommands"].append(c.S + "/bin/fake-git-commit.sh *")
+    d["permissions"]["allow"].append("Bash(%s/bin/fake-git-commit.sh *)" % c.S)
+
+
+def record(c, tid, branch):
+    """The branch line worktree-create.sh writes into delivery.log (the fixture does it here, once)."""
+    sys.path.insert(0, HERE)
+    import git_safe
+    if git_safe.recorded_branch(c.KD, tid) != branch:
+        git_safe.record_branch(c.KD, tid, branch, "probe-fixture")
+
+
+def gate_base(c):
+    """Gate cases: T5 clean (reset_t5) with its branch recorded and one file staged; T4 (plan not approved) recorded; T6 approved but NOT recorded."""
+    reset_t5(c)
+    record(c, "T5", "work/t5")
+    record(c, "T4", "work/t4")
+    wt6 = c.PROJ + "/.claude/worktrees/T6"
+    if not os.path.isdir(wt6):
+        sh("git", "-C", c.PROJ, "worktree", "add", "-q", wt6, "-b", "work/t6", "main")
+        open(c.KD + "/tickets/T6.md", "w").write("# T6\n\nstate: active\n\n## Plan\n\n1. probe step\n")
+        sys.path.insert(0, HERE)
+        import plan_lock
+        h, _ = plan_lock.plan_hash(open(c.KD + "/tickets/T6.md").read())
+        subprocess.run([os.path.join(HERE, "approve-plan.sh"), "T6", "--sha", h[:12], "--repo", c.PROJ, "--session", "probe-c11"],
+                       env=dict(os.environ, DELIVER_TICKET_HOME=c.ST), capture_output=True, check=True)
+    for wt in (c.PROJ + "/.claude/worktrees/T5", c.PROJ + "/.claude/worktrees/T4", wt6):
+        open(wt + "/gate-a.txt", "w").write("a\n")
+        sh("git", "-C", wt, "add", "gate-a.txt")
+
+
+def gate_late(c):
+    """A file staged after `git diff --cached --stat` was shown: it must appear in the gate's logged file list."""
+    gate_base(c)
+    wt = c.PROJ + "/.claude/worktrees/T5"
+    sh("git", "-C", wt, "diff", "--cached", "--stat")
+    open(wt + "/late.txt", "w").write("late\n")
+    sh("git", "-C", wt, "add", "late.txt")
+
+
+def gate_detached(c):
+    gate_base(c)
+    sh("git", "-C", c.PROJ + "/.claude/worktrees/T5", "checkout", "-q", "--detach")
+
+
+def gate_other_branch(c):
+    gate_base(c)
+    sh("git", "-C", c.PROJ + "/.claude/worktrees/T5", "checkout", "-q", "-B", "probe-otherbranch")
+
+
+def make_sep(c):
+    """A --separate-git-dir repo with a worktree under .claude/worktrees (the scripts must refuse it)."""
+    repo = c.S + "/sep-repo"
+    if not os.path.exists(repo):
+        sh("git", "init", "-q", "-b", "main", "--separate-git-dir", c.S + "/sep.git", repo)
+        sh("git", "-C", repo, "-c", "user.email=p@b.c", "-c", "user.name=probe", "commit", "-q", "--allow-empty", "-m", "init")
+        sh("git", "-C", repo, "worktree", "add", "-q", repo + "/.claude/worktrees/S1", "-b", "work/s1", "main")
+        open(repo + "/.claude/worktrees/S1/x.txt", "w").write("x\n")
+        sh("git", "-C", repo + "/.claude/worktrees/S1", "add", "x.txt")
+
+
+def m_gate(c, d):
+    """The project's ask rules, and git-commit.sh's ask rule replaced by an allow rule: stands in for the user's yes so the verdict is the gate script itself."""
+    m_ask_commit_pnpm(c, d)
+    d["permissions"]["ask"] = [r for r in d["permissions"]["ask"] if "git-commit.sh" not in r]
+    d["permissions"].setdefault("allow", []).append("Bash(%s/scripts/git-commit.sh *)" % SK)
+
+
 def expand(c, k, s):
     return c.fmt(s.replace("{id}", k["id"]))
 
 
 def settings_for(c, case):
-    sets, adds = ih.sandbox_plan(c.PROJ, c.KD, case.get("domains", []), case.get("local", False))
+    sets, adds = ih.sandbox_plan(c.PROJ, c.KD, case.get("domains", []), case.get("local", False), os.path.realpath(c.PROJ + "/.git"))   # C11: + the ref-store deny
     m = {"set_prev": {}, "added": {}, "created_dicts": [], "created_lists": []}
     d = ih.sandbox_desired({}, sets, adds, m)
     sb = d["sandbox"]
@@ -306,8 +427,8 @@ CASES = [
     dict(id="localhost_listen_with_binding", cmd="node {S}/srv.js", local=True, expect="ok", contains="got:ok"),
     dict(id="localhost_client_without_binding", cmd="curl -sS -m 5 http://127.0.0.1:{PORT}/", expect="net", info=True),
     dict(id="localhost_client_with_binding", cmd="curl -sS -m 5 http://127.0.0.1:{PORT}/", local=True, expect="ok", contains="probe-server-ok"),
-    dict(id="git_rename_script_excluded", dt_home=True, cmd="{SK}/scripts/git-rename.sh work/t1 feat-t1", cwd="{WT1}", expect="ok", sources=NOUSER, disk=[("exists", "{PROJ}/.git/refs/heads/feat-t1")]),
-    dict(id="git_branch_rename_sandboxed_fails", cmd="git branch -m work/t2 feat-t2", cwd="{WT2}", expect="eperm", mutate=m_nobranch, contains="config", sources=NOUSER),
+    dict(id="git_rename_script_excluded", dt_home=True, cmd="{SK}/scripts/git-rename.sh work/t1 feat-t1", cwd="{WT1}", setup=lambda c: record(c, "T1", "work/t1"), expect="ok", sources=NOUSER, disk=[("exists", "{PROJ}/.git/refs/heads/feat-t1")]),
+    dict(id="git_branch_rename_sandboxed_fails", cmd="git branch -m work/t2 feat-t2", cwd="{WT2}", expect="eperm", mutate=m_nobranch, contains="config|logs/refs|cannot lock ref", sources=NOUSER),
     # the push is allowed by rule (no prompt), so the verdict is the sandbox: `cd <dir> && git push` does not match `git push *`, so it runs sandboxed -> the file:// remote
     # outside allowWrite stays unchanged. Disk is the proof (no loose ref in remote2.git), not the exit code.
     # HEAD refspecs, not work/t1|t2: git_branch_rename_excluded renames work/t1 earlier in the run
@@ -352,7 +473,7 @@ CASES = [
     # that tries to write guard.json (denyWrite) gets EPERM: the script then exits 1, records the failed rc, and guard.json is unchanged.
     dict(id="verify_record_sandboxed", cmd="{SK}/scripts/verify-record.sh V1 --guard {KD}/guard.json", cwd="{PROJ}", expect="eperm", contains="verify lint: exit 1", sources=NOUSER,
          setup=make_v1, disk=[("exists", "{KD}/evidence/V1/verify.json"), ("same", "{KD}/guard.json")]),
-    dict(id="git_dash_C_stays_sandboxed", cmd="git -C {WT3} branch -m work/t3 feat-t3", cwd="{PROJ}", expect="eperm", contains="config", mutate=m_branch_allowed, sources=NOUSER),
+    dict(id="git_dash_C_stays_sandboxed", cmd="git -C {WT3} branch -m work/t3 feat-t3", cwd="{PROJ}", expect="eperm", contains="config|logs/refs|cannot lock ref", mutate=m_branch_allowed, sources=NOUSER),
     dict(id="gh_read_unsandboxed", cmd="gh pr view 1", expect="ok", contains="fake-gh: UNSANDBOXED"),
     dict(id="gh_write_asks", cmd="gh pr edit 1", modes=BOTH, expect="prompt"),
     dict(id="gh_unlisted_sandboxed", cmd="gh cache delete 1", expect="ok", contains="fake-gh: SANDBOXED"),
@@ -468,13 +589,67 @@ CASES = [
          disk=[("rev", "{PROJ}::refs/heads/work/t5")]),
     dict(id="commit_bypass_cd", cmd="cd {WT}/T5 && git commit --allow-empty -m probe", cwd="{PROJ}", mutate=m_ask_commit, expect=("prompt", "hook", "eperm"),
          disk=[("rev", "{PROJ}::refs/heads/work/t5")]),
+    dict(id="commit_bypass_dir_flag", cmd="git -C {WT}/T5 commit --allow-empty -m probe", cwd="{PROJ}", mutate=m_ask_commit, expect=("prompt", "hook", "eperm"),
+         disk=[("rev", "{PROJ}::refs/heads/work/t5")]),
     dict(id="commit_bypass_config_flag_hooks", cmd="git -c user.name=probe commit --allow-empty -m probe", cwd="{WT}/T5", mutate=m_ask_commit, hooks=True, dt_home=True,
          expect=("prompt", "hook", "eperm"), disk=[("rev", "{PROJ}::refs/heads/work/t5")]),
     dict(id="commit_bypass_cd_hooks", cmd="cd {WT}/T5 && git commit --allow-empty -m probe", cwd="{PROJ}", mutate=m_ask_commit, hooks=True, dt_home=True,
          expect=("prompt", "hook", "eperm"), disk=[("rev", "{PROJ}::refs/heads/work/t5")]),
     dict(id="commit_bypass_dir_flag_hooks", cmd="git -C {WT}/T5 commit --allow-empty -m probe", cwd="{PROJ}", mutate=m_ask_commit, hooks=True, dt_home=True,
          expect=("prompt", "hook", "eperm"), disk=[("rev", "{PROJ}::refs/heads/work/t5")]),
-]]]
+] + [dict(dict(setup=make_c11h, mutate=m_ask_commit_pnpm, expect=("prompt", "hook", "eperm"), disk=[("rev", "{PROJ}::refs/heads/work/t5")]), **k) for k in [
+    # Commit-gate probe (C11, user request): from the ticket-session cwd (worktree T5), with the C11c1 sandbox and the project's ask rules. The ref-moving git
+    # commands of that probe (all moved work/t5 before the ref-store deny) now live in the refs_* cases below, each from a clean reset; here: the commit itself.
+    dict(id="commit_bypass_dir_flag_wtcwd", cmd="git -C {WT}/T5 commit --allow-empty -m probe", cwd="{WT}/T5"),
+    dict(id="commit_bypass_dir_flag_wtcwd_hooks", cmd="git -C {WT}/T5 commit --allow-empty -m probe", cwd="{WT}/T5", hooks=True, dt_home=True),
+] + [dict(dict(setup=reset_t5, mutate=m_refs_deny, cwd="{WT}/T5", hooks=True, dt_home=True, expect=("eperm", "hook", "prompt"),
+               disk=[("rev", "{PROJ}::refs/heads/work/t5")]), **k) for k in [
+    # Refs-deny probe (structural commit gate candidate, probe only): the project sandbox denies writes to <repo>/.git/refs/**, packed-refs, logs/refs/**. From the
+    # approved worktree T5, reset to `main` before each case, nothing may move a branch; git's own refusal of a checked-out branch is `gitrefused`.
+    dict(id="refs_cherry_pick", cmd="git cherry-pick probe-other"),
+    dict(id="refs_revert", cmd="git revert --no-edit HEAD"),
+    dict(id="refs_merge", cmd="git merge probe-other"),
+    dict(id="refs_am", cmd="git am {S}/probe.patch"),
+    dict(id="refs_rebase", cmd="git rebase probe-other"),
+    dict(id="refs_update_ref", cmd="git update-ref refs/heads/work/t5 probe-other"),
+    dict(id="refs_commit_tree_update_ref", cmd="git update-ref refs/heads/work/t5 $(git commit-tree HEAD^{{tree}} -p HEAD -m probe)"),
+    dict(id="refs_reset_hard", cmd="git reset --hard probe-other"),
+    dict(id="refs_commit_dir_flag", cmd="git -C {WT}/T5 commit --allow-empty -m probe"),
+    dict(id="refs_commit_plain_ask", cmd="git commit --allow-empty -m probe"),
+    dict(id="refs_commit_plain_noask", cmd="git commit --allow-empty -m probe", mutate=m_refs_deny_noask),
+    dict(id="refs_fetch_checked_out", cmd="git fetch . probe-other:work/t5", expect=("eperm", "hook", "prompt", "gitrefused")),
+    dict(id="refs_branch_f_checked_out", cmd="git branch -f work/t5 probe-other", expect=("eperm", "hook", "prompt", "gitrefused")),
+    dict(id="refs_fetch_other_branch", cmd="git fetch . probe-other:probe-target", disk=[("rev", "{PROJ}::refs/heads/probe-target")]),
+    dict(id="refs_branch_f_other_branch", cmd="git branch -f probe-target probe-other", disk=[("rev", "{PROJ}::refs/heads/probe-target")]),
+    dict(id="refs_checkout_B", cmd="git checkout -B work/t5 probe-other"),
+    dict(id="refs_write_ref_file", cmd="git rev-parse probe-other > {PROJ}/.git/refs/heads/work/t5"),
+    dict(id="refs_cp_ref_file", cmd="cp {PROJ}/.git/refs/heads/probe-other {PROJ}/.git/refs/heads/work/t5"),
+    # controls: the work a ticket session needs still runs under the deny; an excluded (unsandboxed) gate-like script still commits
+    dict(id="refs_ctl_add", cmd="git add add-me.txt", seed=[("{WT}/T5/add-me.txt", "x\n")], expect="ok", disk=[]),      # an EPERM on the index would show as `eperm`
+    dict(id="refs_ctl_status", cmd="git status --short", expect="ok", disk=[]),
+    dict(id="refs_ctl_diff", cmd="git diff --stat", seed=[("{WT}/T5/f.txt", "changed\n")], expect="ok", disk=[]),
+    # 2.1.311, 2026-11-20: under the ref deny `git stash` fails (exit 1, "Cannot save the current status": refs/stash is in the ref store) - stages say: no stash
+    dict(id="refs_ctl_stash", cmd="git stash", seed=[("{WT}/T5/f.txt", "changed\n")], expect="error", info=True, disk=[("rev", "{PROJ}::refs/heads/work/t5")]),
+    dict(id="refs_ctl_gate_commit", cmd="{S}/bin/fake-git-commit.sh --allow-empty -m gate", mutate=m_refs_deny_gate, expect="ok",
+         disk=[("revmoved", "{PROJ}::refs/heads/work/t5")]),
+    # C11 commit gate (scripts/git-commit.sh, its ask rule turned into an allow by m_gate): commits only for an approved plan on the recorded branch, and logs
+    # the staged file list; a plain `git commit` in a ticket worktree is a hook block pointing to it
+    dict(id="gate_commit_ok", cmd="{SK}/scripts/git-commit.sh --session probe -m probe-gate", setup=gate_base, mutate=m_gate, expect="ok",
+         disk=[("revmoved", "{PROJ}::refs/heads/work/t5"), ("has", "{KD}/delivery.log::| commit | ")]),
+    dict(id="gate_late_staged_logged", cmd="{SK}/scripts/git-commit.sh --session probe -m probe-late", setup=gate_late, mutate=m_gate, expect="ok",
+         disk=[("revmoved", "{PROJ}::refs/heads/work/t5"), ("has", "{KD}/delivery.log::late.txt")]),
+    dict(id="gate_refuses_detached", cmd="{SK}/scripts/git-commit.sh --session probe -m x", setup=gate_detached, mutate=m_gate, expect="refused"),
+    dict(id="gate_refuses_other_branch", cmd="{SK}/scripts/git-commit.sh --session probe -m x", setup=gate_other_branch, mutate=m_gate, expect="refused",
+         disk=[("rev", "{PROJ}::refs/heads/work/t5"), ("rev", "{PROJ}::refs/heads/probe-otherbranch")]),
+    dict(id="gate_refuses_unapproved", cmd="{SK}/scripts/git-commit.sh --session probe -m x", cwd="{WT}/T4", setup=gate_base, mutate=m_gate, expect="refused",
+         disk=[("rev", "{PROJ}::refs/heads/work/t4")]),
+    dict(id="gate_refuses_no_record", cmd="{SK}/scripts/git-commit.sh --session probe -m x", cwd="{WT}/T6", setup=gate_base, mutate=m_gate, expect="refused",
+         disk=[("rev", "{PROJ}::refs/heads/work/t6")]),
+    dict(id="gate_refuses_amend", cmd="{SK}/scripts/git-commit.sh --session probe -m x --amend", setup=gate_base, mutate=m_gate, expect="refused"),
+    dict(id="gate_refuses_separate_git_dir", cmd="{SK}/scripts/git-commit.sh --session probe -m x", cwd="{S}/sep-repo/.claude/worktrees/S1", setup=make_sep,
+         mutate=m_gate, expect="refused", contains="separate-git-dir", disk=[("rev", "{S}/sep-repo::refs/heads/work/s1")]),
+    dict(id="gate_plain_commit_in_worktree_hook", cmd="git commit -m probe", setup=gate_base, expect="hook", contains="runs only through the gate"),
+]]]]]
 
 
 def classify(texts):
@@ -489,6 +664,8 @@ def classify(texts):
         return "denied"
     if "git-safe: " in t:                      # git-push.sh / git-rename.sh refused the arguments or the config (git_safe.die)
         return "refused"
+    if re.search(r"refusing to fetch into branch|cannot force update the branch|is (already )?checked out at|used by worktree at", t):
+        return "gitrefused"                    # git itself refuses to move a branch checked out in a worktree
     if re.search(r"not permitted|EPERM|PermissionError|update of config-file failed|could not lock config|unable to create temporary object directory", t):
         return "eperm"
     if re.search(r"CONNECT tunnel failed|network-outbound|Connection refused|Could not connect|Failed to connect|Operation timed out", t):
@@ -545,9 +722,20 @@ def sha(p):
         return None
 
 
+def _has(p):
+    """disk kind `has`: "<file>::<text>" - the file contains the text."""
+    f, needle = p.split("::", 1)
+    try:
+        return needle in open(f).read()
+    except OSError:
+        return False
+
+
 def snap(kind, p):
     """The before / after value of a disk check: `rev` = `git rev-parse` of "<repo>::<ref>" (packed refs too), else the file's sha256."""
-    if kind == "rev":
+    if kind == "has":
+        return None
+    if kind in ("rev", "revmoved"):
         repo, ref = p.split("::")
         r = subprocess.run(["git", "-C", repo, "rev-parse", "--verify", "-q", ref], capture_output=True, text=True)
         return r.stdout.strip() or None
@@ -578,7 +766,8 @@ def judge(c, case, used, res, before, inputs=()):
         p = expand(c, case, path)
         now = snap(kind, p)
         good = {"exists": os.path.exists(p), "absent": not os.path.exists(p), "same": now == before.get(p), "changed": now != before.get(p),
-                "rev": now is not None and now == before.get(p)}[kind]
+                "rev": now is not None and now == before.get(p), "revmoved": None not in (now, before.get(p)) and now != before.get(p),
+                "has": kind == "has" and _has(p)}[kind]
         if not good:
             ok = False
             notes.append("disk: want %s, is not: %s" % (kind, os.path.relpath(p, c.OUT) if p.startswith(c.OUT) else p))

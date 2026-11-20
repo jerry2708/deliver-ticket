@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Shared by git-push.sh and git-rename.sh (plan.md, milestone 1c, section 1b).
+"""Shared by git-push.sh, git-rename.sh and git-commit.sh (plan.md, milestone 1c, section 1b; C11 ref-store deny).
 
 Both run UNSANDBOXED (excluded from the sandbox) with arguments Claude chose, and they run git with `-c core.hooksPath=/dev/null` so that the repo's own
 hooks (code from the worktree) never run unsandboxed. Hence everything is validated here, not only in the hooks. Standard library only.
@@ -51,7 +51,9 @@ def ticket_context(cwd):
     if r.returncode != 0:
         die("not inside a git repository: %s" % cwd)
     common, top = r.stdout.split("\n")[:2]
-    repo = os.path.realpath(common[:-5] if common.endswith("/.git") else common)
+    if not common.endswith("/.git") or not os.path.isdir(common):
+        die("the git dir of this repository is %s, not <main checkout>/.git (--separate-git-dir or a gitfile): not supported by this skill" % common)
+    repo = os.path.realpath(common[:-5])
     home, state, key = ticket_ctl.state_dir(repo)
     try:
         g = json.load(open(os.path.join(state, "guard.json")))
@@ -64,6 +66,24 @@ def ticket_context(cwd):
     if os.path.dirname(top) != base:
         die("run this from the ticket's worktree directory (%s/<ID>), not from %s" % (base, cwd))
     return repo, state, g, top, os.path.basename(top), os.path.realpath(common)
+
+
+def recorded_branch(state, tid):
+    """The ticket's branch as last recorded in <state>/delivery.log (protected state: only worktree-create.sh and git-rename.sh write `branch` lines), or
+    None. The ticket file's `branch:` is not used: Claude can edit it (C11a), and the worktree's HEAD can be repointed from the sandbox."""
+    rec = None
+    try:
+        for line in open(os.path.join(state, "delivery.log")):
+            f = [x.strip() for x in line.split(" | ")]
+            if len(f) == 5 and f[2] == "ticket=" + tid and f[3] == "branch":
+                rec = f[4]
+    except OSError:
+        return None
+    return rec
+
+
+def record_branch(state, tid, name, sid="-"):
+    ticket_ctl.log(state, sid, tid, "branch", name)
 
 
 def branch_name(name, what="branch"):
