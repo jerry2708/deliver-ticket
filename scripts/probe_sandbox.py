@@ -602,6 +602,15 @@ CASES = [
     # commands of that probe (all moved work/t5 before the ref-store deny) now live in the refs_* cases below, each from a clean reset; here: the commit itself.
     dict(id="commit_bypass_dir_flag_wtcwd", cmd="git -C {WT}/T5 commit --allow-empty -m probe", cwd="{WT}/T5"),
     dict(id="commit_bypass_dir_flag_wtcwd_hooks", cmd="git -C {WT}/T5 commit --allow-empty -m probe", cwd="{WT}/T5", hooks=True, dt_home=True),
+    # C11 step 4: pnpm against the project ask rules Bash(pnpm add:*) / Bash(pnpm install:*). Before the hook rule `pnpm -C <dir> add` and `pnpm --dir <dir> install`
+    # ran sandboxed with no prompt (2.1.311, 2026-11-19; only the sandbox network block kept add from installing). Now every other spelling is a hook block; the
+    # plain one prompts. package.json unchanged, no node_modules either way.
+    dict(id="pnpm_dir_flag_add", cmd="pnpm -C {WT}/T5 add left-pad", cwd="{WT}/T5", hooks=True, dt_home=True, expect="hook", disk=[("same", "{WT}/T5/package.json")]),
+    dict(id="pnpm_dir_long_install", cmd="pnpm --dir {WT}/T5 install", cwd="{WT}/T5", hooks=True, dt_home=True, expect="hook",
+         disk=[("same", "{WT}/T5/package.json"), ("absent", "{WT}/T5/node_modules")]),
+    dict(id="pnpm_alias_i", cmd="pnpm i", cwd="{WT}/T5", hooks=True, dt_home=True, expect="hook", disk=[("absent", "{WT}/T5/node_modules")]),
+    dict(id="pnpm_npx_runner", cmd="npx pnpm add left-pad", cwd="{WT}/T5", hooks=True, dt_home=True, expect="hook", disk=[("same", "{WT}/T5/package.json")]),
+    dict(id="pnpm_plain_add_asks", cmd="pnpm add left-pad", cwd="{WT}/T5", hooks=True, dt_home=True, expect="prompt", disk=[("same", "{WT}/T5/package.json")]),
 ] + [dict(dict(setup=reset_t5, mutate=m_refs_deny, cwd="{WT}/T5", hooks=True, dt_home=True, expect=("eperm", "hook", "prompt"),
                disk=[("rev", "{PROJ}::refs/heads/work/t5")]), **k) for k in [
     # Refs-deny probe (structural commit gate candidate, probe only): the project sandbox denies writes to <repo>/.git/refs/**, packed-refs, logs/refs/**. From the

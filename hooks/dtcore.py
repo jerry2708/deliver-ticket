@@ -1154,6 +1154,45 @@ GATED_CLI = {"gh": [("api",), ("auth",), ("secret",), ("variable",), ("repo",), 
                       ("mr", "create"), ("mr", "update"), ("mr", "note"), ("mr", "close"), ("mr", "approve"), ("mr", "reopen"), ("mr", "checkout"),
                       ("mr", "delete")]}
 CLI_VALUE_OPTS = {"-R", "--repo", "--hostname"}
+# C11 step 4: package installs gated by a project ask rule (dry-run project: Bash(pnpm add:*), Bash(pnpm install:*)) - the same prefix problem: probe
+# pnpm_dir_flag_add / pnpm_dir_long_install (2.1.311) ran `pnpm -C <dir> add` / `pnpm --dir <dir> install` sandboxed with no prompt.
+PNPM_GATED = {"add": "add", "install": "install", "i": "install"}      # spelled subcommand -> the one spelling its ask rule matches
+PNPM_RUNNERS = {"npx", "pnpx", "corepack"}
+
+
+def _npm_call(a, prog):
+    """The shell string of `npm exec|x -c <cmd>` / `--call <cmd>` / `--call=<cmd>` (npm runs it like bash -c), else None."""
+    if prog != "npm" or len(a) < 3 or a[1] not in ("exec", "x"):
+        return None
+    for k in range(2, len(a)):
+        if a[k] in ("-c", "--call") and k + 1 < len(a):
+            return a[k + 1]
+        if a[k].startswith("--call="):
+            return a[k][len("--call="):]
+    return None
+
+
+def _pnpm_in_string(cmd):
+    """True when a shell string runs pnpm with a gated word after it (pnpm add / install / i, any options between)."""
+    try:
+        words = shlex.split(cmd)
+    except ValueError:
+        words = cmd.split()
+    names = [pname(w) for w in words]
+    return any(n == "pnpm" and any(w in PNPM_GATED for w in words[k + 1:]) for k, n in enumerate(names))
+
+
+def _pnpm_args(a, prog):
+    """The words after `pnpm` when this command runs pnpm - directly or through npx / pnpx / corepack / `npm exec` / `npm x` - else None."""
+    if prog == "pnpm":
+        return a[1:]
+    if prog in PNPM_RUNNERS and len(a) > 1 and pname(a[1]) == "pnpm":
+        return a[2:]
+    if prog == "npm" and len(a) > 2 and a[1] in ("exec", "x"):
+        i = next((k for k in range(2, len(a)) if not a[k].startswith("-")), None)          # npm exec [--yes] [--] pnpm ...
+        if i is not None and pname(a[i]) == "pnpm":
+            return a[i + 1:]
+    return None
 
 
 def _cli_positionals(toks):
@@ -1169,7 +1208,7 @@ def _cli_positionals(toks):
 
 
 def check_canonical(c):
-    """Block a gated command (git push, git commit, gh / glab writes) that is not spelled the way its ask rule matches."""
+    """Block a gated command (git push, git commit, pnpm add / install, gh / glab writes) that is not spelled the way its ask rule matches."""
     a = c.argv
     if not a:
         return
@@ -1189,6 +1228,19 @@ def check_canonical(c):
             block("git commit is spelled so the permission ask rule `git commit` would not match it (a global option such as -C / -c / --git-dir before "
                   "`commit`, a path, a wrapper, an env assignment, bash -c / eval / $( )): run `cd <worktree>` as its own call, then plain `git commit ...` "
                   "in the next call")
+    elif _npm_call(a, prog) is not None and _pnpm_in_string(_npm_call(a, prog)):
+        block("npm exec -c / --call runs a shell string that installs with pnpm, so the project's permission ask rule `pnpm add` / `pnpm install` would not "
+              "match it: run `cd <dir>` as its own call, then plain `pnpm add|install ...` in the next")
+    elif _pnpm_args(a, prog) is not None:
+        toks = _pnpm_args(a, prog)
+        lead = bool(toks) and toks[0].startswith("-")
+        # with an option first, its value may look like the subcommand (`pnpm -C add install`): then any gated word anywhere counts
+        hit = next((t for t in toks if t in PNPM_GATED), None) if lead else (toks[0] if toks and toks[0] in PNPM_GATED else None)
+        if hit and not (prog == "pnpm" and plain and toks[0] == PNPM_GATED[hit]):
+            want = PNPM_GATED[hit]
+            block("pnpm %s is spelled so the project's permission ask rule `pnpm %s` would not match it (an option such as -C / --dir / --filter / -w before the "
+                  "subcommand, the alias `i`, a path, a wrapper such as npx / corepack / npm exec, an env assignment, bash -c / eval / $( )): run `cd <dir>` as its own "
+                  "call, then plain `pnpm %s ...` in the next" % (hit, want, want))
     elif prog in GATED_CLI:
         toks = a[1:]
         pos = _cli_positionals(toks)

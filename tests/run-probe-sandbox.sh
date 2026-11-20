@@ -189,7 +189,7 @@ for id in auto_allow rename_key_dir excluded_script_after_cd excluded_chained_to
   tool_wt_github_workflow_asks tool_wt_gitmodules_asks tool_wt_gemini_md_nested_asks hook_wt_envrc_write autoallow_ask_rule_kept autoallow_deny_rule_kept \
   commit_bypass_config_flag commit_bypass_cd commit_bypass_dir_flag commit_bypass_config_flag_hooks commit_bypass_cd_hooks commit_bypass_dir_flag_hooks \
   commit_bypass_dir_flag_wtcwd commit_bypass_dir_flag_wtcwd_hooks \
-  refs_cherry_pick refs_update_ref refs_write_ref_file refs_fetch_other_branch refs_branch_f_other_branch \
+  pnpm_dir_flag_add pnpm_dir_long_install pnpm_alias_i pnpm_npx_runner pnpm_plain_add_asks refs_cherry_pick refs_update_ref refs_write_ref_file refs_fetch_other_branch refs_branch_f_other_branch \
   refs_checkout_B refs_commit_plain_noask refs_ctl_add refs_ctl_stash refs_ctl_gate_commit gate_commit_ok gate_late_staged_logged gate_refuses_detached \
   gate_refuses_other_branch gate_refuses_unapproved gate_refuses_no_record gate_refuses_amend gate_refuses_separate_git_dir gate_plain_commit_in_worktree_hook; do
   grep -q "\"id\": \"$id\"" "$S/table.json" && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL case $id missing from the probe"; }

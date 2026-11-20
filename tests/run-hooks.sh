@@ -488,6 +488,20 @@ out=$(payload "$W" Bash "git commit -m x" u1 | "$SK/hooks/guard.sh" 2>&1); print
 # outside a ticket worktree (an unbound session in the main checkout) the hook leaves a plain commit to the ask rule and the sandbox (EPERM under the ref deny)
 for c in 'git commit -m x' 'cd . && git commit -m x'; do tsid 0 guard.sh u1 "$R" "$c"; done
 out=$(payload "$S/nostate" Bash "git -C . commit -m x" u1 | "$SK/hooks/guard.sh" 2>&1); req "$?" 0 "no delivery state: git -C commit is not this skill's business ($out)"
+echo "# C11 step 4: pnpm add / install only as plain \`pnpm add|install ...\` (a project ask rule Bash(pnpm add:*) matches the text as a prefix; probe pnpm_dir_*)"
+for sid in s1 u1; do
+  for cwd in "$W" "$R"; do
+    for c in 'pnpm -C . add left-pad' 'pnpm --dir . install' 'pnpm i' 'pnpm i left-pad' 'pnpm --filter web add x' 'pnpm -w add x' 'pnpm -r install' 'pnpm --prefix . install' \
+      '/usr/local/bin/pnpm add x' 'PNPM add x' 'FOO=1 pnpm add x' 'env pnpm add x' 'command pnpm install' 'npx pnpm add x' 'pnpx pnpm add x' 'corepack pnpm install' 'npm exec pnpm add x' 'npm x pnpm install' 'npm exec --yes -- pnpm add x' 'npm exec -c "pnpm add x"' 'npm exec --call="pnpm -C . install"' 'npm x --call "pnpm i"' \
+      'bash -c "pnpm add x"' 'eval "pnpm install"' 'echo $(pnpm install)' 'cd . && pnpm -C . install' 'pnpm -C add install'; do
+      tsid 2 guard.sh $sid "$cwd" "$c"; done
+  done
+  for c in 'pnpm add left-pad' 'pnpm add -D x' 'pnpm install' 'pnpm install --frozen-lockfile' 'cd . && pnpm add x' 'pnpm test' 'pnpm run install' 'pnpm -C . test' \
+    'pnpm -C . run build' 'pnpm lint' 'pnpm --version' 'npx vitest run' 'npm exec vitest run' 'npm x tsc' 'npm exec -c "pnpm test"' 'npm exec --call="pnpm run build"'; do tsid 0 guard.sh $sid "$W" "$c"; done
+done
+out=$(payload "$W" Bash "pnpm -C . add x" u1 | "$SK/hooks/guard.sh" 2>&1); printf '%s' "$out" | grep -q 'then plain `pnpm add ...` in the next' && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL pnpm block message: $out"; }
+out=$(payload "$W" Bash "pnpm i" u1 | "$SK/hooks/guard.sh" 2>&1); printf '%s' "$out" | grep -q 'ask rule `pnpm install`' && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL pnpm alias message: $out"; }
+out=$(payload "$S/nostate" Bash "pnpm -C . add x" u1 | "$SK/hooks/guard.sh" 2>&1); req "$?" 0 "no delivery state: pnpm -C is not this skill's business ($out)"
 echo "# C5b: the user's git config (~/.gitconfig, ~/.config/git/**, \$XDG_CONFIG_HOME/git/**) is not written by Claude: git-push.sh trusts it and runs unsandboxed"
 for sid in s1 u1; do
   for c in 'echo x >> ~/.gitconfig' 'echo x > ~/.config/git/config' 'echo x >> ~/.config/git/ignore' 'touch ~/.gitconfig' 'tee ~/.gitconfig' 'cp /dev/null ~/.config/git/config' \

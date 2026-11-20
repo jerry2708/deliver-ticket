@@ -50,6 +50,7 @@ has stages/3-build.md 'do not retry in another spelling or with another command'
 has stages/cancel.md '`git branch -d <branch>` is always a command for me'
 has SKILL.md 'scripts/git-commit.sh --session <id>'
 has README.md 'no Claude session in that repo commits outside the gate'
+has README.md 'not the alias `pnpm i`, not via `npx` / `corepack`'
 has stages/3-build.md '`CLAUDE.md`, `CLAUDE.local.md`, `AGENTS.md`, `GEMINI.md`, `.cursorrules`, `.npmrc`'
 has stages/3-build.md '`.vscode/` or `.github/`'
 for good in 'run `<skill dir>/scripts/ticket-state.sh done T1`' '`<skill dir>/scripts/session-map.sh show`' '`<skill dir>/scripts/guard-write.sh diff`' 'git -C <wt> status' '`git branch -m a b`' 'from the worktree directory: `git push <remote> <branch>`' 'cd <wt>, then (second call) git push mirror x'; do python3 tests/lint_script_calls.py --text "$good" >/dev/null; ok $? "lint must accept: $good"; done
