@@ -659,7 +659,8 @@ DOMAIN_RE = re.compile(r"[A-Za-z0-9*][A-Za-z0-9*.-]*")
 def sandbox_plan(repo, state, domains, local_binding):
     sk = os.path.join(SKILL, "scripts")
     book, gate, boxed = [os.path.join(sk, x) for x in BOOKKEEPING], [os.path.join(sk, x) for x in GATES], [os.path.join(sk, x) for x in SANDBOXED]
-    sets = [(("sandbox", "enabled"), True), (("sandbox", "failIfUnavailable"), True)]
+    # C11c1: autoAllowBashIfSandboxed is the default on 2.1.311; from 2.1.325 it is false (changelog, docs/plan.md C11 record), and then every sandboxed command would prompt
+    sets = [(("sandbox", "enabled"), True), (("sandbox", "failIfUnavailable"), True), (("sandbox", "autoAllowBashIfSandboxed"), True)]
     if local_binding:
         sets.append((("sandbox", "network", "allowLocalBinding"), True))
     adds = [(("sandbox", "excludedCommands"), [p + " *" for p in book + gate] + CLI_CREATE + CLI_ASK + CLI_ALLOW),

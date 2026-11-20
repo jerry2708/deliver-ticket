@@ -62,6 +62,13 @@ if os.environ.get("FAKE_FLIP") != r["id"]:
             os.makedirs(os.path.dirname(p), exist_ok=True); open(p, "a").close()
         if k == "changed":
             open(p, "a").write(" ")
+if os.environ.get("FAKE_MOVEREF") == r["id"]:      # a commit that went through although the answer looks like a prompt: only the ref check can see it
+    import subprocess
+    for k, p in r["disk"]:
+        if k == "rev":
+            repo, ref = p.split("::")
+            g = lambda *x: subprocess.run(["git", "-C", repo] + list(x), capture_output=True, text=True).stdout.strip()
+            g("update-ref", ref, g("commit-tree", g("rev-parse", ref + "^{tree}"), "-p", ref, "-m", "fake"))
 if r.get("tool") and kind == "denied":        # a file tool's deny answer (2.1.311) has other words than a Bash one
     text = "<tool_use_error>File is in a directory that is denied by your permission settings.</tool_use_error>"
 if os.environ.get("FAKE_NOTREAD") == r["id"]:
@@ -126,6 +133,13 @@ eq "$(run 21 FAKE_FLIP=tool_wt_mcp_asks)" 1 "a .mcp.json Write without a prompt 
 has "$(cat "$S/r1/settings-hook_wt_locked_write-default.json")" "$SK/hooks/worktree-guard.sh" "hooks=True registers the Edit / Write hook too"
 has "$(cat "$S/r1/settings-tool_wt_edit_allowed-default.json")" "Edit(/$S/r1/proj/.claude/worktrees/\*\*)" "the worktree allow is project-apply's"
 [ -f "$S/ro1/state/$(ls "$S/ro1/state" | grep '^proj-')/approvals/T5.plan" ] && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL the C11b fixture has no approval for T5"; }
+echo "# C11c1: autoAllowBashIfSandboxed in every generated sandbox; ask / deny rules and the commit gate are kept (a moved branch ref is a FAIL whatever the answer)"
+has "$(cat "$S/r1/settings-auto_allow-default.json")" '"autoAllowBashIfSandboxed": true' "the sandbox plan sets autoAllowBashIfSandboxed"
+eq "$(run 22 FAKE_FLIP=autoallow_ask_rule_kept)" 1 "a git commit past the ask rule is a FAIL"
+eq "$(run 23 FAKE_FLIP=autoallow_deny_rule_kept)" 1 "an rm -rf past the deny rule is a FAIL"
+eq "$(run 24 FAKE_MOVEREF=commit_bypass_cd)" 1 "a moved branch ref is a FAIL even when the answer looks like a prompt"
+has "$(grep '| commit_bypass_cd | default |' "$S/out24.txt")" "disk: want rev" "moved-ref row"
+eq "$(run 25 FAKE_FLIP=commit_bypass_dir_flag_hooks)" 1 "a git -C commit that runs is a FAIL"
 echo "# arguments"
 env FAKE_RUN_S="$S/r7" FAKE_RUN_OUT="$S/ro7" FAKE_DUMP_S="$S/d0" FAKE_DUMP_OUT="$S/o0" $PS "$S/r7" --outside "$S/ro7" --claude "$S/fake-claude" --only auto_allow,deny_sessions > "$S/out7.txt" 2>&1; eq "$?" 0 "--only"
 eq "$(grep -c '| \(PASS\|FAIL\|CHANGED\|INCONCLUSIVE\) |' "$S/out7.txt")" 2 "--only runs two rows"
@@ -143,7 +157,11 @@ for id in auto_allow rename_key_dir excluded_script_after_cd excluded_chained_to
   tool_read_skill_no_rule tool_read_skill_installer_rule tool_wt_edit_allowed tool_wt_claude_settings_asks tool_wt_git_pointer_asks tool_wt_base_asks \
   hook_wt_locked_write hook_wt_approved_write_ok hook_approvals_write hook_bash_sed_locked hook_bash_redirect_locked tool_wt_vscode_asks tool_wt_claude_md_root_asks \
   tool_wt_claude_md_nested_asks tool_wt_agents_md_nested_asks tool_wt_npmrc_nested_asks tool_wt_nested_plain_ok tool_wt_allow_only_mcp tool_wt_allow_only_claude_settings \
-  tool_wt_github_workflow_asks tool_wt_gitmodules_asks tool_wt_gemini_md_nested_asks hook_wt_envrc_write; do
+  tool_wt_github_workflow_asks tool_wt_gitmodules_asks tool_wt_gemini_md_nested_asks hook_wt_envrc_write autoallow_ask_rule_kept autoallow_deny_rule_kept \
+  commit_bypass_config_flag commit_bypass_cd commit_bypass_config_flag_hooks commit_bypass_cd_hooks commit_bypass_dir_flag_hooks; do
   grep -q "\"id\": \"$id\"" "$S/table.json" && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL case $id missing from the probe"; }
 done
+# raw / settings files are named after the case id: on a case-insensitive filesystem two ids that differ only in case overwrite each other
+python3 -c 'import json,sys; ids={r["id"] for r in json.load(open(sys.argv[1]))}; sys.exit(0 if len(ids) == len({i.lower() for i in ids}) else 1)' "$S/table.json" \
+  && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL two case ids differ only in case"; }
 echo "pass=$pass fail=$fail"; [ $fail = 0 ]

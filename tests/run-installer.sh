@@ -297,6 +297,7 @@ import json, os, sys
 d = json.load(open(sys.argv[1])); sk, repo, st = sys.argv[2], os.path.realpath(sys.argv[3]), os.path.realpath(sys.argv[4])
 sb, pm = d["sandbox"], d["permissions"]
 assert sb["enabled"] is True and sb["failIfUnavailable"] is True and sb["network"]["allowLocalBinding"] is True
+assert sb["autoAllowBashIfSandboxed"] is True, sb      # C11c1: the 2.1.325 default is false
 assert sb["network"]["allowedDomains"] == ["mine.example", "registry.npmjs.org"], sb["network"]
 assert sb["filesystem"]["allowWrite"] == [st + "/evidence", repo + "/.claude/worktrees"], sb["filesystem"]
 assert sb["filesystem"]["denyWrite"] == [repo + "/.claude/settings.json", repo + "/.claude/settings.local.json", repo + "/.claude/worktrees/*/.claude/settings*.json"], sb["filesystem"]   # C9b
@@ -380,6 +381,20 @@ python3 -I - "$R9/.claude/settings.local.json" "$D/proj9-orig.json" <<'PY' && ec
 import json, sys
 a, b = (json.load(open(x)) for x in sys.argv[1:3]); assert a == b, (a, b)
 PY
+# C11c1: a project that set autoAllowBashIfSandboxed false: apply sets it true, status flags a drift back to false, off restores false
+R12="$D/proj12"; mkdir -p "$R12/.claude" && git -C "$R12" init -q -b main && printf '.claude/settings.local.json\n' > "$R12/.gitignore"
+key12=$(bash -c ". \"$SK/hooks/lib.sh\"; dt_key \"$R12\""); mkdir -p "$DELIVER_TICKET_HOME/$key12"; printf '{"version":1}\n' > "$DELIVER_TICKET_HOME/$key12/guard.json"
+printf '{"sandbox":{"autoAllowBashIfSandboxed":false}}\n' > "$R12/.claude/settings.local.json"; cp "$R12/.claude/settings.local.json" "$D/proj12-orig.json"
+UH "$IH" project-sandbox-apply --repo "$R12" --confirmed >/dev/null 2>&1
+python3 -I -c "import json,sys; assert json.load(open(sys.argv[1]))['sandbox']['autoAllowBashIfSandboxed'] is True" "$R12/.claude/settings.local.json" && echo "ok sandbox-apply sets autoAllowBashIfSandboxed true" || { fail=1; echo "FAIL autoAllowBashIfSandboxed not set"; }
+python3 -I - "$R12/.claude/settings.local.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1])); d["sandbox"]["autoAllowBashIfSandboxed"] = False; json.dump(d, open(sys.argv[1], "w"), indent=2)
+PY
+UH "$IH" project-sandbox-status --repo "$R12" 2>&1 | grep -q 'sandbox.autoAllowBashIfSandboxed must be True' && echo "ok sandbox-status flags autoAllowBashIfSandboxed false" || { fail=1; echo "FAIL sandbox-status misses autoAllowBashIfSandboxed"; }
+UH "$IH" project-sandbox-apply --repo "$R12" --confirmed >/dev/null 2>&1
+UH "$IH" project-sandbox-off --repo "$R12" --confirmed >/dev/null 2>&1
+python3 -I -c 'import json,sys; sys.exit(0 if json.load(open(sys.argv[1]))==json.load(open(sys.argv[2])) else 1)' "$R12/.claude/settings.local.json" "$D/proj12-orig.json" && echo "ok sandbox-off restores autoAllowBashIfSandboxed false" || { fail=1; echo "FAIL autoAllowBashIfSandboxed not restored: $(tr -d ' \n' < "$R12/.claude/settings.local.json")"; }
 # a project with no sandbox keys at all: created by apply, gone after off
 R6="$D/proj6"; mkdir -p "$R6" && git -C "$R6" init -q -b main && printf '.claude/settings.local.json\n' > "$R6/.gitignore"
 key6=$(bash -c ". \"$SK/hooks/lib.sh\"; dt_key \"$R6\""); mkdir -p "$DELIVER_TICKET_HOME/$key6"; printf '{"version":1}\n' > "$DELIVER_TICKET_HOME/$key6/guard.json"

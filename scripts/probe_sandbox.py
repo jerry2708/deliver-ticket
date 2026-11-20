@@ -255,6 +255,15 @@ def m_noask_off(c, d):
     m_off(c, d)
 
 
+def m_ask_commit(c, d):
+    """C11c1: the commit gate of the dry-run project (dryrun-ck/.claude/settings.json), in its exact spelling."""
+    d["permissions"]["ask"].append("Bash(git commit:*)")
+
+
+def m_deny_rm(c, d):
+    d["permissions"].setdefault("deny", []).append("Bash(rm -rf:*)")
+
+
 BOTH = ["default", "auto"]
 NOUSER = "project,local"     # --setting-sources: the verdict must come from the fixture settings (--settings) alone; the real ~/.claude/settings.json (ask rules, hooks) is not loaded
 SID = "--reason probe --session {id} --repo {PROJ}"
@@ -400,7 +409,7 @@ CASES = [
          contains="deliver-ticket", needs="tool_read_skill_no_rule"),
     dict(id="tool_read_skill_tilde", tool="Read", cmd="{HOME}/.claude/skills/deliver-ticket/SKILL.md", rules=dict(allow=["Read(~/.claude/skills/deliver-ticket/**)"]), expect="ok",
          contains="deliver-ticket"),
-] + [dict(k, setup=make_c11b) for k in [
+] + [dict({"setup": make_c11b}, **k) for k in [
     # C11b, rules only (no hooks): project-apply's worktree Edit allow and its ask rules (ask beats allow), exactly as install_hooks.project_rules writes them.
     # T5 = an approved ticket worktree (the plan lock would not block it anyway; no hooks here).
     dict(id="tool_wt_no_rule_control", tool="Write", cmd="{WT}/T5/src/c.ts", expect="prompt", disk=[("absent", "{WT}/T5/src/c.ts")]),
@@ -448,6 +457,23 @@ CASES = [
          disk=[("same", "{WT}/T4/f.txt")]),
     dict(id="hook_bash_redirect_locked", cmd="echo x > {WT}/T4/new.txt", cwd="{WT}/T4", rules=WT_RULES, hooks=True, dt_home=True, expect="hook",
          disk=[("absent", "{WT}/T4/new.txt")]),
+    # C11c1: sandbox.autoAllowBashIfSandboxed true (sandbox_plan) must not swallow the project's ask / deny rules (exact dryrun-ck spellings)
+    dict(id="autoallow_ask_rule_kept", cmd="git commit --allow-empty -m probe", cwd="{PROJ}", mutate=m_ask_commit, expect="prompt",
+         disk=[("rev", "{PROJ}::refs/heads/main")]),
+    dict(id="autoallow_deny_rule_kept", cmd="rm -rf {PROJ}/.probe-markers/rmtarget", seed=[("{PROJ}/.probe-markers/rmtarget/x", "x\n")], mutate=m_deny_rm, expect="denied",
+         disk=[("exists", "{PROJ}/.probe-markers/rmtarget/x")]),
+    # commit gate vs a prefix the ask rule `git commit:*` may not match (-c before the subcommand, cd &&, -C): a prompt, a hook block or the sandbox's EPERM all keep the
+    # gate; a moved branch ref is a commit-gate hole. Rules + sandbox only, then with this checkout's hooks.
+    dict(id="commit_bypass_config_flag", cmd="git -c user.name=probe commit --allow-empty -m probe", cwd="{WT}/T5", mutate=m_ask_commit, expect=("prompt", "hook", "eperm"),
+         disk=[("rev", "{PROJ}::refs/heads/work/t5")]),
+    dict(id="commit_bypass_cd", cmd="cd {WT}/T5 && git commit --allow-empty -m probe", cwd="{PROJ}", mutate=m_ask_commit, expect=("prompt", "hook", "eperm"),
+         disk=[("rev", "{PROJ}::refs/heads/work/t5")]),
+    dict(id="commit_bypass_config_flag_hooks", cmd="git -c user.name=probe commit --allow-empty -m probe", cwd="{WT}/T5", mutate=m_ask_commit, hooks=True, dt_home=True,
+         expect=("prompt", "hook", "eperm"), disk=[("rev", "{PROJ}::refs/heads/work/t5")]),
+    dict(id="commit_bypass_cd_hooks", cmd="cd {WT}/T5 && git commit --allow-empty -m probe", cwd="{PROJ}", mutate=m_ask_commit, hooks=True, dt_home=True,
+         expect=("prompt", "hook", "eperm"), disk=[("rev", "{PROJ}::refs/heads/work/t5")]),
+    dict(id="commit_bypass_dir_flag_hooks", cmd="git -C {WT}/T5 commit --allow-empty -m probe", cwd="{PROJ}", mutate=m_ask_commit, hooks=True, dt_home=True,
+         expect=("prompt", "hook", "eperm"), disk=[("rev", "{PROJ}::refs/heads/work/t5")]),
 ]]]
 
 
@@ -513,6 +539,15 @@ def sha(p):
         return None
 
 
+def snap(kind, p):
+    """The before / after value of a disk check: `rev` = `git rev-parse` of "<repo>::<ref>" (packed refs too), else the file's sha256."""
+    if kind == "rev":
+        repo, ref = p.split("::")
+        r = subprocess.run(["git", "-C", repo, "rev-parse", "--verify", "-q", ref], capture_output=True, text=True)
+        return r.stdout.strip() or None
+    return sha(p)
+
+
 def judge(c, case, used, res, before, inputs=()):
     exp = case["expect"]
     exps = exp if isinstance(exp, (tuple, list)) else (exp,)      # several verdicts can keep the property (C11d: prompt, denied or net)
@@ -535,8 +570,9 @@ def judge(c, case, used, res, before, inputs=()):
         notes.append("missing /%s/" % case["contains"])
     for kind, path in case.get("disk", []):
         p = expand(c, case, path)
-        now = sha(p)
-        good = {"exists": os.path.exists(p), "absent": not os.path.exists(p), "same": now == before.get(p), "changed": now != before.get(p)}[kind]
+        now = snap(kind, p)
+        good = {"exists": os.path.exists(p), "absent": not os.path.exists(p), "same": now == before.get(p), "changed": now != before.get(p),
+                "rev": now is not None and now == before.get(p)}[kind]
         if not good:
             ok = False
             notes.append("disk: want %s, is not: %s" % (kind, os.path.relpath(p, c.OUT) if p.startswith(c.OUT) else p))
@@ -620,8 +656,7 @@ def main():
             p = expand(c, k, p)
             os.makedirs(os.path.dirname(p), exist_ok=True)
             open(p, "w").write(text)
-        paths = [expand(c, k, p) for kd, p in k.get("disk", [])]
-        before = {p: sha(p) for p in paths}
+        before = {expand(c, k, p): snap(kd, expand(c, k, p)) for kd, p in k.get("disk", [])}
         cwd = c.fmt(k.get("cwd", "{PROJ}"))
         cmd = expand(c, k, k["cmd"])
         env = dict(base_env)
