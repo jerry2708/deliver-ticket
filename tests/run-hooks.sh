@@ -866,6 +866,8 @@ echo "# C7: approve-plan.sh is a gate action too (its prompt is the user's yes t
 for c in "bash $SKS/approve-plan.sh T1 --repo $R" "python3 $SKS/approve_plan.py T1 --repo $R" "python3 -I $SKS/approve_plan.py T1 --repo $R" "env $SKS/approve-plan.sh T1 --repo $R" "FOO=1 $SKS/approve-plan.sh T1 --repo $R" \
   "cd $SKS && ./approve-plan.sh T1 --repo $R" "bash -c \"$SKS/approve-plan.sh T1 --repo $R\"" "echo \$($SKS/approve-plan.sh T1 --repo $R)" "$SKS/../scripts/approve-plan.sh T1 --repo $R"; do gx 2 Bash "$c"; done
 for c in "$SKS/approve-plan.sh T1 --repo $R --session s1" "$SKS/git-push.sh mirror feat-T1" "$SKS/git-rename.sh a b"; do gx 0 Bash "$c"; done
+# C11c3: the stage-4 base calls (bookkeeping base-worktree.sh, then setup-worktree.sh sandboxed) pass the hooks in a bound and an unbound session
+for c in "$SKS/base-worktree.sh acquire T1 0123456789abcdef0123456789abcdef01234567 --repo $R" "$SKS/base-worktree.sh release T1 --repo $R" "$SKS/setup-worktree.sh $R $R/.claude/worktrees/_base _base"; do gx 0 Bash "$c"; done
 # the read-only, sandboxed scripts (install_hooks.SANDBOXED) of stage 2 and stage 8 pass the hooks in every session
 for c in "$SKS/plan-hash.sh T1 --repo $R" "$SKS/lock-trace.sh T1 --repo $R --session s1"; do gx 0 Bash "$c"; done
 for c in "bash $SKS/git-push.sh mirror feat-T1" "python3 $SKS/git_push.py mirror feat-T1" "env $SKS/git-push.sh mirror feat-T1" "FOO=1 $SKS/git-push.sh mirror feat-T1" "cd $SKS && ./git-push.sh mirror feat-T1"; do gx 2 Bash "$c"; done

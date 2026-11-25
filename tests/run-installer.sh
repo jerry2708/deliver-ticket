@@ -304,7 +304,7 @@ common = os.path.realpath(repo + "/.git")      # C11: the ref store of the git c
 assert sb["filesystem"]["denyWrite"] == [repo + "/.claude/settings.json", repo + "/.claude/settings.local.json", repo + "/.claude/worktrees/*/.claude/settings*.json",
                                          common + "/refs/**", common + "/packed-refs", common + "/logs/refs/**"], sb["filesystem"]
 ex = sb["excludedCommands"]
-for n in ("session-map.sh", "pending-ticket.sh", "project-map-stale.sh", "git-rename.sh", "ticket-state.sh", "guard-apply.sh", "git-push.sh", "approve-plan.sh", "git-commit.sh"):
+for n in ("session-map.sh", "pending-ticket.sh", "project-map-stale.sh", "git-rename.sh", "base-worktree.sh", "ticket-state.sh", "guard-apply.sh", "git-push.sh", "approve-plan.sh", "git-commit.sh"):
     assert "%s/scripts/%s *" % (sk, n) in ex, n
 assert "Bash(%s/scripts/git-commit.sh *)" % sk in pm["ask"] and "Bash(%s/scripts/git-commit.sh *)" % sk not in pm["allow"]      # C11: the commit gate asks
 # C5: plain git push / git branch -m are NOT excluded (their hooks would run worktree code unsandboxed); only the scripts are
@@ -326,7 +326,7 @@ assert not any(e.startswith("bash ") for e in ex)
 assert "allowUnsandboxedCommands" not in sb      # that one is user level
 al, ask = pm["allow"], pm["ask"]
 assert al[0] == "Bash(ls)" and "Bash(git branch -m *)" not in al and "Bash(git branch -m *)" not in ask and "Bash(%s/scripts/git-push.sh *)" % sk in ask and "Bash(%s/scripts/git-push.sh *)" % sk not in al and "Bash(%s/scripts/git-rename.sh *)" % sk in al and "Bash(glab mr view *)" in al and "Bash(gh pr list *)" in al
-for n in ("session-map.sh", "pending-ticket.sh", "project-map-stale.sh"):
+for n in ("session-map.sh", "pending-ticket.sh", "project-map-stale.sh", "base-worktree.sh"):
     assert "Bash(%s/scripts/%s *)" % (sk, n) in al and "Bash(%s/scripts/%s *)" % (sk, n) not in ask
 assert "Bash(%s/scripts/plan-hash.sh *)" % sk in al and "Bash(%s/scripts/plan-hash.sh *)" % sk not in ask and (sk + "/scripts/plan-hash.sh *") not in ex   # read-only, sandboxed, allow rule
 assert "Bash(%s/scripts/verify-record.sh *)" % sk in al and "Bash(%s/scripts/verify-record.sh *)" % sk not in ask and (sk + "/scripts/verify-record.sh *") not in ex   # sandboxed on purpose

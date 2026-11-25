@@ -295,6 +295,75 @@ def make_sep(c):
         sh("git", "-C", repo + "/.claude/worktrees/S1", "add", "x.txt")
 
 
+def bw_state(c, cid):
+    """(key, state dir) of the case's bw repo, computed from its path as the hooks do (the repo need not exist yet)."""
+    key = "bw-%s-%s" % (cid, hashlib.sha1((c.S + "/bw-" + cid).encode()).hexdigest()[:8])
+    return key, c.ST + "/" + key
+
+
+def make_bw(c, cid, acquire=False, with_dir=False):
+    """C11c3: a repo of its own per case ({S}/bw-<case id>) that TRACKS .claude/settings.json (as dryrun-ck does: the DRY-01 EPERM), a ticket worktree BW1 on
+    work/bw1 with a commit that is not on main, delivery state (guard.json: env file, an install that also tries a write outside allowWrite). acquire=True: _base
+    made by base-worktree.sh here (fixture setup, unsandboxed; at main~1 with with_dir). with_dir: a second commit on main adds the tracked directory d/,
+    and a symlink {S}/bw-<id>/.claude/worktrees/_base/d -> {OUT}/symtarget-<id> (holding a marker) is planted in _base, as a sandboxed command could.
+    Idempotent; never deletes."""
+    repo = c.S + "/bw-" + cid
+    if not os.path.exists(repo):
+        sh("git", "init", "-q", "-b", "main", repo)
+        for k, v in (("user.email", "p@b.c"), ("user.name", "probe")):
+            sh("git", "-C", repo, "config", k, v)
+        open(repo + "/.git/info/exclude", "a").write(".claude/worktrees/\n")
+        os.makedirs(repo + "/.claude")
+        open(repo + "/.claude/settings.json", "w").write("{}\n")
+        open(repo + "/f.txt", "w").write("1\n")
+        open(repo + "/.env.local", "w").write("FAKE=1\n")
+        sh("git", "-C", repo, "add", "f.txt", ".claude/settings.json")
+        sh("git", "-C", repo, "commit", "-q", "-m", "init")
+        if with_dir:
+            os.makedirs(repo + "/d")
+            open(repo + "/d/x.txt", "w").write("x\n")
+            sh("git", "-C", repo, "add", "d")
+            sh("git", "-C", repo, "commit", "-q", "-m", "dir")
+        sh("git", "-C", repo, "worktree", "add", "-q", repo + "/.claude/worktrees/BW1", "-b", "work/bw1")
+        open(repo + "/.claude/worktrees/BW1/f.txt", "w").write("ticket\n")
+        sh("git", "-C", repo + "/.claude/worktrees/BW1", "commit", "-q", "-am", "ticket")
+    key, kd = bw_state(c, cid)
+    os.makedirs(kd, exist_ok=True)
+    g = json.loads(c.guard)
+    g.update(project_key=key, repo_root=repo, base_branch="main", env_files=[".env.local"],
+             install="touch installed.marker; touch %s/bw-escape-%s 2>/dev/null; true" % (c.OUT, cid))
+    open(kd + "/guard.json", "w").write(json.dumps(g, indent=1))
+    os.makedirs(kd + "/tickets", exist_ok=True)
+    if not os.path.exists(kd + "/tickets/BW1.md"):
+        open(kd + "/tickets/BW1.md", "w").write("# BW1\n\nstate: active\n")          # acquire wants an open ticket of the project
+    if acquire and not os.path.exists(repo + "/.claude/worktrees/_base"):
+        r = subprocess.run([os.path.join(HERE, "base-worktree.sh"), "acquire", "BW1", "main~1" if with_dir else "main", "--repo", repo],
+                           env=dict(os.environ, DELIVER_TICKET_HOME=c.ST), capture_output=True, text=True)
+        if r.returncode != 0:
+            raise SystemExit("probe fixture: base-worktree acquire failed: %s" % r.stderr[-300:])
+        if with_dir:
+            subprocess.run([os.path.join(HERE, "base-worktree.sh"), "release", "BW1", "--repo", repo], env=dict(os.environ, DELIVER_TICKET_HOME=c.ST), capture_output=True)
+            t = c.OUT + "/symtarget-" + cid
+            os.makedirs(t, exist_ok=True)
+            open(t + "/marker", "w").write("marker\n")
+            os.symlink(t, repo + "/.claude/worktrees/_base/d")
+    return repo, kd
+
+
+def m_bw(c, d, cid, excluded=True):
+    """The project sandbox of the case's bw repo (allowWrite / denyWrite from sandbox_plan, as project-sandbox-apply writes them) on top of the fixture
+    project's. excluded=False: base-worktree.sh neither excluded nor allowed (the pre-C11c3 state, DRY-01)."""
+    repo = c.S + "/bw-" + cid
+    kd = bw_state(c, cid)[1]
+    fs = dict(ih.sandbox_plan(repo, kd, [], False, os.path.realpath(repo + "/.git"))[1])
+    for k in ("allowWrite", "denyWrite"):
+        d["sandbox"]["filesystem"].setdefault(k, []).extend(fs[("sandbox", "filesystem", k)])
+    if not excluded:
+        bw = os.path.join(SK, "scripts", "base-worktree.sh")
+        d["sandbox"]["excludedCommands"] = [e for e in d["sandbox"]["excludedCommands"] if not e.startswith(bw)]
+        d["permissions"]["allow"] = [r for r in d["permissions"]["allow"] if bw not in r]
+
+
 def m_gate(c, d):
     """The project's ask rules, and git-commit.sh's ask rule replaced by an allow rule: stands in for the user's yes so the verdict is the gate script itself."""
     m_ask_commit_pnpm(c, d)
@@ -658,7 +727,30 @@ CASES = [
     dict(id="gate_refuses_separate_git_dir", cmd="{SK}/scripts/git-commit.sh --session probe -m x", cwd="{S}/sep-repo/.claude/worktrees/S1", setup=make_sep,
          mutate=m_gate, expect="refused", contains="separate-git-dir", disk=[("rev", "{S}/sep-repo::refs/heads/work/s1")]),
     dict(id="gate_plain_commit_in_worktree_hook", cmd="git commit -m probe", setup=gate_base, expect="hook", contains="runs only through the gate"),
-]]]]]
+]]]]] + [dict(dict(dt_home=True, sources=NOUSER, cwd="{S}/bw-{id}/.claude/worktrees/BW1"), **k) for k in [
+    # C11c3: base-worktree.sh is bookkeeping (excluded + allow, no prompt). The repo tracks .claude/settings.json, so the checkout into _base writes a file the
+    # project sandbox denies (DRY-01: EPERM); the control without the exclusion shows that. The script refuses a ticket commit; the install runs in a separate,
+    # SANDBOXED setup-worktree.sh call (its install's write outside allowWrite must fail; _base is sandbox-writable, so an unsandboxed install would run planted files).
+    dict(id="base_worktree_sandboxed_control", cmd="{SK}/scripts/base-worktree.sh acquire BW1 main --repo {S}/bw-{id}", expect="eperm", info=True,
+         setup=lambda c: make_bw(c, "base_worktree_sandboxed_control"), mutate=lambda c, d: m_bw(c, d, "base_worktree_sandboxed_control", excluded=False),
+         disk=[("absent", "{S}/bw-{id}/.claude/worktrees/_base/.claude/settings.json")]),
+    dict(id="base_worktree_excluded", cmd="{SK}/scripts/base-worktree.sh acquire BW1 main --repo {S}/bw-{id}", expect="ok",
+         setup=lambda c: make_bw(c, "base_worktree_excluded"), mutate=lambda c, d: m_bw(c, d, "base_worktree_excluded"),
+         disk=[("exists", "{S}/bw-{id}/.claude/worktrees/_base/.claude/settings.json"), ("exists", "{S}/bw-{id}/.git/deliver-ticket-base.lock/ticket"),
+               ("absent", "{S}/bw-{id}/.claude/worktrees/_base/installed.marker")]),
+    dict(id="base_worktree_refuses_ticket_commit", cmd="{SK}/scripts/base-worktree.sh acquire BW1 work/bw1 --repo {S}/bw-{id}", expect="refused",
+         contains="not on the base branch", setup=lambda c: make_bw(c, "base_worktree_refuses_ticket_commit"),
+         mutate=lambda c, d: m_bw(c, d, "base_worktree_refuses_ticket_commit"), disk=[("absent", "{S}/bw-{id}/.claude/worktrees/_base")]),
+    dict(id="base_setup_sandboxed", cmd="{SK}/scripts/setup-worktree.sh {S}/bw-{id} {S}/bw-{id}/.claude/worktrees/_base _base", expect="ok",
+         setup=lambda c: make_bw(c, "base_setup_sandboxed", acquire=True), mutate=lambda c, d: m_bw(c, d, "base_setup_sandboxed"),
+         disk=[("exists", "{S}/bw-{id}/.claude/worktrees/_base/installed.marker"), ("exists", "{S}/bw-{id}/.claude/worktrees/_base/.env.local"),
+               ("absent", "{OUT}/bw-escape-{id}")]),
+    # a symlink planted in _base (sandbox-writable) where the target commit has a tracked dir: the unsandboxed checkout must not write through it
+    dict(id="base_worktree_symlinked_dir", cmd="{SK}/scripts/base-worktree.sh acquire BW1 main --repo {S}/bw-{id}", expect=("refused", "error"),
+         contains="would be overwritten|git-safe", setup=lambda c: make_bw(c, "base_worktree_symlinked_dir", acquire=True, with_dir=True),
+         mutate=lambda c, d: m_bw(c, d, "base_worktree_symlinked_dir"),
+         disk=[("same", "{OUT}/symtarget-{id}/marker"), ("absent", "{OUT}/symtarget-{id}/x.txt"), ("absent", "{S}/bw-{id}/.git/deliver-ticket-base.lock")]),
+]]
 
 
 def classify(texts):
@@ -861,7 +953,7 @@ def main():
             os.makedirs(os.path.dirname(p), exist_ok=True)
             open(p, "w").write(text)
         before = {expand(c, k, p): snap(kd, expand(c, k, p)) for kd, p in k.get("disk", [])}
-        cwd = c.fmt(k.get("cwd", "{PROJ}"))
+        cwd = expand(c, k, k.get("cwd", "{PROJ}"))
         cmd = expand(c, k, k["cmd"])
         env = dict(base_env)
         if k.get("dt_home"):          # only the script cases: with the fixture as the state root our own hooks protect it and would answer before the sandbox does

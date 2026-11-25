@@ -43,7 +43,7 @@ SETTINGS = os.path.realpath(os.environ.get("DT_SETTINGS") or os.path.expanduser(
 sys.path.insert(0, HOOKS)
 import dtcore  # noqa: E402  (constants only at import time; PROTECTED_STATE is the one list of the protected state)
 
-BOOKKEEPING = ["session-map.sh", "pending-ticket.sh", "project-map-stale.sh", "git-rename.sh"]   # sandbox: excluded + allow rule: no prompt
+BOOKKEEPING = ["session-map.sh", "pending-ticket.sh", "project-map-stale.sh", "git-rename.sh", "base-worktree.sh"]   # sandbox: excluded + allow rule: no prompt
 SANDBOXED = ["verify-record.sh", "plan-hash.sh", "lock-trace.sh"]                                   # NOT excluded: runs inside the sandbox; allow rule only (no prompt)
 GATES = ["ticket-state.sh", "guard-apply.sh", "git-push.sh", "approve-plan.sh", "git-commit.sh"]                                     # excluded + ask rule on the full path: the prompt is the user's yes
 # The gate scripts' ask rules are USER level too: with the sandbox off (or in a project that never enabled it) nothing else would ask, and auto mode

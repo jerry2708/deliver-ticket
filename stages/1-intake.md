@@ -42,7 +42,7 @@ A ticket that bundles unrelated changes -> verdict `split`, **decided before the
 - The ticket cannot reach the final stop point while a question affecting an in-scope AC is open, unless the decision-maker moves that AC out of scope (logged).
 
 ## 5. Classify
-**Who:** `scripts/classify.py` sets the **floor** from what the text names (paths vs the risk mapping in `guard.json`, file/line counts, new dependencies, risk labels) - run `python3 scripts/classify.py --guard <guard.json> ...` (see its `--help`). Categories a path cannot show (an agent action with side effects, a new per-user API, a migration described only in words) are judged by you with a one-line reason and can only raise the floor. You propose the tier with reasons; you can only raise it; **I confirm**; only I can lower it, with a reason. No classification subagent.
+**Who:** `<skill dir>/scripts/classify.py` sets the **floor** from what the text names (paths vs the risk mapping in `guard.json`, file/line counts, new dependencies, risk labels) - run `<skill dir>/scripts/classify.py --guard <guard.json> ...` (see its `--help`). Categories a path cannot show (an agent action with side effects, a new per-user API, a migration described only in words) are judged by you with a one-line reason and can only raise the floor. You propose the tier with reasons; you can only raise it; **I confirm**; only I can lower it, with a reason. No classification subagent.
 
 **Per-category verdict:** mark **every** Risk category `yes` / `no` / `unknown`, each with its source - a quote from the ticket or `file:line` from read-only code reading.
 - A category the ticket plainly states must be `yes`, not `unknown`.

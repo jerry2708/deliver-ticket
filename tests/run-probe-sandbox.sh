@@ -154,6 +154,14 @@ eq "$(run 29 FAKE_FLIP=gate_late_staged_logged)" 1 "a late-staged file missing f
 has "$(grep '| gate_late_staged_logged | default |' "$S/out29.txt")" "disk: want has" "late-staged row"
 has "$(cat "$S/r1/settings-gate_commit_ok-default.json")" "Bash($SK/scripts/git-commit.sh \*)" "m_gate allows the gate"
 has "$(cat "$S/r1/settings-auto_allow-default.json")" "/.git/refs/\*\*" "the ref-store deny is in every generated sandbox"
+echo "# C11c3: base-worktree.sh must check out _base unsandboxed; the _base install must stay sandboxed"
+eq "$(run 30 FAKE_FLIP=base_worktree_excluded)" 1 "an excluded base-worktree.sh that does not run is a FAIL"
+eq "$(run 31 FAKE_FLIP=base_setup_sandboxed)" 1 "a _base setup that does not run is a FAIL"
+eq "$(run 32 FAKE_FLIP=base_worktree_refuses_ticket_commit)" 1 "a ticket commit checked out into _base is a FAIL"
+has "$(cat "$S/r1/settings-base_worktree_excluded-default.json")" "$SK/scripts/base-worktree.sh \*" "base-worktree.sh is excluded in the generated sandbox"
+has "$(cat "$S/r1/settings-base_worktree_excluded-default.json")" "/bw-base_worktree_excluded/.claude/worktrees/\*/.claude/settings\*.json" "m_bw adds the bw repo's denyWrite"
+python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(any("base-worktree.sh" in e for e in d["sandbox"]["excludedCommands"] + d["permissions"]["allow"]))' \
+  "$S/r1/settings-base_worktree_sandboxed_control-default.json" && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL the control still excludes / allows base-worktree.sh"; }
 echo "# verdicts use the exit status: a failed command whose message names no known verdict is \`error\`, never ok"
 eq "$(run 28 FAKE_EXITFAIL=refs_ctl_add)" 1 "git add that exits 1 is a FAIL"
 has "$(grep '| refs_ctl_add | default |' "$S/out28.txt")" "got error, want ok" "exit-status row"
@@ -191,7 +199,8 @@ for id in auto_allow rename_key_dir excluded_script_after_cd excluded_chained_to
   commit_bypass_dir_flag_wtcwd commit_bypass_dir_flag_wtcwd_hooks \
   pnpm_dir_flag_add pnpm_dir_long_install pnpm_alias_i pnpm_npx_runner pnpm_plain_add_asks refs_cherry_pick refs_update_ref refs_write_ref_file refs_fetch_other_branch refs_branch_f_other_branch \
   refs_checkout_B refs_commit_plain_noask refs_ctl_add refs_ctl_stash refs_ctl_gate_commit gate_commit_ok gate_late_staged_logged gate_refuses_detached \
-  gate_refuses_other_branch gate_refuses_unapproved gate_refuses_no_record gate_refuses_amend gate_refuses_separate_git_dir gate_plain_commit_in_worktree_hook; do
+  gate_refuses_other_branch gate_refuses_unapproved gate_refuses_no_record gate_refuses_amend gate_refuses_separate_git_dir gate_plain_commit_in_worktree_hook \
+  base_worktree_sandboxed_control base_worktree_excluded base_worktree_refuses_ticket_commit base_setup_sandboxed base_worktree_symlinked_dir; do
   grep -q "\"id\": \"$id\"" "$S/table.json" && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL case $id missing from the probe"; }
 done
 # raw / settings files are named after the case id: on a case-insensitive filesystem two ids that differ only in case overwrite each other

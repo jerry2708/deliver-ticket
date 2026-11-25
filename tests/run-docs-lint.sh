@@ -54,6 +54,19 @@ has README.md 'not the alias `pnpm i`, not via `npx` / `corepack`'
 echo "# C11c2: turbo runs with a worktree-local --cache-dir (turbo shares the main checkout's cache from a git worktree)"
 has stages/4-verify.md '--cache-dir=<this worktree>/.turbo/cache'
 has profiles/node.md 'Git Worktree Cache Sharing'
+echo "# C11c3: base-worktree.sh is bookkeeping (unsandboxed); a skill-script call holds no command substitution; _base installs run sandboxed"
+for bad in '`<skill dir>/scripts/base-worktree.sh acquire T1 $(git merge-base HEAD main) --repo /r`' '`<skill dir>/scripts/base-worktree.sh acquire T1 `git merge-base HEAD main` --repo /r`' \
+  '``<skill dir>/scripts/base-worktree.sh acquire T1 `git merge-base HEAD main` --repo /r``' $'```\n<skill dir>/scripts/plan-hash.sh T1 --repo `pwd`\n```' \
+  $'```\n<skill dir>/scripts/plan-hash.sh T1 --repo $(pwd)\n```' '`X=$(<skill dir>/scripts/plan-hash.sh T1 --repo /r)`' '`scripts/base-worktree.sh release T1 --repo /r`'; do
+  python3 tests/lint_script_calls.py --text "$bad" >/dev/null; [ $? = 1 ]; ok $? "lint must flag (C11c3): $bad"; done
+for good in 'run `git merge-base HEAD main` (its own call), then `<skill dir>/scripts/base-worktree.sh acquire T1 <sha> --repo /r`' 'no `$( )` around `<skill dir>/scripts/plan-hash.sh T1`' \
+  '`<skill dir>/scripts/env-keys.sh .env` prints `$NAME` keys' '``git log `x` ``, then `<skill dir>/scripts/plan-hash.sh T1`'; do
+  python3 tests/lint_script_calls.py --text "$good" >/dev/null; ok $? "lint must accept (C11c3): $good"; done
+has stages/4-verify.md '`<skill dir>/scripts/base-worktree.sh acquire <ID> <that sha> --repo <repo_root>`'
+has stages/4-verify.md '`<skill dir>/scripts/setup-worktree.sh <repo_root> <repo_root>/.claude/worktrees/_base _base`'
+has SKILL.md '`project-map-stale.sh`, `base-worktree.sh` (stage 4): the same spelling'
+hasnt "SKILL.md init.md stages" '`scripts/[a-z]'
+hasnt "SKILL.md init.md stages" 'python3 scripts/'
 has stages/3-build.md '`CLAUDE.md`, `CLAUDE.local.md`, `AGENTS.md`, `GEMINI.md`, `.cursorrules`, `.npmrc`'
 has stages/3-build.md '`.vscode/` or `.github/`'
 for good in 'run `<skill dir>/scripts/ticket-state.sh done T1`' '`<skill dir>/scripts/session-map.sh show`' '`<skill dir>/scripts/guard-write.sh diff`' 'git -C <wt> status' '`git branch -m a b`' 'from the worktree directory: `git push <remote> <branch>`' 'cd <wt>, then (second call) git push mirror x'; do python3 tests/lint_script_calls.py --text "$good" >/dev/null; ok $? "lint must accept: $good"; done

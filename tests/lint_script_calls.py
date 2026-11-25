@@ -11,7 +11,10 @@ The Bash sandbox's excludedCommands and the permission ask / allow rules match t
     ask rule match the command text as a prefix, so the push would run sandboxed (probe `push_after_cd_stays_sandboxed`) or miss its ask rule;
   - a skill script (any file in scripts/) or `claude --version` / `-v` shares one command (a `backtick` span, or a line of a fenced block) with `;`, `&&`, `||` or a
     pipe (C11a: each is its own Bash call; DRY-01 stage 0 ran `claude --version; echo ...; validate-guard.py ...` as one). A `|` with no space on either side
-    (`done|cancelled`) is choice notation, not a pipe.
+    (`done|cancelled`) is choice notation, not a pipe;
+  - a skill script's command holds a command substitution, `$(` or a nested backtick (C11c3: a value from another command is computed in its own Bash call and
+    written out literally; DRY-01 stage 4 had `base-worktree.sh acquire <ID> $(git merge-base ...)`). Nested backticks: a backtick inside a ``double-backtick``
+    span or on a fenced line, or a single-backtick span that ends in whitespace (`<script> a `cmd` b` splits there).
 Usage: lint_script_calls.py [skill root]      -> exit 1 and one line per violation
        lint_script_calls.py --text "<text>"   -> checks one string (used by run-docs-lint.sh to prove that bad forms are caught)
 """
@@ -53,6 +56,13 @@ def check(text, label):
         for span in ([line] if fence else re.findall(r"`([^`]+)`", line)):
             if ONE_CALL.search(span) and CHAIN.search(span):
                 out.append("%s:%d: a skill script or `claude --version` is chained to another command (%r): make each its own Bash call" % (label, n, span.strip()[:60]))
+        spans = [(s, "$(" in s or "`" in s) for s in re.findall(r"``(.+?)``", line)] if not fence else [(line, "$(" in line or "`" in line)]
+        if not fence:
+            spans += [(s, "$(" in s or s != s.rstrip()) for s in re.findall(r"`([^`]+)`", re.sub(r"``.+?``", "", line))]
+        for span, bad in spans:
+            if bad and ONE_CALL.search(span):
+                out.append("%s:%d: a skill script's command holds a command substitution (`$(` or a nested backtick) (%r): compute the value in its own Bash call "
+                           "and write it out literally" % (label, n, span.strip()[:60]))
         for name in NAMES:
             for m in re.finditer(re.escape("scripts/" + name), line):
                 prefix = line[:m.start()]

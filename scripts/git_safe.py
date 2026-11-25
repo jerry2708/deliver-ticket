@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Shared by git-push.sh, git-rename.sh and git-commit.sh (plan.md, milestone 1c, section 1b; C11 ref-store deny).
+"""Shared by git-push.sh, git-rename.sh, git-commit.sh and base-worktree.sh (plan.md, milestone 1c, section 1b; C11 ref-store deny).
 
 Both run UNSANDBOXED (excluded from the sandbox) with arguments Claude chose, and they run git with `-c core.hooksPath=/dev/null` so that the repo's own
 hooks (code from the worktree) never run unsandboxed. Hence everything is validated here, not only in the hooks. Standard library only.
@@ -127,7 +127,8 @@ def check_config_origins(wt, repo, common):
                 "Move the setting there or ask me" % (key, path))
 
 
-def run_git(wt, *a):
-    """git with the repo's hooks switched off by our own -c (the repo's hook code never runs unsandboxed) and the ext transport off."""
+def run_git(wt, *a, stdout=None):
+    """git with the repo's hooks switched off by our own -c (the repo's hook code never runs unsandboxed) and the ext transport off. `stdout`: where git's
+    stdout goes (base-worktree.sh keeps its own stdout for the path it prints)."""
     cmd = ["git", "-C", wt, "-c", "core.hooksPath=/dev/null", "-c", "protocol.ext.allow=never"] + list(a)
-    return subprocess.run(cmd).returncode
+    return subprocess.run(cmd, stdout=stdout).returncode
