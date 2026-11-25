@@ -10,7 +10,7 @@ Written from what `copilot-kit-training` shows (the evidence column). Rows marke
 | `pnpm-lock.yaml`, or `"packageManager": "pnpm@..."` in the root `package.json` | package manager pnpm | `package.json:27` (`pnpm@10.26.2`), `pnpm-lock.yaml` present |
 | `yarn.lock` -> yarn, `package-lock.json` -> npm, `bun.lock` / `bun.lockb` -> bun | other managers | **unverified here** |
 | `pnpm-workspace.yaml` (`packages: apps/*, packages/*`) and/or `"workspaces"` in the root `package.json` | monorepo; apps under `apps/`, libraries under `packages/` | both present, `package.json:5-8` |
-| `turbo.json` | root scripts go through turbo (`lint` = `turbo run lint`, `dev` = `turbo dev`, `build` = `turbo build --filter=!agent`) | `turbo.json`, `package.json` scripts |
+| `turbo.json` | root scripts go through turbo (`lint` = `turbo run lint`, `dev` = `turbo dev`, `build` = `turbo build --filter=!agent`); in a git worktree turbo shares the **main** checkout's `.turbo/cache` unless a cache dir is given, so `project.md` Commands write them with `--cache-dir=<worktree>/.turbo/cache` (stage 4) | `turbo.json`, `package.json` scripts; `cacheDir` in `turbo.json` (if set, sharing is off); Turborepo docs "Git Worktree Cache Sharing" |
 
 ## Where the commands are
 - Root `package.json` `scripts`: `dev`, `build`, `lint`, `format`, plus app-specific ones (`build:agent`, `build:all`). Run with the detected manager (`pnpm <script>`).

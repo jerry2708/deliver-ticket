@@ -51,6 +51,9 @@ has stages/cancel.md '`git branch -d <branch>` is always a command for me'
 has SKILL.md 'scripts/git-commit.sh --session <id>'
 has README.md 'no Claude session in that repo commits outside the gate'
 has README.md 'not the alias `pnpm i`, not via `npx` / `corepack`'
+echo "# C11c2: turbo runs with a worktree-local --cache-dir (turbo shares the main checkout's cache from a git worktree)"
+has stages/4-verify.md '--cache-dir=<this worktree>/.turbo/cache'
+has profiles/node.md 'Git Worktree Cache Sharing'
 has stages/3-build.md '`CLAUDE.md`, `CLAUDE.local.md`, `AGENTS.md`, `GEMINI.md`, `.cursorrules`, `.npmrc`'
 has stages/3-build.md '`.vscode/` or `.github/`'
 for good in 'run `<skill dir>/scripts/ticket-state.sh done T1`' '`<skill dir>/scripts/session-map.sh show`' '`<skill dir>/scripts/guard-write.sh diff`' 'git -C <wt> status' '`git branch -m a b`' 'from the worktree directory: `git push <remote> <branch>`' 'cd <wt>, then (second call) git push mirror x'; do python3 tests/lint_script_calls.py --text "$good" >/dev/null; ok $? "lint must accept: $good"; done
