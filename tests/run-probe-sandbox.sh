@@ -154,6 +154,8 @@ eq "$(run 29 FAKE_FLIP=gate_late_staged_logged)" 1 "a late-staged file missing f
 has "$(grep '| gate_late_staged_logged | default |' "$S/out29.txt")" "disk: want has" "late-staged row"
 has "$(cat "$S/r1/settings-gate_commit_ok-default.json")" "Bash($SK/scripts/git-commit.sh \*)" "m_gate allows the gate"
 has "$(cat "$S/r1/settings-auto_allow-default.json")" "/.git/refs/\*\*" "the ref-store deny is in every generated sandbox"
+has "$(cat "$S/r1/settings-auto_allow-default.json")" "/.git/info/attributes" "C11: the git-read deny is in every generated sandbox"
+eq "$(run 33 FAKE_FLIP=gitcfg_write_info_attributes)" 1 "an info/attributes write that lands is a FAIL"
 echo "# C11c3: base-worktree.sh must check out _base unsandboxed; the _base install must stay sandboxed"
 eq "$(run 30 FAKE_FLIP=base_worktree_excluded)" 1 "an excluded base-worktree.sh that does not run is a FAIL"
 eq "$(run 31 FAKE_FLIP=base_setup_sandboxed)" 1 "a _base setup that does not run is a FAIL"
@@ -200,7 +202,9 @@ for id in auto_allow rename_key_dir excluded_script_after_cd excluded_chained_to
   pnpm_dir_flag_add pnpm_dir_long_install pnpm_alias_i pnpm_npx_runner pnpm_plain_add_asks refs_cherry_pick refs_update_ref refs_write_ref_file refs_fetch_other_branch refs_branch_f_other_branch \
   refs_checkout_B refs_commit_plain_noask refs_ctl_add refs_ctl_stash refs_ctl_gate_commit gate_commit_ok gate_late_staged_logged gate_refuses_detached \
   gate_refuses_other_branch gate_refuses_unapproved gate_refuses_no_record gate_refuses_amend gate_refuses_separate_git_dir gate_plain_commit_in_worktree_hook \
-  base_worktree_sandboxed_control base_worktree_excluded base_worktree_refuses_ticket_commit base_setup_sandboxed base_worktree_symlinked_dir; do
+  base_worktree_sandboxed_control base_worktree_excluded base_worktree_refuses_ticket_commit base_setup_sandboxed base_worktree_symlinked_dir \
+  gitcfg_write_config gitcfg_write_config_worktree gitcfg_write_wt_config_worktree gitcfg_write_info_attributes gitcfg_write_config_hooks gitcfg_write_info_attributes_hooks \
+  gitdir_hooks_new_file gitdir_hooks_new_file_hooks gitdir_hooks_mkdir gitdir_info_exclude gitdir_objects_write gitdir_wt_head_write setup_exclude_sandboxed; do
   grep -q "\"id\": \"$id\"" "$S/table.json" && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL case $id missing from the probe"; }
 done
 # raw / settings files are named after the case id: on a case-insensitive filesystem two ids that differ only in case overwrite each other

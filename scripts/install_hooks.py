@@ -669,6 +669,11 @@ def git_common(repo):
 # C11: the git ref store under the common dir. With these denied a sandboxed command cannot move a branch (commit, merge, rebase, reset, update-ref,
 # fetch . x:<branch>, checkout -B ... - probe refs_*); commits go through the excluded gate git-commit.sh, renames through git-rename.sh, pushes through git-push.sh.
 REF_STORE = ("refs/**", "packed-refs", "logs/refs/**")
+# C11: git files that the unsandboxed scripts' git (base-worktree checkout, git-commit, git-push) and your own git in the main checkout read: a filter / diff /
+# merge driver named in info/attributes, or defined in a config file, would run there. On 2.1.325 the three config files are EPERM from Claude Code's own git
+# protection already, info/attributes was writable (probe gitcfg_*); denied here so neither depends on that. Not info/** (setup-exclude.sh writes info/exclude),
+# not hooks/** (EPERM from Claude Code itself, probe gitdir_hooks_*), not objects/ or worktrees/*/HEAD (git add and checkout need them).
+GIT_READ = ("config", "config.worktree", "worktrees/*/config.worktree", "info/attributes")
 
 
 def sandbox_plan(repo, state, domains, local_binding, common=None):
@@ -683,7 +688,7 @@ def sandbox_plan(repo, state, domains, local_binding, common=None):
             # C9b: the project's own settings and every ticket worktree's (a deny wins over the worktrees allowWrite; a glob works on macOS only, V7c)
             (("sandbox", "filesystem", "denyWrite"), [os.path.join(repo, ".claude", "settings.json"), os.path.join(repo, ".claude", "settings.local.json"),
                                                      os.path.join(repo, ".claude", "worktrees", "*", ".claude", "settings*.json")] +
-                                                    ([os.path.join(common, x) for x in REF_STORE] if common else [])),
+                                                    ([os.path.join(common, x) for x in REF_STORE + GIT_READ] if common else [])),
             (("sandbox", "network", "allowedDomains"), list(domains)),
             (("permissions", "allow"), ["Bash(%s *)" % p for p in book + boxed] + ["Bash(%s)" % c for c in CLI_ALLOW]),
             (("permissions", "ask"), ["Bash(%s *)" % p for p in gate] + ["Bash(%s)" % c for c in CLI_ASK])]

@@ -750,7 +750,29 @@ CASES = [
          contains="would be overwritten|git-safe", setup=lambda c: make_bw(c, "base_worktree_symlinked_dir", acquire=True, with_dir=True),
          mutate=lambda c, d: m_bw(c, d, "base_worktree_symlinked_dir"),
          disk=[("same", "{OUT}/symtarget-{id}/marker"), ("absent", "{OUT}/symtarget-{id}/x.txt"), ("absent", "{S}/bw-{id}/.git/deliver-ticket-base.lock")]),
-]]
+]] + [dict(dict(setup=reset_t5, mutate=m_refs_deny, cwd="{WT}/T5", dt_home=True, sources=NOUSER, expect=("eperm", "hook", "prompt")), id=i + h, hooks=bool(h),
+           cmd="echo '# probe' >> {PROJ}/.git/" + f, disk=[("same", "{PROJ}/.git/" + f)])
+      # C11c3 question (probe only, no fix): can a sandboxed command in a ticket worktree write the git config / attributes files that the unsandboxed scripts
+      # (base-worktree, git-commit, git-push) read? A planted filter.<x>.smudge|clean|process, diff.<x>.textconv or merge.<x>.driver there would run unsandboxed.
+      for i, f in (("gitcfg_write_config", "config"), ("gitcfg_write_config_worktree", "config.worktree"),
+                   ("gitcfg_write_wt_config_worktree", "worktrees/T5/config.worktree"), ("gitcfg_write_info_attributes", "info/attributes"))
+      for h in ("", "_hooks")] + [dict(dict(setup=reset_t5, mutate=m_refs_deny, cwd="{WT}/T5", dt_home=True, sources=NOUSER), id=i + h, hooks=bool(h), cmd=cmd, **kw)
+      # C11 git-files question 2 (probe only): more of the git common dir. hooks/ matters most: a hook planted there runs UNSANDBOXED when the user commits by
+      # hand in the main checkout. objects/ is expected writable (git add needs it); worktrees/T5/HEAD is a known limit (README: stays writable). The pre-commit
+      # content is a comment and the file is not executable (git skips it); HEAD is rewritten with the content it already has.
+      for i, cmd, kw in (
+          ("gitdir_hooks_new_file", "echo '# probe' > {PROJ}/.git/hooks/pre-commit", dict(expect=("eperm", "hook", "prompt"), disk=[("same", "{PROJ}/.git/hooks/pre-commit")])),
+          ("gitdir_hooks_mkdir", "mkdir {PROJ}/.git/hooks/probe-dir", dict(expect=("eperm", "hook", "prompt"), disk=[("absent", "{PROJ}/.git/hooks/probe-dir")])),
+          # writable on 2.1.325 without the hooks, and left so (setup-exclude.sh writes info/exclude; git add / checkout need objects/ and HEAD); with the
+          # hooks on, guard.sh blocks a shell write into the main checkout's .git
+          ("gitdir_info_exclude", "echo '# probe' >> {PROJ}/.git/info/exclude", dict(expect=("ok", "hook"), info=True)),
+          ("gitdir_objects_write", "echo probe > {PROJ}/.git/objects/probe-file", dict(expect=("ok", "hook"), info=True)),
+          ("gitdir_wt_head_write", "printf 'ref: refs/heads/work/t5\\n' > {PROJ}/.git/worktrees/T5/HEAD", dict(expect=("ok", "hook"), info=True)))
+      for h in ("", "_hooks")] + [
+    # init step 2 (setup-exclude.sh, sandboxed, any spelling) in a main checkout whose exclude file lacks the line: does it still work under the project sandbox?
+    dict(id="setup_exclude_sandboxed", cmd="{SK}/scripts/setup-exclude.sh", cwd="{PROJ}", dt_home=True, sources=NOUSER, expect="ok", info=True,
+         disk=[("has", "{PROJ}/.git/info/exclude::.claude/worktrees/")]),
+]
 
 
 def classify(texts):

@@ -302,7 +302,9 @@ assert sb["network"]["allowedDomains"] == ["mine.example", "registry.npmjs.org"]
 assert sb["filesystem"]["allowWrite"] == [st + "/evidence", repo + "/.claude/worktrees"], sb["filesystem"]
 common = os.path.realpath(repo + "/.git")      # C11: the ref store of the git common dir (realpath), after the C9b settings files
 assert sb["filesystem"]["denyWrite"] == [repo + "/.claude/settings.json", repo + "/.claude/settings.local.json", repo + "/.claude/worktrees/*/.claude/settings*.json",
-                                         common + "/refs/**", common + "/packed-refs", common + "/logs/refs/**"], sb["filesystem"]
+                                         common + "/refs/**", common + "/packed-refs", common + "/logs/refs/**",
+                                         common + "/config", common + "/config.worktree", common + "/worktrees/*/config.worktree", common + "/info/attributes"], sb["filesystem"]
+assert not any(p.startswith((common + "/info/exclude", common + "/info/**", common + "/hooks", common + "/objects")) for p in sb["filesystem"]["denyWrite"])   # setup-exclude.sh, git add need them
 ex = sb["excludedCommands"]
 for n in ("session-map.sh", "pending-ticket.sh", "project-map-stale.sh", "git-rename.sh", "base-worktree.sh", "ticket-state.sh", "guard-apply.sh", "git-push.sh", "approve-plan.sh", "git-commit.sh"):
     assert "%s/scripts/%s *" % (sk, n) in ex, n

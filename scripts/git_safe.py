@@ -16,9 +16,11 @@ import ticket_ctl  # noqa: E402
 
 PROTECTED = {"main", "master", "develop", "trunk"}
 BAD_REF_CHARS = re.compile(r"[\s:+*?\[\]^~\\]|@\{|\.\.|//")
-# git config keys that make push / rename run a program, redirect the remote or change which hooks / credentials apply
+# git config keys that make push / rename / commit / checkout run a program, redirect the remote or change which hooks / credentials apply. C11: the filter / diff /
+# merge drivers and external diff programs too (an attribute only names a driver; its command comes from config - a trusted ~/.gitconfig entry such as git-lfs's still passes)
 RISKY_KEYS = (r"^(core\.(sshcommand|hookspath|gitproxy|askpass|fsmonitor)|remote\..*\.(receivepack|uploadpack|pushurl|url|proxy)|"
-              r"url\..*\.(insteadof|pushinsteadof)|credential\..*|include\..*|includeif\..*|gpg\..*program|push\.gpgsign)$")
+              r"url\..*\.(insteadof|pushinsteadof)|credential\..*|include\..*|includeif\..*|gpg\..*program|push\.gpgsign|"
+              r"filter\..*\.(clean|smudge|process)|diff\..*\.(textconv|command)|diff\.external|merge\..*\.driver)$")
 
 
 def die(msg, rc=2):

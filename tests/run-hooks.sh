@@ -205,6 +205,19 @@ printf '[core]\n\tsshCommand = touch %s/ssh-ran\n' "$S" > "$R/inc.cfg"
 git -C "$R" config include.path "$R/inc.cfg"
 gp 2 mirror feat-T1
 git -C "$R" config --unset include.path
+echo "## C11: a filter / diff / merge driver from a file inside the repo is refused (it would run under the unsandboxed git); RISKY_KEYS unit"
+for k in "filter.x.smudge" "filter.x.clean" "filter.x.process" "diff.x.textconv" "merge.x.driver"; do
+  printf '[%s "x"]\n\t%s = touch %s/drv-ran\n' "${k%%.*}" "${k##*.}" "$S" > "$R/inc.cfg"; git -C "$R" config include.path "$R/inc.cfg"; gp 2 mirror feat-T1; git -C "$R" config --unset include.path
+done
+[ ! -e "$S/drv-ran" ] && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL a driver ran"; }
+python3 - "$SK/scripts" <<'UNIT' && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL RISKY_KEYS unit (drivers)"; }
+import re, sys; sys.path.insert(0, sys.argv[1]); import git_safe as g
+r = re.compile(g.RISKY_KEYS)
+assert all(r.match(k) for k in ("filter.lfs.smudge", "filter.a.b.clean", "filter.x.process", "diff.x.textconv", "merge.x.driver", "core.sshcommand"))
+assert r.match("diff.x.command")       # external diff driver: runs a program
+assert r.match("diff.external")        # external diff program for every path
+assert not any(r.match(k) for k in ("filter.lfs.required", "diff.x.binary", "merge.x.name", "user.name", "diff.renames"))
+UNIT
 git -C "$R" config url."file://$S/mirror.git".insteadOf "x://nothing"
 gp 0 mirror feat-T1
 git -C "$R" config --unset url."file://$S/mirror.git".insteadOf
@@ -221,6 +234,8 @@ echo "## C5b: under HOME only ~/.gitconfig and ~/.config/git/** are trusted orig
 mkdir -p "$S/fakehome/.config/git"
 printf '[core]\n\tsshCommand = ssh -o BatchMode=yes\n' > "$S/fakehome/.gitconfig"
 out=$(cd "$W" && HOME="$S/fakehome" "$SK/scripts/git-push.sh" mirror feat-T1 2>&1); req "$?" 0 "core.sshCommand in \$HOME/.gitconfig is trusted ($out)"
+printf '[core]\n\tsshCommand = ssh -o BatchMode=yes\n[filter "lfs"]\n\tsmudge = git-lfs smudge -- %%f\n\tprocess = git-lfs filter-process\n\trequired = true\n' > "$S/fakehome/.gitconfig"
+out=$(cd "$W" && HOME="$S/fakehome" "$SK/scripts/git-push.sh" mirror feat-T1 2>&1); req "$?" 0 "C11: a filter driver in \$HOME/.gitconfig (git-lfs) is trusted ($out)"
 printf '[include]\n\tpath = %s/fakehome/other.cfg\n[core]\n\tsshCommand = ssh -o BatchMode=yes\n' "$S" > "$S/fakehome/.gitconfig"
 printf '[credential]\n\thelper = !touch %s/cred-ran\n' "$S" > "$S/fakehome/other.cfg"
 out=$(cd "$W" && HOME="$S/fakehome" "$SK/scripts/git-push.sh" mirror feat-T1 2>&1); req "$?" 2 "credential.helper from an included \$HOME file the hooks do not protect is refused"
