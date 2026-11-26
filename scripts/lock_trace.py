@@ -9,8 +9,11 @@ Sessions: every `session=` of the ticket's lines in <state>/delivery.log, plus -
 Listed (each counts):
   missing     a session id with no transcript file
   unparsed    a Bash call the hooks cannot see into (an interpreter reading its program from stdin: `python3 - <<EOF`, `bash < x`; python3 -c, node -e, perl / ruby -e, an interpreter or ./ running a script file that is not the skill's,
-              make, npm / pnpm / yarn / bun run|exec|dlx, npx, find with xargs or -exec, a nested claude), made BEFORE the current marker was written
-              (no marker: all of them). The ones after it are printed as `after-marker` and not counted (building runs make / npm run all the time).
+              make, npm / pnpm / yarn / bun run|exec|dlx, npx, find with xargs or -exec, a nested claude - but not `claude --version` / `claude -v` with
+              nothing else in that simple command, judged per match: `claude --version; claude -p x` is still listed), made BEFORE the current marker
+              was written (no marker: all of them). The ones after it are printed as `after-marker` and not counted (building runs make / npm run all
+              the time). Each line shows the matched simple command (from the match to the next ; & | newline ) or backtick outside quotes, at most
+              160 chars, "..." where cut), not the start of the whole command line.
   approvals   any tool call whose input names approvals/
   marker      no marker, an untrusted marker, or its hash differs from the current plan section
   approve     an approve-plan.sh <ID> --sha X call whose X differs from the last `plan hash` line in Claude's text before it, that has no such line, with no user
@@ -24,6 +27,7 @@ Listed (each counts):
               explained by verify-record.sh"). A trace too: `touch -t` forges an mtime.
   start       a session with no <state root>/starts/<sid> record, or whose transcript has a cwd that is neither under the record nor under <repo>/.claude/worktrees
 A user turn: a `user` entry that is not isMeta, not a compact summary, not a tool result, not "[Request interrupted...".
+The last line: "N line(s) listed (exit 1 if > 0); M info line(s) above, not counted" (info = approve-ok, after-marker, read-verify).
 Writes nothing. Exit 0 = nothing listed, 1 = at least one line listed, 2 = bad input. Standard library only.
 """
 import argparse
@@ -60,6 +64,7 @@ UNPARSED = [
     ("find + xargs/-exec", re.compile(r"\bfind\b[^\n;&]*(?:\|\s*xargs\b|-exec(?:dir)?\b|-ok\b)")),
     ("nested claude", re.compile(CMD + r"claude" + END)),
 ]
+CLAUDE_VERSION = re.compile(r"\s+(?:--version|-v)[ \t]*(?=$|[;&|)\n`])")   # `claude --version` / `-v` and nothing else in that simple command
 
 
 def epoch_utc(ts):
@@ -77,6 +82,7 @@ def epoch_local(ts):
 
 
 def unparsed_kind(cmd):
+    """(kind, the matched simple command for display) or (None, None)."""
     for name, rx in UNPARSED:
         for m in rx.finditer(cmd):
             if name == "script file":
@@ -85,8 +91,42 @@ def unparsed_kind(cmd):
                     continue
                 if os.path.realpath(os.path.expanduser(f.strip("'\""))).startswith(SK + os.sep):
                     continue                 # the skill's own scripts: exempt from the guard by design, listed elsewhere when they matter
-            return name
-    return None
+            if name == "nested claude" and CLAUDE_VERSION.match(cmd, m.end()):
+                continue                     # `claude --version` alone prints a version (DRY-01 stage 0); keep scanning the other matches
+            return name, shown_cmd(cmd, m)
+    return None, None
+
+
+def cmd_end(cmd, i):
+    """Index of the end of the simple command running at i, for display: ; newline | & ) or a backtick outside quotes, but not the & of 2>&1 / &> / >&.
+    A display helper only: no parser (no heredocs, no nested $( ) depth)."""
+    q = None
+    while i < len(cmd):
+        c = cmd[i]
+        if q:
+            if c == "\\" and q == '"':
+                i += 1
+            elif c == q:
+                q = None
+        elif c == "\\":
+            i += 1
+        elif c in "'\"":
+            q = c
+        elif c in ";\n|)`" or (c == "&" and cmd[i - 1:i] not in ("<", ">") and cmd[i + 1:i + 2] != ">"):
+            return i
+        i += 1
+    return len(cmd)
+
+
+def shown_cmd(cmd, m):
+    """The simple command the match sits in: from the match (leading separator and blanks dropped) to the next command end, at most 160 chars."""
+    start = m.start()
+    while start < m.end() and cmd[start] in ";&|(\n`$ \t":
+        start += 1
+    text = cmd[start:cmd_end(cmd, m.end())].strip()
+    if len(text) > 160:
+        text = text[:160] + "..."
+    return ("..." if cmd[:start].strip() else "") + text
 
 
 def is_user_turn(e):
@@ -245,14 +285,14 @@ def main(argv):
                     cmd = inp.get("command") if u.get("name") == "Bash" and isinstance(inp.get("command"), str) else None
                     if cmd is None:
                         continue
-                    k = unparsed_kind(cmd)
+                    k, kcmd = unparsed_kind(cmd)
                     if k and "lock-trace.sh" not in cmd:
                         ep = epoch_utc(ts)
                         tag = "%s%s" % (k, ", is_error" if u.get("id") in errs else "")
                         if mepoch is not None and ep is not None and ep >= mepoch:
-                            info.append("after-marker %s [%s] %s" % (at, tag, cmd[:160]))
+                            info.append("after-marker %s [%s] %s" % (at, tag, kcmd))
                         else:
-                            lst("unparsed", "%s [%s] before the marker: %s" % (at, tag, cmd[:160]))
+                            lst("unparsed", "%s [%s] before the marker: %s" % (at, tag, kcmd))
                     m = re.search(r"approve-plan\.sh\s+(\S+)(.*)", cmd)
                     if not m or m.group(1) != a.ticket or "--rework" in m.group(2):
                         continue
@@ -308,7 +348,7 @@ def main(argv):
         print(l)
     for l in info:
         print(l)
-    print("%d line(s) listed" % len(listed))
+    print("%d line(s) listed (exit 1 if > 0); %d info line(s) above, not counted" % (len(listed), len(info)))
     return 1 if listed else 0
 
 

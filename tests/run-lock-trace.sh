@@ -91,6 +91,7 @@ has "clean" "transcripts: $P"
 has "clean" "projects   non-default --projects $P"
 req "$(grep -cE '^(missing|session|projects|unparsed|approvals|marker|approve|start) ' "$S/out.txt")" 1 "clean: the --projects line is the only finding"
 hasnt "clean: api-request-blob not read" "line 3 "
+has "clean: the summary counts listed and info lines separately (C11e1)" "1 line(s) listed (exit 1 if > 0); 3 info line(s) above, not counted"
 
 echo "# the default transcript dir is not listed (HOME points at a fake one: nothing real is read)"
 mkdir -p "$S/fh/.claude/projects/-repo" && cp "$P/-repo/s-ok.jsonl" "$S/fh/.claude/projects/-repo/"
@@ -303,6 +304,35 @@ lt T11 s-w >/dev/null
 has "no verify-record.sh call at all" "but no verify-record.sh T11 call in the scanned transcripts: verify.json not explained by verify-record.sh"
 lt T1 s-ok >/dev/null
 hasnt "no verify.json: no verify line" "verify     "
+
+echo "# C11e1: DRY-01's false positives - claude --version alone is exempt per match; a listed line shows the matched simple command"
+tk T12 $'# T12\n## Plan\n- twelve\n'
+H12=$(shown T12)
+approve T12 s-d1
+start s-d1 "$R"
+# B -40: the DRY-01 stage 0 command (transcript 262071df..., verbatim except the skill dir, state dir and repo paths -> \$SK, \$ST, \$R)
+# B -39: the DRY-01 reviewer call (subagent agent-a062afd21dc073b73 line 40, verbatim): it runs npx vitest, so it stays listed as [package script]
+tx "$P/-repo/s-d1.jsonl" <<EOF
+C $R
+U go
+B -40 claude --version; echo "---validate"; python3 $SK/scripts/validate-guard.py $ST/guard.json; echo "exit=\$?"; echo "---guard-write verify"; $SK/scripts/guard-write.sh verify --repo $R; echo "exit=\$?"; echo "---mtimes"; ls -lT $ST/config.md $ST/config.local.md $ST/guard.json; echo "---git"; git rev-parse --show-toplevel; git status --short; echo "---ASK"; grep -n '<ASK>' $ST/config.md $ST/config.local.md; echo "---rules"; ls .claude/rules/
+B -39 sed -n 1,45p apps/agent/src/mastra/tools/prepare-purchase-plan.ts; sed -n 85,100p apps/web/src/components/inventory-tool-renderer.tsx; git grep -n "normalizeText =" -- ':!.env*'; (cd apps/agent && npx vitest run src/mastra/tools/check-inventory.test.ts 2>&1 | tail -25)
+B -38 claude -v
+B -37 claude --version && claude -p "write x"
+B -36 claude --version-x
+A plan hash $H12
+U yes
+B -1 $SK/scripts/approve-plan.sh T12 --sha $H12 --repo $R --session s-d1
+EOF
+req "$(lt T12 s-d1)" 1 "DRY-01 fixture exits 1 (the reviewer call, the claude -p and the --version-x)"
+hasnt "DRY-01 stage 0 command not listed" "claude --version; echo"
+hasnt "DRY-01 stage 0 command (entry line 2) not listed" "s-d1 line 2 "
+hasnt "claude -v alone not listed" "] before the marker: claude -v"
+has "reviewer call: the matched command is shown" "[package script] before the marker: ...npx vitest run src/mastra/tools/check-inventory.test.ts 2>&1"
+hasnt "reviewer call: not the first 160 chars" "before the marker: sed -n 1,45p"
+has "claude -p after a --version is still listed (per match)" '[nested claude] before the marker: ...claude -p "write x"'
+has "--version-x is not --version" "[nested claude] before the marker: claude --version-x"
+req "$(grep -c '^unparsed' "$S/out.txt")" 3 "three unparsed lines in the DRY-01 fixture"
 
 echo "# read-only: the state root and the transcripts are unchanged by every run above and by one more"
 snap() { (cd "$S" && find state projects -print0 | sort -z | xargs -0 shasum 2>/dev/null; find state projects | sort) | shasum; }
