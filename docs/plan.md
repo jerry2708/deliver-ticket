@@ -904,6 +904,7 @@ Lock (C6-C9), from plan.md:709-715 plus:
   - re-run the full `probe-sandbox.sh` pass and the C11 probes; for >= 2.1.325 this is mandatory (2.1.325 changed sandboxed Bash to the normal permission flow unless `sandbox.autoAllowBashIfSandboxed: true`);
   - **diff the Bash tool's input parameters** against the previous version; any new parameter that widens the sandbox (network, write paths, unsandboxed run) goes into `dtcore.py sandbox_widening_reason` and gets a probe case like `bash_disable_sandbox_param`.
   - Changelog source for the 2.1.32x items (quoted via a web-fetch subagent, 2026-11-18, not read directly): https://github.com/anthropics/claude-code/releases, `/releases/tag/v2.1.325`, `/v2.1.323` (cut off), `/v2.1.321`.
+- *Probe notes (2026-11-26, Claude Code 2.1.325):* `refs_ctl_stash` is flaky by design of the client, not of the sandbox: in a session whose cwd is a git worktree Claude Code adds its own worktree note ("The git stash stack is shared with the main checkout and all other worktrees ... Never use bare `git stash` / `git stash pop`"; source: Claude Code's `environment` attachment, seen in the 2.1.325 probe transcripts and already in the 2.1.311 ones), so Haiku sometimes declines the call and the run is INCONCLUSIVE; re-run it rather than change the case.
 
 ## 14. Existing work to study (reference only, nothing installed)
 Not evaluated – descriptions from catalogs/search:

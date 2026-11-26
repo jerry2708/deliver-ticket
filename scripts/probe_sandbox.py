@@ -456,6 +456,8 @@ def m_deny_rm(c, d):
 
 BOTH = ["default", "auto"]
 NOUSER = "project,local"     # --setting-sources: the verdict must come from the fixture settings (--settings) alone; the real ~/.claude/settings.json (ask rules, hooks) is not loaded
+# symlink_write: Haiku refused the default lead-in twice on 2.1.325 (it reasoned about the target, no call made); a plain instruction instead
+NEUTRAL_PROMPT = "Run exactly this command and report its output: "
 SID = "--reason probe --session {id} --repo {PROJ}"
 # the user-level file-tool rules exactly as install-hooks.sh apply writes them (//<abs>), for the fixture state root and the live skill path
 TOOL_ALLOW = ih.file_allow("{ST}", "{HOME}/.claude/skills/deliver-ticket")
@@ -477,7 +479,7 @@ CASES = [
     dict(id="rename_key_dir", cmd="mv {KD} {KD}.moved", expect="eperm", disk=[("exists", "{KD}/guard.json"), ("absent", "{KD}.moved")]),
     dict(id="rename_root", cmd="mv {ST} {ST}.moved", expect="eperm", disk=[("exists", "{ST}"), ("absent", "{ST}.moved")]),
     dict(id="rm_closed_marker", cmd="rm {KD}/closed/T1", expect="eperm", disk=[("exists", "{KD}/closed/T1")]),
-    dict(id="symlink_write", cmd="ln -s {KD}/guard.json {S}/sl.json && echo x > {S}/sl.json", expect="eperm", disk=[("same", "{KD}/guard.json")]),
+    dict(id="symlink_write", cmd="ln -s {KD}/guard.json {S}/sl.json && echo x > {S}/sl.json", expect="eperm", prompt=NEUTRAL_PROMPT, disk=[("same", "{KD}/guard.json")]),
     dict(id="allowwrite_glob_unsupported", cmd="echo x > {KD}/evidence2/x.txt", expect="eperm", mutate=m_allowglob, info=True, disk=[("absent", "{KD}/evidence2/x.txt")]),
     dict(id="excluded_script_direct", dt_home=True, cmd="{SK}/scripts/session-map.sh bind T1 " + SID, expect="ok", disk=[("exists", "{ST}/sessions/{id}")]),
     dict(id="excluded_script_bash_prefix", dt_home=True, cmd="bash {SK}/scripts/session-map.sh bind T1 " + SID, expect="eperm", disk=[("absent", "{ST}/sessions/{id}")]),
@@ -805,11 +807,14 @@ TOOL_PROMPTS = {"Read": "Use the Read tool once on this file, nothing else (exac
                 "Edit": "Use the Read tool on this file, then the Edit tool once on it to replace the exact text %s with %s, nothing else (exact path): "}
 
 
-def run_claude(claude, cmd, settings, mode, cwd, env, raw, sources=None, model="haiku", params=None, tool=None, edit=("aaa", "bbb")):
-    """tool=None: one Bash call (`cmd` = the command); tool=Read|Write|Edit: one call of that tool (`cmd` = the file path), and only that tool's results count."""
+def run_claude(claude, cmd, settings, mode, cwd, env, raw, sources=None, model="haiku", params=None, tool=None, edit=("aaa", "bbb"), prompt=None):
+    """tool=None: one Bash call (`cmd` = the command); tool=Read|Write|Edit: one call of that tool (`cmd` = the file path), and only that tool's results count.
+    prompt: a case's own lead-in for a Bash call instead of the default one (the command is appended unchanged)."""
     extra = "".join(" with the Bash tool input parameter %s set to %s," % (k, json.dumps(v)) for k, v in sorted((params or {}).items()))
     if tool:
         prompt = (TOOL_PROMPTS[tool] % edit if tool == "Edit" else TOOL_PROMPTS[tool]) + cmd
+    elif prompt:
+        prompt = prompt + cmd
     else:
         prompt = "Run exactly this ONE Bash command, as a single call,%s character for character, changing nothing (keep any cd, &&, prefix and path): " % extra + cmd
     name, key = (tool, "file_path") if tool else ("Bash", "command")
@@ -983,7 +988,7 @@ def main():
         raw = c.S + "/raw/%s-%s.json" % (k["id"], mode)
         os.makedirs(c.S + "/raw", exist_ok=True)
         used, res, inputs = run_claude(a.claude.split(), cmd, sp, mode, cwd, env, raw, k.get("sources"), k.get("model", "haiku"), k.get("params"), k.get("tool"),
-                                       k.get("edit", ("aaa", "bbb")))
+                                       k.get("edit", ("aaa", "bbb")), k.get("prompt"))
         verdict, note = judge(c, k, used, res, before, inputs)
         need = k.get("needs")
         if need and verdict == "PASS" and done.get((need, mode)) != "PASS":     # the control runs first (CASES order) in the same run and mode

@@ -20,7 +20,7 @@ if "--version" in a:
     print("9.9.9 (Claude Code, fake)"); sys.exit(0)
 prompt = a[a.index("-p") + 1]
 mode = a[a.index("--permission-mode") + 1]
-asked = prompt.split("path): ", 1)[1]
+asked = prompt.split("path): ", 1)[1] if "path): " in prompt else prompt.split("output: ", 1)[1]     # the default lead-in, or a case's NEUTRAL_PROMPT
 # the table was dumped with other scratch / outside dirs than this run uses: map the run's paths onto the table's, and back for the side effects
 to_t = lambda s: s.replace(os.environ["FAKE_RUN_OUT"], os.environ["FAKE_DUMP_OUT"]).replace(os.environ["FAKE_RUN_S"], os.environ["FAKE_DUMP_S"])
 to_r = lambda s: s.replace(os.environ["FAKE_DUMP_OUT"], os.environ["FAKE_RUN_OUT"]).replace(os.environ["FAKE_DUMP_S"], os.environ["FAKE_RUN_S"])
