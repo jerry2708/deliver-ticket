@@ -65,6 +65,11 @@ for good in 'run `git merge-base HEAD main` (its own call), then `<skill dir>/sc
 has stages/4-verify.md '`<skill dir>/scripts/base-worktree.sh acquire <ID> <that sha> --repo <repo_root>`'
 has stages/4-verify.md '`<skill dir>/scripts/setup-worktree.sh <repo_root> <repo_root>/.claude/worktrees/_base _base`'
 has SKILL.md '`project-map-stale.sh`, `base-worktree.sh` (stage 4): the same spelling'
+echo "# Code Mode not supported (experimental): stage 0 stops, documented next to the default-mode rule"
+has SKILL.md 'Code Mode not supported (experimental)'
+has README.md 'Code Mode not supported (experimental)'
+has stages/0-environment.md 'printenv CLAUDE_CODE_EXPERIMENTAL_CODE_MODE'
+has docs/plan.md 'Revisit Code Mode when it leaves experimental'
 hasnt "SKILL.md init.md stages" '`scripts/[a-z]'
 hasnt "SKILL.md init.md stages" 'python3 scripts/'
 has stages/3-build.md '`CLAUDE.md`, `CLAUDE.local.md`, `AGENTS.md`, `GEMINI.md`, `.cursorrules`, `.npmrc`'

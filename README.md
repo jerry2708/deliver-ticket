@@ -3,6 +3,8 @@
 `/deliver-ticket init | <ticket-id|file> | <ID> cancel`. Run it only by typing it. Design rationale: `docs/plan.md`. `<state root>` below = `$DELIVER_TICKET_HOME`, default `~/.local/share/deliver-ticket` (defined in `SKILL.md` section 3).
 
 ## Permission mode: launch in default mode, no auto mode, no plan mode
+**Code Mode not supported (experimental).** With `CLAUDE_CODE_EXPERIMENTAL_CODE_MODE` set to anything but empty or `0`, stage 0 stops and the hooks block the skill's scripts; `install-hooks.sh apply` registers a user-level PreToolUse hook on `REPL` (Code Mode's code tool) that denies every call, so Code Mode cannot be used in any session on this machine while the hooks are installed. Unset the variable (shell and the `env` block of `~/.claude/settings.json`) or set it to `0`. No rule or hook was probed under Code Mode (docs/plan.md v0.3 backlog).
+
 Ticket sessions run in **default mode**; **auto mode is not supported** (C11d, 2026-11-19). The gates are the skill's; the goal of milestone C11 is that nothing else prompts (permission rules, sandbox, hooks; not yet measured, C11g). Why not auto: probe `bash_allowed_domains_param` (Claude Code 2.1.311) showed that in auto mode a Bash call with the per-call `allowed_domains` parameter reached a host outside the project allowlist without a prompt. The hook now blocks the two known per-call widening parameters (`allowed_domains`, `dangerouslyDisableSandbox`), but it covers only those; auto mode may approve other things that default mode would ask about. A skill cannot set the mode. Launch with:
 
 ```

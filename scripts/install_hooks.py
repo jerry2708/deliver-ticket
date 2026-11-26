@@ -68,6 +68,7 @@ HOOK_SPECS = [
     ("PreToolUse", "Bash", "guard.sh", 10, True),
     ("PreToolUse", "Bash", "verify-on-push.sh", 1860, True),
     ("PreToolUse", "Edit|Write|NotebookEdit|MultiEdit", "worktree-guard.sh", 10, True),
+    ("PreToolUse", "REPL", "code-mode.sh", 10, True),        # Code Mode's code tool: not supported, always denied (hooks/dtcore.py CODE_MODE_MSG)
     ("PostToolUse", "EnterWorktree", "worktree-guard.sh", 10, False),
     ("SessionStart", "compact", "session-start.sh", 10, False),
     ("SessionStart", "startup|resume|clear", "session-record.sh", 10, False),     # C9a: <root>/starts/<session_id> = the start directory, first record wins

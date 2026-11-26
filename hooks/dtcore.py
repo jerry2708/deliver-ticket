@@ -33,6 +33,18 @@ def block(msg):
     raise Block(msg)
 
 
+# Code Mode (Claude Code >= 2.1.323, experimental, opt-in by this env var; Claude writes JavaScript that calls the tools through the REPL tool) is not supported:
+# no rule or hook of the skill was probed under it. Fail-closed: hooks/code-mode.sh denies REPL, and with the variable on the skill's scripts are blocked.
+CODE_MODE_VAR = "CLAUDE_CODE_EXPERIMENTAL_CODE_MODE"
+CODE_MODE_MSG = ("Code Mode (experimental) is not supported by deliver-ticket - quit, unset %s (shell and the env block of ~/.claude/settings.json) "
+                 "or set it to 0, then start a new session" % CODE_MODE_VAR)
+
+
+def code_mode_on():
+    v = os.environ.get(CODE_MODE_VAR, "").strip()
+    return bool(v) and v != "0"
+
+
 # ---------------------------------------------------------------- guard.json
 
 def load_guard():
@@ -1859,6 +1871,8 @@ def mode_guard(payload, g):
         cmds = analyze(cmd, cwd)
     except ParseError as e:
         block("cannot parse the command (%s) - blocked, rewrite it more simply" % e)
+    if code_mode_on() and any(is_skill_script(c) for c in cmds if c.argv):
+        block(CODE_MODE_MSG)
     if g is None:
         # guard.json exists but is unusable: only the skill's own scripts may run
         if all(is_skill_script(c) for c in cmds if c.argv):
@@ -2047,6 +2061,8 @@ def mode_nostate(payload):
             if not NAMED:
                 return
             block("cannot parse the command (%s) and it names the state root - blocked, rewrite it more simply" % e)
+        if code_mode_on() and any(is_skill_script(c) for c in cmds if c.argv):
+            block(CODE_MODE_MSG)
         for c in cmds:
             a = c.argv
             prog = pname(a[0]) if a else ""
@@ -2292,6 +2308,8 @@ def main():
         if mode == "nostate":
             mode_nostate(payload)
             return 0
+        if mode == "codemode":          # hooks/code-mode.sh, PreToolUse matcher REPL: always denied
+            block(CODE_MODE_MSG)
         g = load_guard()
         {"guard": mode_guard, "verify": mode_verify, "wguard": mode_wguard,
          "session": mode_session, "bind": mode_bind}[mode](payload, g)

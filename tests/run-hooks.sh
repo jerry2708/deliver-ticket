@@ -881,6 +881,12 @@ echo "# C7: approve-plan.sh is a gate action too (its prompt is the user's yes t
 for c in "bash $SKS/approve-plan.sh T1 --repo $R" "python3 $SKS/approve_plan.py T1 --repo $R" "python3 -I $SKS/approve_plan.py T1 --repo $R" "env $SKS/approve-plan.sh T1 --repo $R" "FOO=1 $SKS/approve-plan.sh T1 --repo $R" \
   "cd $SKS && ./approve-plan.sh T1 --repo $R" "bash -c \"$SKS/approve-plan.sh T1 --repo $R\"" "echo \$($SKS/approve-plan.sh T1 --repo $R)" "$SKS/../scripts/approve-plan.sh T1 --repo $R"; do gx 2 Bash "$c"; done
 for c in "$SKS/approve-plan.sh T1 --repo $R --session s1" "$SKS/git-push.sh mirror feat-T1" "$SKS/git-rename.sh a b"; do gx 0 Bash "$c"; done
+echo "# Code Mode not supported: with CLAUDE_CODE_EXPERIMENTAL_CODE_MODE on, a skill script is blocked (bound, unbound, no-state); 0 / other commands pass; REPL always denied"
+CLAUDE_CODE_EXPERIMENTAL_CODE_MODE=1 gx 2 Bash "$SKS/session-map.sh show T1 --session s1 --repo $R"
+CLAUDE_CODE_EXPERIMENTAL_CODE_MODE=0 gx 0 Bash "$SKS/session-map.sh show T1 --session s1 --repo $R"
+CLAUDE_CODE_EXPERIMENTAL_CODE_MODE=1 tsid 0 guard.sh s1 "$R" "git status"
+out=$(printf '%s' '{"session_id":"s1","tool_name":"REPL","tool_input":{"code":"1"}}' | "$SK/hooks/code-mode.sh" 2>&1); req "$?" 2 "REPL denied"
+case "$out" in *"Code Mode (experimental) is not supported"*CLAUDE_CODE_EXPERIMENTAL_CODE_MODE*) pass=$((pass+1));; *) fail=$((fail+1)); echo "FAIL REPL message: $out";; esac
 # C11c3: the stage-4 base calls (bookkeeping base-worktree.sh, then setup-worktree.sh sandboxed) pass the hooks in a bound and an unbound session
 for c in "$SKS/base-worktree.sh acquire T1 0123456789abcdef0123456789abcdef01234567 --repo $R" "$SKS/base-worktree.sh release T1 --repo $R" "$SKS/setup-worktree.sh $R $R/.claude/worktrees/_base _base"; do gx 0 Bash "$c"; done
 # the read-only, sandboxed scripts (install_hooks.SANDBOXED) of stage 2 and stage 8 pass the hooks in every session

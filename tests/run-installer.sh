@@ -31,6 +31,12 @@ DT_SETTINGS="$D/legacy.json" "$SK/scripts/install-hooks.sh" apply --confirmed >/
 grep -q 'worktree-create.sh' "$D/legacy.json" && { fail=1; echo "FAIL WorktreeCreate still registered at user level"; } || echo "ok user-level WorktreeCreate removed"
 grep -q 'other-hook.sh' "$D/legacy.json" && echo "ok foreign hook kept" || { fail=1; echo "FAIL foreign hook lost"; }
 DT_SETTINGS="$D/legacy.json" "$SK/scripts/install-hooks.sh" status >/dev/null 2>&1 && echo "ok status after apply" || { fail=1; echo "FAIL status after apply"; }
+python3 -I - "$D/legacy.json" "$SK" <<'PY' && echo "ok Code Mode: PreToolUse REPL -> code-mode.sh (onFailure block)" || { fail=1; echo "FAIL no PreToolUse REPL hook"; }
+import json, sys
+d = json.load(open(sys.argv[1]))
+assert any(m.get("matcher") == "REPL" and any(h["command"] == sys.argv[2] + "/hooks/code-mode.sh" and h.get("onFailure") == "block" for h in m["hooks"])
+           for m in d["hooks"]["PreToolUse"]), d["hooks"]["PreToolUse"]
+PY
 # --- a second apply must not forget what the first one added (the old manifest was truncated before it was read): uninstall leaves nothing behind
 cp "$D/orig.json" "$D/again.json"
 DT_SETTINGS="$D/again.json" "$SK/scripts/install-hooks.sh" apply --confirmed >/dev/null 2>&1
