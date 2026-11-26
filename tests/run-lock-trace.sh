@@ -31,11 +31,12 @@ start() { printf '%s\n' "$2" > "$DELIVER_TICKET_HOME/starts/$1"; }
 #   C <cwd>         cwd of the following entries              U <text>   user turn          M <text>   isMeta user entry
 #   A <text>        assistant text                            B <min> <command>   Bash call (ok)   E <min> <command>   Bash call (is_error)
 #   W <min> <path>  Write call                                R <min> <path>   Read call
+#   O <text>        one line of the output of the next B / E call (default output "r")
 TXPY=$(cat <<'PY'
 import datetime, json, sys
 now = datetime.datetime.now(datetime.timezone.utc)
 ts = lambda m: (now + datetime.timedelta(minutes=float(m))).strftime("%Y-%m-%dT%H:%M:%S.000Z")
-cwd, out, n = "/", [], 0
+cwd, out, n, pend = "/", [], 0, []
 for l in sys.stdin.read().splitlines():
     if not l.strip():
         continue
@@ -46,13 +47,16 @@ for l in sys.stdin.read().splitlines():
         cwd = rest
     elif k in ("U", "M"):
         out.append(dict(base, type="user", isMeta=(k == "M"), message={"role": "user", "content": rest}))
+    elif k == "O":
+        pend.append(rest)
     elif k == "A":
         out.append(dict(base, type="assistant", message={"role": "assistant", "content": [{"type": "text", "text": rest}]}))
     elif k in ("B", "E", "W", "R"):
         m, _, arg = rest.partition(" ")
         name, inp = {"W": ("Write", {"file_path": arg, "content": "x"}), "R": ("Read", {"file_path": arg})}.get(k, ("Bash", {"command": arg}))
         out.append(dict(base, timestamp=ts(m), type="assistant", message={"role": "assistant", "content": [{"type": "tool_use", "id": "t%d" % n, "name": name, "input": inp}]}))
-        out.append(dict(base, timestamp=ts(m), type="user", message={"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t%d" % n, "content": "r", "is_error": k == "E"}]}))
+        out.append(dict(base, timestamp=ts(m), type="user", message={"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t%d" % n, "content": "\n".join(pend) if pend else "r", "is_error": k == "E"}]}))
+        pend = []
         # api-request-blob repeats tool_use blocks: the scan must not count them twice
         out.append({"type": "api-request-blob", "message": {"content": [{"type": "tool_use", "id": "t%d" % n, "name": name, "input": inp}]}})
 open(sys.argv[1], "w").write("".join(json.dumps(e) + "\n" for e in out))
@@ -334,8 +338,122 @@ has "claude -p after a --version is still listed (per match)" '[nested claude] b
 has "--version-x is not --version" "[nested claude] before the marker: claude --version-x"
 req "$(grep -c '^unparsed' "$S/out.txt")" 3 "three unparsed lines in the DRY-01 fixture"
 
+echo "# C11e2: each git-commit.sh call vs the stat call right before it vs its delivery.log commit line vs the repo"
+STAT="git diff --cached --stat=10000 --no-renames"
+gcm() { git -C "$R" -c user.email=t@t -c user.name=t commit -q -m "$1"; git -C "$R" rev-parse HEAD; }
+# clog <ticket> <sha> [tree] [extra]: the commit line git-commit.sh writes (files from the commit, the same JSON as git_commit.log_files); session "-"
+# so that only the transcripts named below are scanned
+clog() { python3 -I -c 'import sys, subprocess; sys.path.insert(0, sys.argv[1]); import ticket_ctl, git_commit
+r, st, t, sha, tree, extra = sys.argv[2:8]
+files = subprocess.run(["git", "-C", r, "diff-tree", "--root", "-r", "--no-commit-id", "--no-renames", "--name-only", "-z", sha], capture_output=True, text=True).stdout.split("\0")[:-1]
+tree = tree or subprocess.run(["git", "-C", r, "rev-parse", sha + "^{tree}"], capture_output=True, text=True).stdout.strip()
+ticket_ctl.log(st, "-", t, "commit", "%s branch=c1 tree=%s %sfiles=%s" % (sha, tree, extra, git_commit.log_files(files)))' "$SK/scripts" "$R" "$ST" "$1" "$2" "${3:-}" "${4:-}"; }
+statof() { git -C "$R" diff --stat=10000 --no-renames "$1^" "$1" | sed 's/^/O /'; }
+git -C "$R" checkout -q -b c1
+mkdir -p "$R/very/long/directory/name/that/goes/on/and/on/for/a/while/and/more"
+echo a > "$R/a.txt"; echo q > "$R/sp ace|é.txt"; echo x > "$R/very/long/directory/name/that/goes/on/and/on/for/a/while/and/more/file-with-a-long-name.txt"
+git -C "$R" add a.txt "sp ace|é.txt" very; CA=$(gcm "feat: a")
+git -C "$R" mv a.txt b.txt; CB=$(gcm "refactor: rename")
+WT13=$R/.claude/worktrees/T13
+tk T13 $'# T13\n## Plan\n- thirteen\n'
+H13=$(shown T13); approve T13 s-c; start s-c "$R"
+clog T13 "$CA"; clog T13 "$CB"
+tx "$P/-repo/s-c.jsonl" <<EOF
+C $R
+A plan hash $H13
+U yes
+B -30 $SK/scripts/approve-plan.sh T13 --sha $H13 --repo $R --session s-c
+C $WT13
+$(statof "$CA")
+B 1 $STAT
+O [c1 ${CA:0:7}] feat: a
+O  3 files changed, 3 insertions(+)
+B 2 $SK/scripts/git-commit.sh --session s-c -m "feat: a"
+$(statof "$CB")
+O Shell cwd was reset to $R
+B 3 $STAT
+O [c1 ${CB:0:7}] refactor: rename
+B 4 $SK/scripts/git-commit.sh --session s-c -m "refactor: rename"
+EOF
+req "$(lt T13 s-c)" 1 "good commits: only the fixture --projects is listed"
+req "$(grep -c '^commit ' "$S/out.txt")" 0 "good commits: no commit line listed"
+req "$(grep -c '^commit-ok' "$S/out.txt")" 2 "two commit-ok info lines (a rename, a quoted name with |, a long path)"
+has "rename = delete + add" "${CB:0:7}: stat shown = delivery.log (2 file(s))"
+has "three files, one quoted with |, one long" "${CA:0:7}: stat shown = delivery.log (3 file(s))"
+has "summary counts commit-ok as info" "1 line(s) listed (exit 1 if > 0); 3 info line(s) above, not counted"
+
+echo c1 > "$R/c1.txt"; echo c2 > "$R/c2.txt"; git -C "$R" add c1.txt c2.txt; CC=$(gcm "feat: c")
+WT14=$R/.claude/worktrees/T14
+tk T14 $'# T14\n## Plan\n- fourteen\n'
+H14=$(shown T14); approve T14 s-d; start s-d "$R"
+clog T14 "$CC"
+clog T14 "$CA" "" "MISMATCH staged_tree=1111111111111111111111111111111111111111 head_before=none "
+clog T14 "$CB" 0000000000000000000000000000000000000000
+clog T14 ffffffffffffffffffffffffffffffffffffffff 2222222222222222222222222222222222222222
+python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import ticket_ctl; ticket_ctl.log(sys.argv[2], "s-d", "T14", "commit", "garbage")' "$SK/scripts" "$ST"
+tx "$P/-repo/s-d.jsonl" <<EOF
+C $R
+A plan hash $H14
+U yes
+B -30 $SK/scripts/approve-plan.sh T14 --sha $H14 --repo $R --session s-d
+C $WT14
+O  c1.txt | 1 +
+O  1 file changed, 1 insertion(+)
+B 1 $STAT
+O [c1 ${CC:0:7}] feat: c
+B 2 $SK/scripts/git-commit.sh --session s-d -m "feat: c"
+B 3 git status
+O [c1 1111111] x
+B 4 $SK/scripts/git-commit.sh --session s-d -m x
+B 5 git diff --cached --stat
+O [c1 2222222] x
+B 6 $SK/scripts/git-commit.sh --session s-d -m x
+O  a | 1 +
+O ... [5 lines truncated] ...
+B 7 $STAT
+O [c1 3333333] x
+B 8 $SK/scripts/git-commit.sh --session s-d -m x
+C $R
+O  a | 1 +
+O  1 file changed, 1 insertion(+)
+B 9 $STAT
+C $WT14
+O [c1 4444444] x
+B 10 $SK/scripts/git-commit.sh --session s-d -m x
+O  a | 1 +
+O  1 file changed, 1 insertion(+)
+B 11 $STAT
+O git-safe: nothing is staged (git add the files of this commit first)
+E 12 $SK/scripts/git-commit.sh --session s-d -m x
+EOF
+tx "$P/-repo/s-d/subagents/agent-c.jsonl" <<EOF
+C $WT14
+O  a | 1 +
+O  1 file changed, 1 insertion(+)
+B 13 $STAT
+O [c1 5555555] x
+B 14 $SK/scripts/git-commit.sh --session s-d -m x
+EOF
+req "$(lt T14 s-d)" 1 "commit problems exit 1"
+has "stat != committed" "${CC:0:7}: stat shown != committed files (1 shown, 2 logged); committed, not shown: [\"c2.txt\"]; shown, not committed: []"
+has "previous call not the stat" "1111111: the call before it (line"
+has "the default stat spelling is not the stat" "2222222: the call before it (line"
+has "cut short" "3333333: stat output (line"
+has "cut short" "is not a file line (cut short?): ... [5 lines truncated] ..."
+has "other cwd" "4444444: the stat ran in $R, the commit in $WT14"
+has "is_error with no sha: info" "commit-none"
+has "subagent" "5555555: ran in a subagent"
+has "a call without a log line" "no delivery.log commit line for 1111111"
+has "MISMATCH line" "commit ${CA:0:12}: logged as MISMATCH staged_tree="
+has "tree differs in the repo" "commit ${CB:0:12}: tree in the repo"
+has "commit missing in the repo" "commit ffffffffffff: no such commit in the repo"
+has "unparsed line" "commit line not parsed: garbage"
+has "log line without a call" "commit ${CA:0:12}: no git-commit.sh call for it in the scanned transcripts"
+# 6 calls (c, 1111111, 2222222, 3333333, 4444444, 5555555) + garbage + CA (MISMATCH, no call) + CB (tree, no call) + ffff (no call, no commit)
+req "$(grep -c '^commit ' "$S/out.txt")" 13 "thirteen commit lines listed"
+
 echo "# read-only: the state root and the transcripts are unchanged by every run above and by one more"
 snap() { (cd "$S" && find state projects -print0 | sort -z | xargs -0 shasum 2>/dev/null; find state projects | sort) | shasum; }
-b=$(snap); lt T5 s-h >/dev/null; lt T2 s-un >/dev/null; req "$(snap)" "$b" "lock-trace writes nothing"
+b=$(snap); lt T5 s-h >/dev/null; lt T2 s-un >/dev/null; lt T14 s-d >/dev/null; req "$(snap)" "$b" "lock-trace writes nothing"
 
 echo "pass=$pass fail=$fail"; [ $fail = 0 ]

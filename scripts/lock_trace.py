@@ -26,6 +26,13 @@ Listed (each counts):
               later (2 s slack) than the result of the last verify-record.sh <ID> call in the scanned transcripts, or with no such call at all ("verify.json not
               explained by verify-record.sh"). A trace too: `touch -t` forges an mtime.
   start       a session with no <state root>/starts/<sid> record, or whose transcript has a cwd that is neither under the record nor under <repo>/.claude/worktrees
+  commit      (C11e2) a `<skill dir>/scripts/git-commit.sh` call whose previous tool call in the same transcript is not exactly
+              `git diff --cached --stat=10000 --no-renames` (Bash, same cwd, not is_error, with output), or that ran in a subagent; a stat output that is not
+              complete (no `N files changed` line, a count that differs from its file lines, a line that is not a file line: cut short = mismatch);
+              stat file names (C-quoted names unquoted) that differ from the `files=` of the delivery.log `commit` line with that sha; a commit call with
+              no sha in its output that is not is_error; a `commit` line no scanned call explains, one marked MISMATCH (git-commit.sh exit 3), one
+              not parsed, and one whose commit is missing in the repo or whose tree / files there (diff-tree --root -r --no-renames) differ from the line.
+              Log lines from before C11e2 (staged list, renames followed) may show a rename as a mismatch.
 A user turn: a `user` entry that is not isMeta, not a compact summary, not a tool result, not "[Request interrupted...".
 The last line: "N line(s) listed (exit 1 if > 0); M info line(s) above, not counted" (info = approve-ok, after-marker, read-verify).
 Writes nothing. Exit 0 = nothing listed, 1 = at least one line listed, 2 = bad input. Standard library only.
@@ -65,6 +72,61 @@ UNPARSED = [
     ("nested claude", re.compile(CMD + r"claude" + END)),
 ]
 CLAUDE_VERSION = re.compile(r"\s+(?:--version|-v)[ \t]*(?=$|[;&|)\n`])")   # `claude --version` / `-v` and nothing else in that simple command
+
+
+GC_CALL = re.compile(r"\S*/scripts/git-commit\.sh\s")
+STAT_CMD = "git diff --cached --stat=10000 --no-renames"
+STAT_SUMMARY = re.compile(r"\s*(\d+) files? changed(?:, \d+ insertions?\(\+\))?(?:, \d+ deletions?\(-\))?\s*")
+COMMIT_OUT = re.compile(r"^\[[^\]\n]* ([0-9a-f]{7,64})\]", re.M)          # git commit's first line: [<branch> (root-commit) <short sha>] <subject>
+LOG_COMMIT = re.compile(r"([0-9a-f]{40,64}) branch=(\S+) tree=([0-9a-f]{40,64})( MISMATCH .*?)? files=(\[.*\])")
+C_ESC = {"a": 7, "b": 8, "t": 9, "n": 10, "v": 11, "f": 12, "r": 13, '"': 34, "\\": 92}
+
+
+def unquote(name):
+    """git's C-style quoted path ("sp\\303\\251.txt") back to the name; an unquoted name is returned as is."""
+    if len(name) < 2 or name[0] != '"' or name[-1] != '"':
+        return name
+    body, out, i = name[1:-1], bytearray(), 0
+    while i < len(body):
+        c = body[i]
+        if c == "\\" and i + 1 < len(body):
+            d = body[i + 1]
+            if d in "01234567" and re.fullmatch(r"[0-7]{3}", body[i + 1:i + 4]):
+                out.append(int(body[i + 1:i + 4], 8)); i += 4; continue
+            if d in C_ESC:
+                out.append(C_ESC[d]); i += 2; continue
+        out += c.encode("utf-8", "surrogateescape"); i += 1
+    return out.decode("utf-8", "surrogateescape")
+
+
+def parse_stat(text):
+    """(file names, problem or None) of a `git diff --stat` output; a problem when it is not complete."""
+    lines = [l for l in text.splitlines() if l.strip()]
+    names = []
+    for i, l in enumerate(lines):
+        m = STAT_SUMMARY.fullmatch(l)
+        if m:
+            n = int(m.group(1))
+            if n != len(names):
+                return names, "%d files changed but %d file line(s) (cut short?)" % (n, len(names))
+            return names, None                       # lines after the summary (a harness note) are not part of the stat
+        if " | " not in l:
+            return names, "line %d is not a file line (cut short?): %s" % (i + 1, l.strip()[:80])
+        left = l.rsplit(" | ", 1)[0]
+        names.append(unquote((left[1:] if left.startswith(" ") else left).rstrip(" ")))
+    return names, ("empty output" if not lines else "no `N files changed` line (cut short?)")
+
+
+def result_text(x):
+    c = x.get("content")
+    if isinstance(c, list):
+        return "\n".join(y.get("text", "") for y in c if isinstance(y, dict) and y.get("type") == "text")
+    return c if isinstance(c, str) else ""
+
+
+def git_out(repo, *a):
+    r = subprocess.run(["git", "-C", repo] + list(a), capture_output=True)
+    return r.stdout.decode("utf-8", "surrogateescape") if r.returncode == 0 else None
 
 
 def epoch_utc(ts):
@@ -196,6 +258,92 @@ def marker_info(state, tid, ticket):
     return None, epoch_local(approved), line + ": match"
 
 
+def commit_call(u, cwd, before, sub, at, errs, outs):
+    """{at, sha (short, from the output) or None, ok, problems, stat names or None} of one git-commit.sh call."""
+    probs, names = [], None
+    if sub:
+        probs.append("ran in a subagent")
+    if before is None:
+        probs.append("no tool call before it in this transcript")
+    else:
+        pu, pcwd, pn = before
+        pcmd = (pu.get("input") or {}).get("command")
+        if pu.get("name") != "Bash" or not isinstance(pcmd, str) or pcmd.strip() != STAT_CMD:
+            probs.append("the call before it (line %d) is not exactly `%s`: %s %s" % (pn, STAT_CMD, pu.get("name"), str(pcmd or "")[:100]))
+        else:
+            if pcwd != cwd:
+                probs.append("the stat ran in %s, the commit in %s" % (pcwd, cwd))
+            if pu.get("id") in errs:
+                probs.append("the stat call (line %d) is_error" % pn)
+            names, sp = parse_stat(outs.get(pu.get("id"), ""))
+            if sp:
+                probs.append("stat output (line %d): %s" % (pn, sp))
+                names = None
+    out = outs.get(u.get("id"), "")
+    m = COMMIT_OUT.search(out)
+    ok = u.get("id") not in errs
+    if not m and ok:
+        probs.append("no commit sha in its output")
+    return {"at": at, "sha": m.group(1) if m else None, "ok": ok, "probs": probs, "names": names}
+
+
+def check_commits(repo, log, calls, lst, info):
+    """Calls vs delivery.log `commit` lines vs the repo (C11e2)."""
+    lines = []
+    for ts, s, act, det in log:
+        if act != "commit":
+            continue
+        m = LOG_COMMIT.fullmatch(det)
+        if not m:
+            lst("commit", "delivery.log %s session=%s commit line not parsed: %s" % (ts, s, det[:160]))
+            continue
+        try:
+            files = json.loads(m.group(5))
+        except ValueError:
+            files = None
+        lines.append({"ts": ts, "s": s, "sha": m.group(1), "tree": m.group(3), "odd": m.group(4), "files": files, "used": False})
+    for c in calls:
+        if c["sha"] is None:
+            if c["probs"]:
+                lst("commit", "%s git-commit.sh: %s" % (c["at"], "; ".join(c["probs"])))
+            else:
+                info.append("commit-none  %s git-commit.sh is_error, no commit made" % c["at"])
+            continue
+        hits = [l for l in lines if l["sha"].startswith(c["sha"])]
+        probs = list(c["probs"])
+        if not hits:
+            probs.append("no delivery.log commit line for %s" % c["sha"])
+        for l in hits:
+            l["used"] = True
+            if c["names"] is not None and l["files"] is not None and sorted(c["names"]) != sorted(l["files"]):
+                miss = sorted(set(l["files"]) - set(c["names"]))
+                extra = sorted(set(c["names"]) - set(l["files"]))
+                probs.append("stat shown != committed files (%d shown, %d logged); committed, not shown: %s; shown, not committed: %s"
+                             % (len(c["names"]), len(l["files"]), json.dumps(miss[:5]) + ("..." if len(miss) > 5 else ""),
+                                json.dumps(extra[:5]) + ("..." if len(extra) > 5 else "")))
+        if probs:
+            lst("commit", "%s git-commit.sh %s%s: %s" % (c["at"], c["sha"], "" if c["ok"] else " (is_error)", "; ".join(probs)))
+        else:
+            info.append("commit-ok    %s %s: stat shown = delivery.log (%d file(s))" % (c["at"], c["sha"], len(c["names"])))
+    for l in lines:
+        at = "delivery.log %s session=%s commit %s" % (l["ts"], l["s"], l["sha"][:12])
+        if not l["used"]:
+            lst("commit", "%s: no git-commit.sh call for it in the scanned transcripts" % at)
+        if l["odd"]:
+            lst("commit", "%s: logged as%s (git-commit.sh exit 3)" % (at, l["odd"]))
+        if l["files"] is None:
+            lst("commit", "%s: files= is not a JSON list" % at)
+        if git_out(repo, "rev-parse", "-q", "--verify", l["sha"] + "^{commit}") is None:
+            lst("commit", "%s: no such commit in the repo" % at)
+            continue
+        tree = (git_out(repo, "rev-parse", l["sha"] + "^{tree}") or "").strip()
+        files = (git_out(repo, "diff-tree", "--root", "-r", "--no-commit-id", "--no-renames", "--name-only", "-z", l["sha"]) or "").split("\0")[:-1]
+        if tree != l["tree"]:
+            lst("commit", "%s: tree in the repo %s, logged %s" % (at, tree[:12], l["tree"][:12]))
+        if l["files"] is not None and sorted(files) != sorted(l["files"]):
+            lst("commit", "%s: files in the repo differ from the log (%d vs %d)" % (at, len(files), len(l["files"])))
+
+
 def main(argv):
     ap = argparse.ArgumentParser(prog="lock-trace.sh")
     ap.add_argument("ticket")
@@ -233,7 +381,7 @@ def main(argv):
     mprob, mepoch, mline = marker_info(state, a.ticket, ticket)
     if mprob:
         lst("marker", mprob)
-    info, approves, found, vr_ends = [], [], 0, []
+    info, approves, found, vr_ends, commit_calls = [], [], 0, [], []
     vfile = "evidence/%s/verify.json" % a.ticket
     vr_call = re.compile(r"\S*/scripts/verify-record\.sh\s+%s(?:\s+[^;&|<>`$()\n]*)?" % re.escape(a.ticket))      # one plain call, nothing chained
     for sid in sids:
@@ -256,6 +404,8 @@ def main(argv):
             where = "%s%s" % (sid[:8], "/" + os.path.basename(path)[:-6] if sub else "")
             errs = {x.get("tool_use_id") for _, e in ents for x in blocks(e, "tool_result") if x.get("is_error")}
             done_at = {x.get("tool_use_id"): e.get("timestamp") for _, e in ents for x in blocks(e, "tool_result")}
+            outs = {x.get("tool_use_id"): result_text(x) for _, e in ents for x in blocks(e, "tool_result")}
+            prev = None
             shown, shown_at, turn_since = None, None, False
             for n, e in ents:
                 if not sub and e.get("cwd"):
@@ -271,6 +421,9 @@ def main(argv):
                     text = json.dumps(inp, ensure_ascii=False)
                     ts = e.get("timestamp", "?")
                     at = "%s line %d %s" % (where, n, ts[:19])
+                    before, prev = prev, (u, e.get("cwd"), n)
+                    if u.get("name") == "Bash" and isinstance(inp.get("command"), str) and GC_CALL.match(inp["command"].strip() + " "):
+                        commit_calls.append(commit_call(u, e.get("cwd"), before, sub, at, errs, outs))
                     if re.search(r"\bapprovals/|/approvals\b", text):
                         lst("approvals", "%s %s: %s" % (at, u.get("name"), text[:200]))
                     vr = u.get("name") == "Bash" and isinstance(inp.get("command"), str) and vr_call.fullmatch(inp["command"].strip())
@@ -336,6 +489,7 @@ def main(argv):
         elif mt > max(vr_ends) + 2:
             lst("verify", "%s changed at %s, after the last verify-record.sh %s call ended (%s): verify.json not explained by verify-record.sh"
                 % (vpath, time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(mt)), a.ticket, time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(max(vr_ends)))))
+    check_commits(repo, log, commit_calls, lst, info)
     for ts, s, act, det in log:
         if act == "plan-approve":
             h = det[7:19] if det.startswith("sha256=") else "?"

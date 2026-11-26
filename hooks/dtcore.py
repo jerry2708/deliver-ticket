@@ -1665,7 +1665,7 @@ def check_cmd(c, g, payload, all_cmds=()):
         # the plan approval and the recorded branch, and its prompt is the user's yes)
         if sub == "commit" and isinstance(g, dict) and isinstance(g.get("repo_root"), str) and c.cwd and \
                 under(real(c.cwd), real(os.path.join(g["repo_root"], ".claude", "worktrees"))):
-            block("git commit in a ticket worktree runs only through the gate: show `git diff --cached --stat` in one call, then run `%s --session <id> -m "
+            block("git commit in a ticket worktree runs only through the gate: show `git diff --cached --stat=10000 --no-renames` in one call, then run `%s --session <id> -m "
                   "\"<message>\"` from the worktree directory in the next" % os.path.join(SKILL_SCRIPTS, "git-commit.sh"))
         if sub == "merge":
             check_merge(c, over, g, all_cmds)

@@ -499,7 +499,7 @@ for sid in s1 u1; do
     tsid 2 guard.sh $sid "$W" "$c"; done
 done
 out=$(payload "$W" Bash "git -C $W commit -m x" u1 | "$SK/hooks/guard.sh" 2>&1); printf '%s' "$out" | grep -q 'run `cd <worktree>` as its own call, then plain `git commit ...`' && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL commit-gate block message: $out"; }
-out=$(payload "$W" Bash "git commit -m x" u1 | "$SK/hooks/guard.sh" 2>&1); printf '%s' "$out" | grep -q 'runs only through the gate: show `git diff --cached --stat` in one call, then run `.*scripts/git-commit.sh --session <id> -m' && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL worktree commit block message: $out"; }
+out=$(payload "$W" Bash "git commit -m x" u1 | "$SK/hooks/guard.sh" 2>&1); printf '%s' "$out" | grep -q 'runs only through the gate: show `git diff --cached --stat=10000 --no-renames` in one call, then run `.*scripts/git-commit.sh --session <id> -m' && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL worktree commit block message: $out"; }
 # outside a ticket worktree (an unbound session in the main checkout) the hook leaves a plain commit to the ask rule and the sandbox (EPERM under the ref deny)
 for c in 'git commit -m x' 'cd . && git commit -m x'; do tsid 0 guard.sh u1 "$R" "$c"; done
 out=$(payload "$S/nostate" Bash "git -C . commit -m x" u1 | "$SK/hooks/guard.sh" 2>&1); req "$?" 0 "no delivery state: git -C commit is not this skill's business ($out)"

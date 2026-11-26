@@ -93,6 +93,23 @@ req "$(gc "$W" --session s1 -m 'feat: e')" 0 "commit after the rename (record fo
 has "$ST/delivery.log" "branch=feat/t1-thing" "commit on the renamed branch"
 log T1 branch work/old; req "$(rn "$W" feat/t1-thing feat/t1-other)" 2 "rename refused once the record names another branch"
 
+echo "# C11e2: the logged list is the commit's own, renames as delete + add, | escaped so the name survives the log"
+log T1 branch feat/t1-thing     # the record again (the rename test above left work/old)
+git -C "$W" mv a.txt a2.txt; echo p > "$W/p|q.txt"; git -C "$W" add "p|q.txt"
+req "$(gc "$W" --session s1 -m 'refactor: rename a')" 0 "commit with a rename and a | name"
+has "$ST/delivery.log" 'files=\["a.txt", "a2.txt", "p\\u007cq.txt"\]$' "rename = delete + add; | as \\u007c"
+req "$(python3 -I -c 'import json, re, sys; l = [x for x in open(sys.argv[1]) if "| commit |" in x][-1]; print(json.loads(re.search(r"files=(\[.*\])$", l).group(1))[2])' "$ST/delivery.log")" "p|q.txt" "the JSON gives the exact name back"
+req "$(tail -1 "$ST/delivery.log" | grep -o 'tree=[0-9a-f]*' | cut -d= -f2)" "$(git -C "$W" rev-parse 'HEAD^{tree}')" "tree = the commit's tree"
+echo "# C11e2: the index changes during the commit (a git wrapper adds a file right before the real commit) -> committed, MISMATCH logged, exit 3"
+RG=$(command -v git); mkdir -p "$S/bin"
+printf '#!/bin/bash\nfor a; do [ "$a" = commit ] && "%s" -C "%s" add extra.txt; done\nexec "%s" "$@"\n' "$RG" "$W" "$RG" > "$S/bin/git"; chmod +x "$S/bin/git"
+echo f > "$W/f.txt"; git -C "$W" add f.txt; echo extra > "$W/extra.txt"; staged=$(git -C "$W" write-tree); before=$(head_of feat/t1-thing)
+req "$(cd "$W" && PATH="$S/bin:$PATH" "$GC" --session s1 -m 'feat: f' >"$S/out.txt" 2>&1; echo $?)" 3 "index changed during the commit: exit 3"
+has "$S/out.txt" "is not what was staged" "mismatch message"
+has "$S/out.txt" "STOP: show the user" "mismatch message says stop"
+has "$ST/delivery.log" "MISMATCH staged_tree=$staged head_before=$before files=\\[\"extra.txt\", \"f.txt\"\\]" "MISMATCH line with the commit's files"
+req "$(git -C "$W" log -1 --format=%s)" "feat: f" "the commit exists"
+
 echo "# --separate-git-dir: the scripts refuse with a clear message"
 SR=$S/seprepo; git init -q -b main --separate-git-dir "$S/sep.git" "$SR" && git -C "$SR" config user.email t@t && git -C "$SR" config user.name t
 echo 1 > "$SR/f.txt" && git -C "$SR" add f.txt && git -C "$SR" commit -q -m init && git -C "$SR" worktree add -q "$SR/.claude/worktrees/S1" -b work/s1 main
