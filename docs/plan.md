@@ -722,6 +722,55 @@ Goal: the skill is a base to grow on – add a file, don't edit the core. Method
 - an optional external code-graph provider for `project.md` (used if present, never installed; data-policy check and staleness rules first);
 - evals: stage-2 token use with vs without `project.md` on 2 tickets.
 
+### v0.3 backlog (staged 2026-11-26, moved here 2026-11-26)
+Nothing implemented. v0.2 comes first: C11, then the live fast-forward, then a dry-run repeat.
+
+**Source:** ideas from github.com/trungungtoan-agilityio/AgiAgentKit (MIT, about 9 days old, demo quality), as read by the coach session. The repo itself was not re-read when these entries were written.
+- Its hooks are fail-open and only save tokens. Its README says they are "not a security boundary".
+- Borrow the ideas, not the code.
+
+1. **Token metrics hook (highest value).**
+   - Stop and SubagentStop hooks append one JSON line per event: ts, session, stage, agent, model, turns, tokens in/out, cache read/write.
+   - Counts only, never prompt text.
+   - Stored under the skill's state root, outside the repo.
+   - Their version: `plugin/hooks/metrics-main.sh` and `metrics-subagent.sh`. They keep a byte or line cursor per transcript and use a mkdir lock.
+   - Goal: measure what each stage and each tier costs, and compare B vs C and dry runs.
+   - Open question: how to tag the stage for each event.
+
+2. **Brief / plan template check.**
+   - Compare our ticket `## Plan` with their lane-brief sections: Task, Done-when, Files, Model, Allowed / Not allowed, Test command.
+   - Add only the sections we lack. Done-when and an explicit not-allowed list are the likely ones.
+   - The plan hash covers `## Plan`, so a format change touches `approve-plan.sh` and its tests.
+
+3. **Model per role.**
+   - Their tiers: read-only scout on Haiku, builder and tester on Sonnet, reviewer and debugger on Opus.
+   - Reported: since CC 2.1.330 a skill's `model` no longer applies to subagents, so the model has to be pinned in each agent's frontmatter.
+     - Not verified here. This machine is pinned to 2.1.325, so check the changelog before relying on it.
+   - Decide per stage which model the skill recommends or pins.
+
+4. **Tool-call cap for build subagents.**
+   - Their turn-guard warns at 60 and 90 calls and denies at 130.
+   - It is fail-open (no jq means allow) and caps only Edit, Write and Bash.
+   - Their own docs give 3 different numbers: 30-40, ~60 and 130.
+   - If we add one: make it fail-closed, tie it to a stage, and document one number.
+
+5. **Targeted-tests budget.**
+   - Their test-budget hook denies whole-suite runs, but it is easy to bypass:
+     - the agent can set `FULL_SUITE_OK=1` itself;
+     - jest, `bun test` and `sh -c` are not matched.
+   - For us: the build stage runs targeted tests only, and the verify stage runs the full suite once on the final HEAD.
+   - Put this in the stage instructions first. A hook is optional, and if we add one it must be fail-closed.
+
+6. **Leader / orchestrator: rejected for now.**
+   - Their leader runs lanes in `--permission-mode auto`. That conflicts with our decision that ticket sessions run in default mode.
+   - Nothing stops their leader from merging or pushing except prompt text.
+   - Revisit only if parallel tickets are needed. Even then, start with a read-only status view: list the ticket worktrees and the gate each one is waiting on. It never launches sessions and never merges.
+   - Any push or merge goes through `git-push.sh` and the gates.
+
+**Do not copy** their `patrol --clean --apply` auto-delete.
+- Per their cheatsheet it removes worktrees, including git-ignored files, and runs from cron without asking.
+- Our cleanup stays the existing v0.3 "Cleanup command + reminder" item: per-item confirmation, `git branch -d` only.
+
 ### v0.2 – ideas and features (from the dry runs, not in v0.1; collected 2026-11-06)
 - **Watcher + builder model** for building / changing the skill: a watcher session reviews and messages the builder directly (sessions can message each other – not yet tested with terminal-tab sessions); the user approves decisions only. Needs a rule set for what the watcher may do on its own. Risk: two models share blind spots (the `WorktreeCreate` and main-checkout guard bugs got past both builder and coach).
 - **HIGH PRIORITY – permission mode (goal: in default mode I only answer gates).** The documentation part is done in v0.1 (README "Permission mode", SKILL.md "Mode"; launch with `claude --permission-mode auto`). The rest (lifetime of `allowed-tools`, hook `allow`, stage write lock, `permission_mode` in hook payloads) is now item 1 of the "v0.2 plan" above, which replaces the four steps first listed here.
@@ -927,6 +976,7 @@ Lock (C6-C9), from plan.md:709-715 plus:
   - **C11e2 - commit file list vs the stat shown in chat.** Found in review [verified]: stage 7 and `git_commit.py` said lock-trace compares the logged files with the stat, but `lock_trace.py` had no such code; `--name-only` follows renames and the default `--stat` shortens long paths and quotes odd names; `ticket_ctl.log` turns `|` into `/` in the detail; the tree and files were logged from the index before the commit, never checked against the commit. Decisions (user): stage 7 shows exactly `git diff --cached --stat=10000 --no-renames`, compared exactly; `git-commit.sh` logs the commit's own tree and files (`--no-renames`) and, when the commit's tree differs from the staged tree, logs it, exits nonzero and the stage stops for the user; a stat output cut by Claude Code is a mismatch. Limits that stay: the TUI may collapse a long output (shown is not seen; unverified); transcripts are writable (a trace, not proof); a `git` wrapper earlier in PATH could fake the stat (inference, untested); an index race is found only after the commit.
     - *Done (dev clone, 2026-11-26):* `git_commit.py` reads tree / parent / files (`diff-tree --root -r --no-renames`) back from the commit, `MISMATCH staged_tree= head_before=` + exit 3 when tree or parent differ, `|` as `\u007c` in the JSON; `lock_trace.py` kind `commit` (stat call right before, same cwd, complete output, names vs log, log vs repo, call / line pairing, subagent); stage 7, SKILL.md, the hook's block message, README, CHANGELOG. Tests: `run-git-commit.sh` (rename, `|` name, index changed by a `git` wrapper on PATH -> exit 3), `run-lock-trace.sh` (good commits incl. rename / quoted / long path; 13 listed cases). Not run: a real ticket session, the sandbox. Also seen: `git-commit.sh` runs the `git` found on PATH (the test wrapper relies on it; pre-existing, not changed).
 - **Later item (found 2026-11-26, no fix now):** `guard.sh` blocks `git --version` ("git global option '--version' is not understood - blocked (fail-closed)") - an over-block of a read-only call.
+- **Later item (found 2026-11-26, open question):** the hook blocks Write / Edit to `~/.claude/plans/` (the coach plan `warm-chasing-corbato.md` lives there; that Claude Code's plan mode writes its plan files there with Write is an inference, unverified), but its message names only "settings, hooks, skills" - over-block or intended? [verified in code: `hooks/dtcore.py:1021-1026` blocks every path under `~/.claude` except `projects/*/memory`, with the message "writes to ~/.claude/ (settings, hooks, skills) are only allowed through scripts/install-hooks.sh"; not re-run in this session.] Decide: exempt `plans/` (like memory) or keep the block and name every protected area in the message.
 
 ## 14. Existing work to study (reference only, nothing installed)
 Not evaluated – descriptions from catalogs/search:
