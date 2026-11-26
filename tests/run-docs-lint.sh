@@ -54,6 +54,15 @@ has README.md 'not the alias `pnpm i`, not via `npx` / `corepack`'
 echo "# C11c2: turbo runs with a worktree-local --cache-dir (turbo shares the main checkout's cache from a git worktree)"
 has stages/4-verify.md '--cache-dir=<this worktree>/.turbo/cache'
 has profiles/node.md 'Git Worktree Cache Sharing'
+echo "# C11c4: next/font in the sandbox is a known limit, never 'build ok'; the build is user-run evidence, no widening"
+has stages/4-verify.md 'known sandbox limit: TLS check via trustd blocked (C11c4)'
+has stages/4-verify.md 'It is never "build ok"'
+has stages/4-verify.md 'executes the ticket'"'"'s code and package scripts (`next.config.*`, `postinstall`, plugins)'
+has stages/4-verify.md 'git diff --stat <base>...HEAD'
+has stages/4-verify.md 'A user-run paste never updates `verify.json`'
+has init.md 'next/font/google'
+has stages/4-verify.md 'evidence/<ID>/user-run-<check>.txt'
+has stages/4-verify.md 'no settings change asked for (`allowedDomains`, `enableWeakerNetworkIsolation`'
 echo "# C11c3: base-worktree.sh is bookkeeping (unsandboxed); a skill-script call holds no command substitution; _base installs run sandboxed"
 for bad in '`<skill dir>/scripts/base-worktree.sh acquire T1 $(git merge-base HEAD main) --repo /r`' '`<skill dir>/scripts/base-worktree.sh acquire T1 `git merge-base HEAD main` --repo /r`' \
   '``<skill dir>/scripts/base-worktree.sh acquire T1 `git merge-base HEAD main` --repo /r``' $'```\n<skill dir>/scripts/plan-hash.sh T1 --repo `pwd`\n```' \
