@@ -456,8 +456,8 @@ def m_deny_rm(c, d):
 
 BOTH = ["default", "auto"]
 NOUSER = "project,local"     # --setting-sources: the verdict must come from the fixture settings (--settings) alone; the real ~/.claude/settings.json (ask rules, hooks) is not loaded
-# symlink_write: Haiku refused the default lead-in on 2.1.325 (it reasoned about the target, no call made); a plain instruction instead
-NEUTRAL_PROMPT = "Run exactly this command and report its output: "
+# symlink_write: Haiku refused the default lead-in on 2.1.325 (it reasoned about the target, no call made); a plain instruction instead (%s = the command)
+NEUTRAL_PROMPT = "Run exactly: %s and report output"
 SID = "--reason probe --session {id} --repo {PROJ}"
 # the user-level file-tool rules exactly as install-hooks.sh apply writes them (//<abs>), for the fixture state root and the live skill path
 TOOL_ALLOW = ih.file_allow("{ST}", "{HOME}/.claude/skills/deliver-ticket")
@@ -480,9 +480,12 @@ CASES = [
     dict(id="rename_root", cmd="mv {ST} {ST}.moved", expect="eperm", disk=[("exists", "{ST}"), ("absent", "{ST}.moved")]),
     dict(id="rm_closed_marker", cmd="rm {KD}/closed/T1", expect="eperm", disk=[("exists", "{KD}/closed/T1")]),
     # a write through a link whose realpath is a denyWrite entry (<common>/info/attributes, install_hooks.GIT_READ). The link lives in {WT} (allowWrite), so `ln`
-    # succeeds (disk: exists) and the eperm comes from the write through it; until 2026-11-26 the link went to {S}, not writable, so `ln` itself got the eperm
-    dict(id="symlink_write", cmd="ln -s {PROJ}/.git/info/attributes {WT}/notes.txt && echo x > {WT}/notes.txt", expect="eperm", prompt=NEUTRAL_PROMPT,
-         seed=[("{PROJ}/.git/info/attributes", "# notes\n")], disk=[("same", "{PROJ}/.git/info/attributes"), ("exists", "{WT}/notes.txt")]),
+    # succeeds (disk: exists) and the eperm comes from the write through it; until 2026-11-26 the link went to {S}, not writable, so `ln` itself got the eperm.
+    # The ln + write sit in a seeded script ({WT} = <proj>/.claude/worktrees, so ../../.git is the project's git dir): Haiku refused the inline command twice
+    dict(id="symlink_write", cmd="bash {WT}/run.sh", expect="eperm", prompt=NEUTRAL_PROMPT,
+         seed=[("{PROJ}/.git/info/attributes", "# notes\n"),
+               ("{WT}/run.sh", 'cd "$(dirname "$0")" || exit 1\nln -s ../../.git/info/attributes notes.txt && echo x > notes.txt\n')],
+         disk=[("same", "{PROJ}/.git/info/attributes"), ("exists", "{WT}/notes.txt")]),
     dict(id="allowwrite_glob_unsupported", cmd="echo x > {KD}/evidence2/x.txt", expect="eperm", mutate=m_allowglob, info=True, disk=[("absent", "{KD}/evidence2/x.txt")]),
     dict(id="excluded_script_direct", dt_home=True, cmd="{SK}/scripts/session-map.sh bind T1 " + SID, expect="ok", disk=[("exists", "{ST}/sessions/{id}")]),
     dict(id="excluded_script_bash_prefix", dt_home=True, cmd="bash {SK}/scripts/session-map.sh bind T1 " + SID, expect="eperm", disk=[("absent", "{ST}/sessions/{id}")]),
@@ -812,12 +815,12 @@ TOOL_PROMPTS = {"Read": "Use the Read tool once on this file, nothing else (exac
 
 def run_claude(claude, cmd, settings, mode, cwd, env, raw, sources=None, model="haiku", params=None, tool=None, edit=("aaa", "bbb"), prompt=None):
     """tool=None: one Bash call (`cmd` = the command); tool=Read|Write|Edit: one call of that tool (`cmd` = the file path), and only that tool's results count.
-    prompt: a case's own lead-in for a Bash call instead of the default one (the command is appended unchanged)."""
+    prompt: a case's own instruction for a Bash call instead of the default one (%s = the command, unchanged)."""
     extra = "".join(" with the Bash tool input parameter %s set to %s," % (k, json.dumps(v)) for k, v in sorted((params or {}).items()))
     if tool:
         prompt = (TOOL_PROMPTS[tool] % edit if tool == "Edit" else TOOL_PROMPTS[tool]) + cmd
     elif prompt:
-        prompt = prompt + cmd
+        prompt = prompt % cmd
     else:
         prompt = "Run exactly this ONE Bash command, as a single call,%s character for character, changing nothing (keep any cd, &&, prefix and path): " % extra + cmd
     name, key = (tool, "file_path") if tool else ("Bash", "command")
