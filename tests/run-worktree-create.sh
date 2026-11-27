@@ -46,6 +46,13 @@ grep -q INSTALL-RAN $wt/installed.txt; ok $? "state: install ran in worktree"
 grep -qx 'PORT=3100' $DELIVER_TICKET_HOME/$key/ports/WL-01 && grep -qx 'AGENT_PORT=3101' $DELIVER_TICKET_HOME/$key/ports/WL-01; ok $? "state: port block slot 0 recorded"
 hook $R WL-02 >/dev/null 2>&1; grep -qx 'PORT=3110' $DELIVER_TICKET_HOME/$key/ports/WL-02; ok $? "state: second ticket gets slot 1 (PORT=3110)"
 out2=$(hook $R WL-01 2>/dev/null); [ "$out2" = "$wt" ] && [ "$(grep -c INSTALL-RAN $wt/installed.txt)" = 1 ]; ok $? "state: idempotent, no re-setup"
+# C11i: the evidence dir exists after setup (stage 3 redirects into it); the env-link message names both causes (sandbox denyRead / missing)
+[ -d $DELIVER_TICKET_HOME/$key/evidence/WL-01 ] && [ -d $DELIVER_TICKET_HOME/$key/evidence/WL-02 ]; ok $? "state: evidence/<ID>/ created for each ticket (C11i)"
+grep -q 'env file missing/.env not visible - not linked (inside the sandbox: hidden by denyRead .env\*' $S/err; ok $? "state: env-link message names the sandbox denyRead ($(grep 'missing/.env' $S/err | head -c 160))"
+! grep -q 'not in main checkout - not linked' $S/err; ok $? "state: old misleading env-link message gone"
+git -C $R worktree add -q --detach $R/.claude/worktrees/_base main 2>/dev/null
+"$SK/scripts/setup-worktree.sh" $R $R/.claude/worktrees/_base _base >/dev/null 2>$S/errb; rc=$?
+[ $rc = 0 ] && [ ! -e $DELIVER_TICKET_HOME/$key/evidence/_base ] && [ ! -e $DELIVER_TICKET_HOME/$key/ports/_base ]; ok $? "_base setup: rc 0 ($rc), no evidence/_base, no port block"
 # failure => undo only what this run created
 sed -i.bak 's#echo INSTALL-RAN > installed.txt#exit 7#' $DELIVER_TICKET_HOME/$key/guard.json
 hook $R WL-03 >/dev/null 2>$S/err3; [ $? != 0 ]; ok $? "fail: install error => rc != 0 ($(head -c 120 $S/err3 | tr '\n' ' '))"

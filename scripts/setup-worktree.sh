@@ -1,7 +1,7 @@
 #!/bin/bash
 # Prepare a freshly created ticket worktree. Usage: setup-worktree.sh <repo-root> <worktree> <ticket-id>
 # Reads guard.json from the state dir. Env files are symlinked, never copied or read.
-# Prints the port block (VAR=port lines) on stdout and records it in <state>/ports/<ID>.
+# Prints the port block (VAR=port lines) on stdout and records it in <state>/ports/<ID>. Creates <state>/evidence/<ID>/ (not for _base).
 set -eu
 root=$1; wt=$2; id=$3
 here=$(cd "$(dirname "$0")" && pwd)
@@ -17,7 +17,9 @@ py() { python3 -I -c "$1" "$g"; }
 py 'import json,sys; [print(x) for x in json.load(open(sys.argv[1])).get("env_files",[])]' | while IFS= read -r rel; do
   case "$rel" in /*|*..*) echo "setup-worktree: skipping unsafe env file name '$rel'" >&2; continue;; esac
   src=$root/$rel; dst=$wt/$rel
-  if [ ! -e "$src" ]; then echo "setup-worktree: env file $rel not in main checkout - not linked" >&2; continue; fi
+  # `[ -e ]` cannot tell the two causes apart: inside the sandbox the project denyRead `<repo>/.env*` (C11h) hides an existing file
+  # (stage 4 `_base` setup, stage 1b 2b); from the WorktreeCreate hook (unsandboxed) the file is really missing.
+  if [ ! -e "$src" ]; then echo "setup-worktree: env file $rel not visible - not linked (inside the sandbox: hidden by denyRead .env*, by design, C11h; outside it: not in the main checkout)" >&2; continue; fi
   if [ -e "$dst" ] || [ -L "$dst" ]; then continue; fi
   mkdir -p "$(dirname "$dst")" && ln -s "$src" "$dst" && echo "linked env file: $rel" >&2
 done
@@ -29,7 +31,11 @@ if [ -n "$inst" ]; then echo "install: $inst" >&2; (cd "$wt" && sh -c "$inst") >
 # <ticket-id> _base (the shared base worktree of base-worktree.sh, stage 4; no ticket ID starts with `_`): env links and install only, no port block
 [ "$id" = _base ] && exit 0
 
-# 3. port block: lowest free slot, recorded per ticket (ports are not secrets)
+# 3. the ticket's evidence dir (C11i): stage 3 writes `<cmd> > <state>/evidence/<ID>/stage3-*.txt` in one plain call, which fails on a
+# missing dir (DRY-03). Created here because both worktree paths run this script with no extra prompt (the hook; stage 1b 2b).
+mkdir -p "$state/evidence/$id"
+
+# 4. port block: lowest free slot, recorded per ticket (ports are not secrets)
 mkdir -p "$state/ports"
 # mkdir is atomic: only one setup at a time picks a slot (stale lock after ~15s => stop, never break it silently)
 n=0; until mkdir "$state/ports/.lock" 2>/dev/null; do

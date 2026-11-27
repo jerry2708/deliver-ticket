@@ -64,6 +64,21 @@ has stages/4-verify.md 'A user-run paste never updates `verify.json`'
 has init.md 'next/font/google'
 has stages/4-verify.md 'evidence/<ID>/user-run-<check>.txt'
 has stages/4-verify.md 'no settings change asked for (`allowedDomains`, `enableWeakerNetworkIsolation`'
+echo "# C11i: the user-run check is always offered (also when pre-existing); a skip is 'unverified (user declined)', never ok"
+has stages/4-verify.md 'Always offer the user-run check (C11i).'
+has stages/4-verify.md 'end this block, and neither does a known failure noted in `config.md` / `project.md`'
+has stages/4-verify.md '"run it now, or skip?"'
+has stages/4-verify.md '"unverified (user declined)"'
+has stages/4-verify.md 'in the stage report and in the AC table - never "ok", never "pass", never left out'
+has stages/4-verify.md 'known sandbox limit: env files hidden by denyRead (C11h)'
+has stages/4-verify.md 'the user-run offer not yet answered -> do not leave'
+has README.md 'run it now, or skip?'
+hasnt "README.md" 'run it yourself if needed'
+echo "# C11i: evidence dir made at worktree setup; the env-link message names the sandbox"
+has stages/1b-workspace.md '`setup-worktree.sh` makes it, C11i'
+has stages/4-verify.md '`env file ... not visible - not linked` is expected there'
+has scripts/setup-worktree.sh 'mkdir -p "$state/evidence/$id"'
+hasnt "scripts" 'not in main checkout - not linked'
 echo "# C11c3: base-worktree.sh is bookkeeping (unsandboxed); a skill-script call holds no command substitution; _base installs run sandboxed"
 for bad in '`<skill dir>/scripts/base-worktree.sh acquire T1 $(git merge-base HEAD main) --repo /r`' '`<skill dir>/scripts/base-worktree.sh acquire T1 `git merge-base HEAD main` --repo /r`' \
   '``<skill dir>/scripts/base-worktree.sh acquire T1 `git merge-base HEAD main` --repo /r``' $'```\n<skill dir>/scripts/plan-hash.sh T1 --repo `pwd`\n```' \
