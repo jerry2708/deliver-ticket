@@ -783,13 +783,75 @@ CASES = [
 ]
 
 
+# C11e3 (probe only): a gate / bookkeeping script is excluded from the sandbox, and its .sh wrapper finds python3 through PATH (#!/bin/bash: BASH_ENV
+# is read too). Does it still run unsandboxed when an EARLIER part of the same command changes PATH / BASH_ENV? The hook blocks an assignment or wrapper
+# on the gate's own simple command (dtcore.check_gate), not these compound forms. The fake python3 / BASH_ENV file sit in a worktree (allowWrite:
+# Claude can write them) and write {OUT}/markers/<id> (outside allowWrite and /tmp): only an unsandboxed run can. sandboxed -> the redirect's eperm.
+def fake_py(c, cid):
+    d = c.PROJ + "/.claude/worktrees/T1/pb-" + cid
+    os.makedirs(d, exist_ok=True)
+    body = 'echo x > "%s/markers/%s" && echo "fake-%%s %s: UNSANDBOXED (outside write ok)"\n' % (c.OUT, cid, cid)
+    open(d + "/python3", "w").write('#!/bin/sh\n' + body % "python3")
+    open(d + "/e.sh", "w").write(body % "bash_env")
+    os.chmod(d + "/python3", 0o755)
+
+
+def m_fake_py_excluded(cid):
+    """the fake python3 itself excluded + allowed: the control that an unsandboxed run writes the marker."""
+    def m(c, d):
+        p = c.PROJ + "/.claude/worktrees/T1/pb-%s/python3" % cid
+        d["sandbox"]["excludedCommands"].append(p + " *")
+        d["permissions"].setdefault("allow", []).append("Bash(%s *)" % p)
+    return m
+
+
+def m_allow_export(gate):
+    """an allow rule on the `export PATH=` part stands in for the user's yes to the compound command (default mode asks for that part)."""
+    def m(c, d):
+        if gate:
+            m_gate(c, d)
+        d["permissions"].setdefault("allow", []).append("Bash(export PATH=*)")
+    return m
+
+
+PB = "{WT1}/pb-{id}"
+LIT = PB + ":/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin"       # no $PATH: Claude Code asks about a variable (default mode) before anything runs
+BK = "{SK}/scripts/session-map.sh bind T1 " + SID
+GC = "{SK}/scripts/git-commit.sh --session {id} -m probe"
+CASES += [dict(id="path_hijack_control", cmd=PB + "/python3 ctl", setup=lambda c: fake_py(c, "path_hijack_control"),
+               mutate=m_fake_py_excluded("path_hijack_control"), expect="ok", info=True, modes=BOTH, disk=[("exists", "{OUT}/markers/{id}")])] + [
+    dict(dict(dt_home=True, cwd="{WT1}", setup=(lambda cid: lambda c: fake_py(c, cid))(i), needs="path_hijack_control",
+              expect=("eperm", "prompt", "hook"), disk=[("absent", "{OUT}/markers/{id}")]), id=i, cmd=cmd, **kw)
+    for i, cmd, kw in (
+        ("path_export_semi_bookkeeping", "export PATH=" + PB + ":$PATH; " + BK, dict(modes=BOTH)),
+        ("path_export_and_bookkeeping", "export PATH=" + PB + ":$PATH && " + BK, {}),
+        ("path_cd_export_bookkeeping", "cd {WT1} && export PATH=" + PB + ":$PATH; " + BK, dict(cwd="{PROJ}")),
+        ("path_assign_semi_bookkeeping", "PATH=" + PB + ":$PATH; " + BK, {}),
+        ("path_prefix_bookkeeping", "PATH=" + PB + ":$PATH " + BK, {}),                # not a gate: check_gate does not look at it
+        ("path_env_bookkeeping", "env PATH=" + PB + ":$PATH " + BK, {}),
+        ("bash_env_export_bookkeeping", "export BASH_ENV=" + PB + "/e.sh; " + BK, {}),
+        ("path_export_semi_gate", "export PATH=" + PB + ":$PATH; " + GC, dict(mutate=m_gate, modes=BOTH)),   # m_gate: allow stands in for the user's yes
+        ("path_export_semi_gate_ask", "export PATH=" + PB + ":$PATH; " + GC, {}),     # the real ask rule: does the compound still prompt?
+        ("bash_env_export_gate", "export BASH_ENV=" + PB + "/e.sh; " + GC, dict(mutate=m_gate, expect=("eperm", "prompt", "hook", "refused"))),
+        ("path_lit_export_semi_bookkeeping", "export PATH=" + LIT + "; " + BK, dict(modes=BOTH)),
+        ("path_lit_export_and_bookkeeping", "export PATH=" + LIT + " && " + BK, {}),
+        ("path_lit_cd_export_bookkeeping", "cd {WT1} && export PATH=" + LIT + "; " + BK, dict(cwd="{PROJ}")),
+        ("path_lit_prefix_bookkeeping", "PATH=" + LIT + " " + BK, {}),
+        ("path_lit_export_semi_gate", "export PATH=" + LIT + "; " + GC, dict(mutate=m_gate, modes=BOTH)),
+        ("path_lit_export_semi_gate_ask", "export PATH=" + LIT + "; " + GC, dict(modes=BOTH)),
+        ("path_lit_export_semi_bookkeeping_yes", "export PATH=" + LIT + "; " + BK, dict(mutate=m_allow_export(False))),
+        ("path_lit_export_and_bookkeeping_yes", "export PATH=" + LIT + " && " + BK, dict(mutate=m_allow_export(False))),
+        ("path_lit_export_semi_gate_yes", "export PATH=" + LIT + "; " + GC, dict(mutate=m_allow_export(True))),
+    )]
+
+
 def classify(texts):
     t = " ".join(texts)
     if not texts:
         return "nocall"
     if "hook error" in t:
         return "hook"
-    if "granted it yet" in t or "requires approval" in t:
+    if "granted it yet" in t or "requires approval" in t or "require approval" in t or "can't be checked before it runs" in t:      # the last: a $VAR in the command, 2.1.325
         return "prompt"
     if "has been denied" in t or "denied by your permission settings" in t:      # the second: a deny rule on a file tool (Read / Write / Edit), 2.1.311
         return "denied"
