@@ -498,12 +498,13 @@ CASES = [
     dict(id="excluded_script_after_cd", cmd="cd {PROJ} && {SK}/scripts/session-map.sh bind T1 " + SID, cwd="{S}", dt_home=True, expect="eperm", disk=[("absent", "{ST}/sessions/{id}")]),
     dict(id="excluded_chained_to_unlisted", dt_home=True, cmd="{SK}/scripts/session-map.sh bind T1 " + SID + " && bash {S}/canary.sh excluded_chained_to_unlisted", expect="eperm",
          disk=[("absent", "{ST}/sessions/{id}")]),
-    # C11i: in auto mode the installed guard.sh blocks every skill script outside default mode (C11h a) before the ask rule is reached: `hook`, not `prompt`
-    # (full pass 2026-11-27-c11h). Either way the gate script does not run unasked (guard.json same).
-    dict(id="gate_script_asks", dt_home=True, cmd="{SK}/scripts/guard-apply.sh {S}/cand.json --repo {PROJ}", modes=BOTH, expect=dict(default="prompt", auto="hook"),
-         disk=[("same", "{KD}/guard.json")]),
-    dict(id="gate_script_asks_sandbox_off", dt_home=True, cmd="{SK}/scripts/guard-apply.sh {S}/cand.json --repo {PROJ}", modes=["auto"], expect="hook", mutate=m_off,
-         contains="permission mode 'auto' is not supported", disk=[("same", "{KD}/guard.json")]),
+    # C11i: in auto mode guard.sh blocks every skill script outside default mode (C11h a) before the ask rule is reached: `hook`, not `prompt` (full pass
+    # 2026-11-27-c11h). hooks=True registers THIS checkout's hooks: the installed ones only know their own scripts/ dir, so from a dev clone they let
+    # {SK}/scripts/guard-apply.sh through to the ask rule (`prompt`, real run ~/.cache/dt-probes/c11i-1). Either way the gate script does not run unasked.
+    dict(id="gate_script_asks", dt_home=True, hooks=True, cmd="{SK}/scripts/guard-apply.sh {S}/cand.json --repo {PROJ}", modes=BOTH,
+         expect=dict(default="prompt", auto="hook"), disk=[("same", "{KD}/guard.json")]),
+    dict(id="gate_script_asks_sandbox_off", dt_home=True, hooks=True, cmd="{SK}/scripts/guard-apply.sh {S}/cand.json --repo {PROJ}", modes=["auto"], expect="hook",
+         mutate=m_off, contains="permission mode 'auto' is not supported", disk=[("same", "{KD}/guard.json")]),
     dict(id="gate_script_no_ask_rule_control", dt_home=True, cmd="{SK}/scripts/guard-apply.sh {S}/cand.json --repo {PROJ}", modes=["auto"], expect="ok", mutate=m_noask, info=True,
          sources=NOUSER, disk=[("changed", "{KD}/guard.json")]),        # NOUSER: the installed user-level ask rule for guard-apply.sh would otherwise still prompt
     dict(id="settings_local_by_bash", cmd="echo x >> {PROJ}/.claude/settings.local.json", expect="eperm", disk=[("same", "{PROJ}/.claude/settings.local.json")]),
