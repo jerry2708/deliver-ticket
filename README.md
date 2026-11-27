@@ -1,6 +1,6 @@
 # deliver-ticket
 
-Status: v0.2 (dev), used by one developer so far; not yet rolled out to a team.
+Status: v0.2.0 (2026-11-27), used by one developer so far; not yet rolled out to a team.
 
 Contents: [What it is](#what-it-is) · [Requirements](#requirements) · [Quick start](#quick-start) · [How a ticket flows](#how-a-ticket-flows) · [Safety model](#safety-model) · [Known limits](#known-limits) · [Reference](#reference) (install, emergency, settings, extending, rules, troubleshooting, tests)
 
@@ -38,7 +38,7 @@ A Claude Code skill that takes one ticket from text to a reviewed commit. You ty
 | Area | Tested | Not tested |
 |---|---|---|
 | OS and machine | macOS on Apple Silicon (a `darwin-arm64` binary appears in the probe logs); python3 from Homebrew, git from `/usr/bin` on that machine; one machine, one account | Linux (the sandbox `denyWrite` globs work on macOS only, `scripts/install_hooks.py:90`), Windows, Intel Mac, a Mac without Homebrew |
-| Claude Code | 2.1.311 (full ticket dry runs, full probe pass); 2.1.325 (full probe pass, 179 runs, no FAIL; no full ticket run) | anything newer than 2.1.325 |
+| Claude Code | 2.1.311 (full ticket dry runs, full probe pass); 2.1.325 (full ticket dry runs DRY-02 and DRY-03, DRY-03 prompted only at the 4 gates; full probe pass, 216 runs, 214 PASS, the 2 FAILs were stale expectations, fixed and re-run in C11i) | anything newer than 2.1.325 |
 | Project stack | one Node monorepo: pnpm, Turbo, Next.js (16.x) | npm, yarn, bun; non-Node stacks (`profiles/` holds only `node.md`) |
 | Tracker and MR | ticket given as pasted text or a file; GitLab through `glab` 1.124.0, the adapter checked against a local mock server (`adapters/gitlab-glab.md`) | GitHub (no adapter; `adapters/` holds `gitlab-glab.md` and `manual.md`); a real GitLab MR created by the skill (no record found: unverified) |
 
@@ -218,7 +218,7 @@ CLAUDE_CODE_DISABLE_AUTO_MEMORY=1 claude     # eval runs
 - **Claude's commits and pushes skip your repo's own git hooks.** Put what `pre-push` checks into `verify.on_push`.
 - **A ticket whose worktree was made before this version**, or by Claude Code itself because the project `WorktreeCreate` hook is not registered, cannot commit through the gate.
 - **Project-specific globs.** Init's risk globs fit the tested project only.
-- **Unverified:** copying a project's state dir to another machine (the key comes from the checkout's absolute path); commit signing and an https push behind a proxy under the fixed environment of the gate scripts (`GPG_TTY`, `GNUPGHOME`, `HTTPS_PROXY` are not passed); a sandboxed plain push over SSH; whether `Read(**/.env*)` also stops the built-in Grep / Glob tools (`docs/phase5-checklist.md`); everything on versions after 2.1.325.
+- **Unverified:** copying a project's state dir to another machine (the key comes from the checkout's absolute path); commit signing and an https push behind a proxy under the fixed environment of the gate scripts (`GPG_TTY`, `GNUPGHOME`, `HTTPS_PROXY` are not passed); a sandboxed plain push over SSH; whether `Read(**/.env*)` also stops the built-in Grep / Glob tools (`docs/phase5-checklist.md`); the stage-4 user-run offer at a known sandbox limit (added in C11i, not yet seen in a full ticket run); everything on versions after 2.1.325.
 
 The full list of limits per protection is in `docs/safety.md`. Open decisions and the v0.3 backlog are in `docs/plan.md`.
 
