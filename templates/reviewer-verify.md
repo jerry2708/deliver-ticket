@@ -5,3 +5,4 @@ For every AC: take the pass criterion as written in the table (it must be the AC
 - AC<n>: confirmed / not confirmed - one line why (cite the evidence file or `file:line`).
 - Anything in the diff that no AC asks for.
 Do not fix anything. Change your mind only on new evidence.
+Tools: read-only (no file writes, no git state changes); one plain command per Bash call (a pipe into `head` / `wc` / `sort` is fine; no chains, heredocs or `{ ... }` groups); absolute paths, never `cd <dir> && ...`; no inline code (`node -e`, `python3 -c`). What you cannot check by reading or by the project's existing test command: say `unverified` and what would settle it.

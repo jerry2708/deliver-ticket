@@ -101,6 +101,10 @@ has stages/6-security.md '<skill dir>/scripts/secret-scan.sh <ID> --guard <state
 hasnt "stages" "grep -l -E '(sk-"
 has stages/8-record.md 'This write is a gate:'
 has docs/sandbox-dry-run.md 'has \*\*4 permission prompts that are gates\*\*'
+echo "# C11h (e): reviewer tool rules (one plain command per call, no cd &&, no inline code, read-only)"
+has stages/5-review.md 'never .cd <dir> && \.\.\..'
+has stages/5-review.md 'no inline code (.node -e.'
+has templates/reviewer-verify.md 'no inline code (.node -e., .python3 -c.)'
 echo "# C11h: the push record - turbo cache dir set by verify-record.sh, no Edit deny rule on verify.json (hooks instead)"
 has stages/4-verify.md 'TURBO_CACHE_DIR=<worktree>/.turbo/cache'
 has README.md 'there is no .Edit. deny on the push record'
