@@ -220,7 +220,7 @@ has docs/eval-report-v0.1.md 'Eval IDs collide with finished real tickets'
 has docs/eval-report-v0.1.md '\$18.17'
 echo "# install on a new machine"
 has README.md '## Install on a new machine'
-has README.md 'Clone to \*\*exactly\*\* `~/.claude/skills/deliver-ticket`'
+has README.md 'git clone <repo URL> ~/.claude/skills/deliver-ticket && ~/.claude/skills/deliver-ticket/scripts/install.sh'
 has README.md 'scripts/install.sh'
 has README.md 'denied in every project'
 has README.md 'Unverified:'

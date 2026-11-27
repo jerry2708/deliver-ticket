@@ -46,12 +46,13 @@ Init's risk globs are still specific to the tested project. A generic init is pl
 
 ## Quick start
 
-1. Install (once per machine). Clone to exactly `~/.claude/skills/deliver-ticket`, then run the installer. It shows the settings diff and writes only after your `y`.
+1. Install (once per machine):
 
    ```sh
-   git clone <this repo's URL> ~/.claude/skills/deliver-ticket
-   ~/.claude/skills/deliver-ticket/scripts/install.sh
+   git clone <repo URL> ~/.claude/skills/deliver-ticket && ~/.claude/skills/deliver-ticket/scripts/install.sh
    ```
+
+   git clone puts the skill straight into the folder Claude Code reads skills from - no copying. The path must be exactly this - the hooks, permission rules and SKILL.md use it. The installer shows the settings diff and writes only after your `y`.
 
 2. Start Claude Code in your project's **main checkout**, in default mode, and set the project up (once per project). Init asks its questions and shows each settings diff before it writes.
 
@@ -226,8 +227,8 @@ The full list of limits per protection is in `docs/safety.md`. Open decisions an
 ### Install on a new machine
 Requirements: Claude Code (tested on **2.1.311** and probed on **2.1.325**; stage 0 warns below 2.1.311), `git`, `python3`, `bash`; `glab` is optional (only for stop points that create a GitLab MR).
 
-1. Clone to **exactly** `~/.claude/skills/deliver-ticket` (the hooks and `SKILL.md` use that path): `git clone <this repo's URL> ~/.claude/skills/deliver-ticket` (the clone path matters, not where it comes from).
-2. Run `~/.claude/skills/deliver-ticket/scripts/install.sh`. It checks the tools and the clone path, prints the `~/.claude/settings.json` diff, asks y/n, and only on `y` runs `install-hooks.sh apply --confirmed` (a backup is made) and `install-hooks.sh status`. By hand it is the same three steps: `scripts/install-hooks.sh diff`, then `apply --confirmed`, then `status`.
+1. One command: `git clone <repo URL> ~/.claude/skills/deliver-ticket && ~/.claude/skills/deliver-ticket/scripts/install.sh`. git clone puts the skill straight into the folder Claude Code reads skills from - no copying. The path must be exactly this - the hooks, permission rules and SKILL.md use it. The installer shows the settings diff and writes only after your `y`.
+2. What `install.sh` does: it checks the tools and the clone path, prints the `~/.claude/settings.json` diff, asks y/n, and only on `y` runs `install-hooks.sh apply --confirmed` (a backup is made) and `install-hooks.sh status`. By hand it is the same three steps: `scripts/install-hooks.sh diff`, then `apply --confirmed`, then `status`.
 3. Per project, in its **main checkout**, start Claude Code (`claude`, default mode, see above) and run `/deliver-ticket init`. Init asks its questions and writes the project's state under the state root (`<state root>/<project-key>/`), not into this repo and not into the client repo; the per-project `WorktreeCreate` and `UserPromptSubmit` hooks go into `<repo>/.claude/settings.local.json` through `install-hooks.sh project-apply` (diff and your yes first).
 4. The user-level rules that `apply` adds are global: **`glab mr merge` and `gh pr merge` are denied in every project** (merge in the GitLab UI), and pushes / MR creation ask first. See "Global permission rules" below.
 
