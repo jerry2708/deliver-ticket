@@ -187,6 +187,13 @@ eq "$(grep -c '| \(PASS\|FAIL\|CHANGED\|INCONCLUSIVE\) |' "$S/out7.txt")" 2 "--o
 has "$(head -1 "$S/out7.txt")" "2 runs" "run count follows --only"
 $PS "$S/r8" --outside "$S/ro8" --claude "$S/fake-claude" --only nope >/dev/null 2>&1; eq "$?" 2 "unknown case"
 env FAKE_RUN_S="$S/r9" FAKE_RUN_OUT="$S/ro9" FAKE_DUMP_S="$S/d0" FAKE_DUMP_OUT="$S/o0" $PS "$S/r9" --outside "$S/ro9" --claude "$S/fake-claude" --only gate_script_asks --modes default > "$S/out9.txt" 2>&1; eq "$(grep -c '| gate_script_asks |' "$S/out9.txt")" 1 "--modes narrows"
+# C11i: a per-mode expectation (dict) resolves by mode in the dump, the run's verdict and --list (gate_script_asks: default prompt, auto hook)
+python3 -I -c 'import json,sys; t=json.load(open(sys.argv[1])); e={r["mode"]: r["expect"] for r in t if r["id"]=="gate_script_asks"}; o=[r["expect"] for r in t if r["id"]=="gate_script_asks_sandbox_off"]; sys.exit(0 if e=={"default":"prompt","auto":"hook"} and o==["hook"] else 1)' "$S/table.json"; eq "$?" 0 "per-mode expect: gate_script_asks default=prompt auto=hook, sandbox_off=hook (dump)"
+env FAKE_RUN_S="$S/r9b" FAKE_RUN_OUT="$S/ro9b" FAKE_DUMP_S="$S/d0" FAKE_DUMP_OUT="$S/o0" $PS "$S/r9b" --outside "$S/ro9b" --claude "$S/fake-claude" --only gate_script_asks,gate_script_asks_sandbox_off > "$S/out9b.txt" 2>&1
+eq "$(grep -c '| gate_script_asks\(_sandbox_off\)\? | \(default\|auto\) | PASS |' "$S/out9b.txt")" 3 "per-mode expect: all three runs PASS with the fake answering per mode"
+env FAKE_FLIP=gate_script_asks FAKE_RUN_S="$S/r9c" FAKE_RUN_OUT="$S/ro9c" FAKE_DUMP_S="$S/d0" FAKE_DUMP_OUT="$S/o0" $PS "$S/r9c" --outside "$S/ro9c" --claude "$S/fake-claude" --only gate_script_asks --modes auto > "$S/out9c.txt" 2>&1
+has "$(grep '| gate_script_asks | auto |' "$S/out9c.txt")" "FAIL" "per-mode expect: auto run answered 'ok' is a FAIL"
+$PS "$S/r9d" --outside "$S/ro9d" --list --only gate_script_asks > "$S/list9d.txt" 2>&1; has "$(cat "$S/list9d.txt")" "auto     hook" "--list shows the per-mode expectation"
 mkdir -p "$S/r10" && touch "$S/r10/x"; $PS "$S/r10" --outside "$S/ro10" --claude "$S/fake-claude" >/dev/null 2>&1; eq "$?" 2 "non-empty scratch dir refused"
 ( unset PROBE_ALLOW_TMP; $PS /tmp/zz-probe-never-created --outside /tmp/zz-probe-out-never-created --claude "$S/fake-claude" >/dev/null 2>&1; echo $? ) > "$S/tmpcheck.txt"; eq "$(cat "$S/tmpcheck.txt")" 2 "--outside under /tmp refused"
 [ ! -e /tmp/zz-probe-never-created ] && [ ! -e /tmp/zz-probe-out-never-created ] && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL the refused runs created /tmp dirs"; }
