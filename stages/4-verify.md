@@ -1,6 +1,6 @@
 # Stage 4 - Verify (definition of done)
 
-Done = **every in-scope AC has evidence** + the **common DoD** from config (lint/build/tests green, related flows not broken, no secrets in diff/logs/evidence, risk areas reviewed). Verify checks only against these - nothing extra. Gate by tier: A layers 1-2 (auto); B layers 1-3 (I look at the real app/API once); C layers 1-4 + extras, me.
+Done = **every in-scope AC has evidence** + the **common DoD** from config (lint/build/tests green, related flows not broken, no secrets in diff/logs/evidence - checked with `<skill dir>/scripts/secret-scan.sh <ID> --guard <state>/guard.json`, see `6-security.md` - risk areas reviewed). Verify checks only against these - nothing extra. Gate by tier: A layers 1-2 (auto); B layers 1-3 (I look at the real app/API once); C layers 1-4 + extras, me.
 
 ## 0. Environment for the real run (only what this ticket needs; ask before starting anything long-running)
 - Ports: each port the run needs is free, or owned by **this** worktree (`lsof -i :<port>` plus the process's cwd). A server from another worktree or the main checkout on that port = wrong server; stop and tell me, don't kill it.

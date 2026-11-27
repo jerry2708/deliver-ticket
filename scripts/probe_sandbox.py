@@ -555,6 +555,10 @@ CASES = [
          rules=dict(allow=TOOL_ALLOW, deny=TOOL_DENY), setup=make_v1, disk=[("exists", "{KD}/evidence/V1/verify.json"), ("same", "{KD}/guard.json")]),
     dict(id="verify_record_retired_deny_control", cmd="{SK}/scripts/verify-record.sh V1 --guard {KD}/guard.json", cwd="{PROJ}", expect="eperm", contains="PermissionError",
          sources=NOUSER, rules=dict(allow=TOOL_ALLOW, deny=TOOL_DENY + TOOL_RETIRED), setup=make_v1, info=True, disk=[("same", "{KD}/guard.json")]),
+    # C11h (d): the stage-6 secret scan is a sandboxed skill script with an allow rule: no prompt, it reads evidence/ and the worktree's diff inside the sandbox.
+    # (DRY-02's own `grep -l -E '(sk-...|KEY=...)' <state>/evidence/*` prompted: a credential-pattern search outside the working directories, c11h-probe-1 G13.)
+    dict(id="secret_scan_sandboxed", cmd="{SK}/scripts/secret-scan.sh V1 --guard {KD}/guard.json", cwd="{PROJ}", sources=NOUSER, hooks=True, dt_home=True,
+         rules=dict(allow=TOOL_ALLOW, deny=TOOL_DENY), setup=make_v1, expect="ok", contains="secret-scan V1: 0 finding"),
     dict(id="git_dash_C_stays_sandboxed", cmd="git -C {WT3} branch -m work/t3 feat-t3", cwd="{PROJ}", expect="eperm", contains="config|logs/refs|cannot lock ref", mutate=m_branch_allowed, sources=NOUSER),
     dict(id="gh_read_unsandboxed", cmd="gh pr view 1", expect="ok", contains="fake-gh: UNSANDBOXED"),
     dict(id="gh_write_asks", cmd="gh pr edit 1", modes=BOTH, expect="prompt"),

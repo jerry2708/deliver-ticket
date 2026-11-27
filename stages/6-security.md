@@ -10,7 +10,7 @@ Checks are tied to **Risk categories, not the tier**: run the check for every ca
 - **Migration:** reversible or not, data loss, order with the code deploy, a shared DB (config) that other worktrees use.
 - **New dependency:** why needed, maintained, license, install scripts; lockfile diff reviewed.
 - **Infra config:** what runs with it, who can change it, secrets in it.
-- **Secrets in the diff, logs, evidence:** `git diff` and the evidence files, searched for key-looking strings; never open `.env*`.
+- **Secrets in the diff, logs, evidence:** `<skill dir>/scripts/secret-scan.sh <ID> --guard <state>/guard.json` (its own Bash call; sandboxed, no prompt). It scans `evidence/<ID>/`, the lines the ticket adds against the base branch, uncommitted changes and untracked files, never `.env*`, and prints each finding masked (`<where>:<line> <kind> <first 4 chars>... (<length>)`). Exit 1 -> show its lines and judge each: a real secret -> stop and tell me (never print or copy the value); a false positive -> say why. Exit 2 -> show the error; the check is `unverified`. Do not grep for key patterns yourself: grep prints the value, and a credential-pattern search in the state dir needs a prompt (DRY-02). A clean scan is a heuristic, not proof.
 
 ## Output
 A table: category, yes/no, check run, result, evidence, open items. Anything not verifiable is `unverified` (never pass). `stage: 7`, `next: Read <skill dir>/stages/7-commit-mr.md`. Tier C: stop and wait.

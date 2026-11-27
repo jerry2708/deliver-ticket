@@ -928,7 +928,7 @@ case "$out" in *"Code Mode (experimental) is not supported"*CLAUDE_CODE_EXPERIME
 # C11c3: the stage-4 base calls (bookkeeping base-worktree.sh, then setup-worktree.sh sandboxed) pass the hooks in a bound and an unbound session
 for c in "$SKS/base-worktree.sh acquire T1 0123456789abcdef0123456789abcdef01234567 --repo $R" "$SKS/base-worktree.sh release T1 --repo $R" "$SKS/setup-worktree.sh $R $R/.claude/worktrees/_base _base"; do gx 0 Bash "$c"; done
 # the read-only, sandboxed scripts (install_hooks.SANDBOXED) of stage 2 and stage 8 pass the hooks in every session
-for c in "$SKS/plan-hash.sh T1 --repo $R" "$SKS/lock-trace.sh T1 --repo $R --session s1"; do gx 0 Bash "$c"; done
+for c in "$SKS/plan-hash.sh T1 --repo $R" "$SKS/lock-trace.sh T1 --repo $R --session s1" "$SKS/secret-scan.sh T1 --guard $DT/$key/guard.json"; do gx 0 Bash "$c"; done
 for c in "bash $SKS/git-push.sh mirror feat-T1" "python3 $SKS/git_push.py mirror feat-T1" "env $SKS/git-push.sh mirror feat-T1" "FOO=1 $SKS/git-push.sh mirror feat-T1" "cd $SKS && ./git-push.sh mirror feat-T1"; do gx 2 Bash "$c"; done
 for c in "$SKS/guard-apply.sh c.json --repo $R" "$SKS/guard-apply.sh --repo $R c.json" "$SKS/ticket-state.sh done T1 --reason x --repo $R" "$SKS/ticket-state.sh reopen T1 --reason x --repo $R" \
   "bash $SKS/session-map.sh show T1 --session s --repo $R" "python3 $SKS/ticket_ctl.py session-map show T1 --session s --repo $R" "bash $SKS/guard-write.sh verify --repo $R" \

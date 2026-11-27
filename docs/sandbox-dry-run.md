@@ -44,7 +44,7 @@ Optional later: a real v0.1 baseline from a separate clone with its own `CLAUDE_
 | 1 | | | yes / no | not allowlisted / env prefix `FOO=` / `$VAR` or `$?` in the command / `cd x &&` / network host not allowed / excluded script without allow rule / unknown |
 
 **Design gates** (these are the prompts that should remain): the ticket + tier confirmation, the plan, every stage in tier C, the final review, the commit gate (`git-commit.sh`),
-a push (`git-push.sh`, stop point permitting), the plan approval (`approve-plan.sh`), `ticket-state.sh` close (one prompt per ticket), `guard-apply.sh`, `gh` / `glab` writes, a network host you did not allow.
+a push (`git-push.sh`, stop point permitting), the plan approval (`approve-plan.sh`), `ticket-state.sh` close (one prompt per ticket), the stage-8 write of `lessons.md` (project and/or global; a gate since C11h: later runs read it), `guard-apply.sh`, `gh` / `glab` writes, a network host you did not allow. A tier-B run with stop point `local` and one lessons file written has **4 permission prompts that are gates**: `approve-plan.sh`, `git-commit.sh`, `ticket-state.sh`, the `lessons.md` write (DRY-02 had the first three plus 8 extra).
 Everything else is an **extra prompt**. A prompt that DRY-01 had and this run does not (or the reverse) goes in the notes.
 
 Also write down: stages that failed or needed a retry, anything that said `operation not permitted` / EPERM, `requires approval` that you did not expect,

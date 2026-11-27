@@ -46,7 +46,7 @@ sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import fixed_env  # noqa: E402  (C11e3: status prints the python3 / git the excluded scripts use)
 
 BOOKKEEPING = ["session-map.sh", "pending-ticket.sh", "project-map-stale.sh", "git-rename.sh", "base-worktree.sh"]   # sandbox: excluded + allow rule: no prompt
-SANDBOXED = ["verify-record.sh", "plan-hash.sh", "lock-trace.sh"]                                   # NOT excluded: runs inside the sandbox; allow rule only (no prompt)
+SANDBOXED = ["verify-record.sh", "plan-hash.sh", "lock-trace.sh", "secret-scan.sh"]                                   # NOT excluded: runs inside the sandbox; allow rule only (no prompt)
 GATES = ["ticket-state.sh", "guard-apply.sh", "git-push.sh", "approve-plan.sh", "git-commit.sh"]                                     # excluded + ask rule on the full path: the prompt is the user's yes
 # The gate scripts' ask rules are USER level too: with the sandbox off (or in a project that never enabled it) nothing else would ask, and auto mode
 # ran an excluded command without a prompt (probe V8 d4).
