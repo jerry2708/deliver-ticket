@@ -1,23 +1,230 @@
-# deliver-ticket (personal skill)
+# deliver-ticket
 
-`/deliver-ticket init | <ticket-id|file> | <ID> cancel`. Run it only by typing it. Design rationale: `docs/plan.md`. `<state root>` below = `$DELIVER_TICKET_HOME`, default `~/.local/share/deliver-ticket` (defined in `SKILL.md` section 3).
+Status: v0.2 (dev), used by one developer so far; not yet rolled out to a team.
 
-## Permission mode: launch in default mode, no auto mode, no plan mode
-**Code Mode not supported (experimental).** With `CLAUDE_CODE_EXPERIMENTAL_CODE_MODE` set to anything but empty or `0`, stage 0 stops and the hooks block the skill's scripts; `install-hooks.sh apply` registers a user-level PreToolUse hook on `REPL` (Code Mode's code tool) that denies every call, so Code Mode cannot be used in any session on this machine while the hooks are installed. Unset the variable (shell and the `env` block of `~/.claude/settings.json`) or set it to `0`. No rule or hook was probed under Code Mode (docs/plan.md v0.3 backlog).
+Contents: [What it is](#what-it-is) · [Requirements](#requirements) · [Quick start](#quick-start) · [How a ticket flows](#how-a-ticket-flows) · [Safety model](#safety-model) · [Known limits](#known-limits) · [Reference](#reference) (install, emergency, settings, extending, rules, troubleshooting, tests)
 
-Ticket sessions run in **default mode**; **auto mode is not supported** (C11d, 2026-11-19). The gates are the skill's; the goal of milestone C11 is that nothing else prompts (permission rules, sandbox, hooks; not yet measured, C11g). Why not auto: probe `bash_allowed_domains_param` (Claude Code 2.1.311) showed that in auto mode a Bash call with the per-call `allowed_domains` parameter reached a host outside the project allowlist without a prompt. The hook now blocks the two known per-call widening parameters (`allowed_domains`, `dangerouslyDisableSandbox`), but it covers only those; auto mode may approve other things that default mode would ask about. A skill cannot set the mode. Launch with:
+## What it is
+
+A Claude Code skill that takes one ticket from text to a reviewed commit. You type `/deliver-ticket`; Claude does the work between gates; you decide at the gates (`SKILL.md` section 4).
+
+- Commands: `/deliver-ticket init`, `/deliver-ticket <ticket-id|file>`, `/deliver-ticket <ID> cancel`.
+- Run it only by typing it. The skill never picks up tickets on its own (`SKILL.md` frontmatter: `disable-model-invocation: true`).
+- Claude never merges. Merge in the GitLab UI.
+- Design rationale: `docs/plan.md`. Safety detail: `docs/safety.md`.
+- `<state root>` below means `$DELIVER_TICKET_HOME`, default `~/.local/share/deliver-ticket` (`SKILL.md` section 3).
+
+**When not to use it:**
+
+- Auto mode, plan mode or Code Mode sessions. They are not supported (see "Permission mode" below).
+- Two projects in one session while a ticket is open. The session stays bound to the first project (`SKILL.md` section 3b).
+- Any OS but macOS. Only macOS was probed (see the table below).
+- A team whose own `pre-commit` / `pre-push` hooks must run on Claude's commits and pushes. They do not run (`docs/safety.md`, "Commits under the project sandbox").
+- Merging from the command line. `glab mr merge` and `gh pr merge` are denied in every project.
+
+## Requirements
+
+| Need | Detail | Source |
+|---|---|---|
+| Claude Code | 2.1.311 or newer. Below it, stage 0 warns (and `scripts/install.sh` warns). | `stages/0-environment.md` check 1: "Below -> warn"; `scripts/install.sh` `MIN_CLAUDE` |
+| macOS | Only macOS was probed. `install.sh` has no OS check. | table below |
+| `git`, `python3`, `bash` | `install.sh` stops if one is missing. | `scripts/install.sh` |
+| `glab` | Optional. Needed only for stop points that create a GitLab MR. | `scripts/install.sh` |
+| python3 / git for the gate scripts | Taken from a fixed list, never from PATH: `/opt/homebrew/bin`, `/usr/local/bin`, `/usr/bin`. `install-hooks.sh status` prints the choice. | `scripts/fixed_env.py` `PY_CANDIDATES`, `GIT_CANDIDATES` |
+| Permission mode | Default mode only (see below). | `SKILL.md` |
+
+**Tested on / not tested** (what was actually run; "inference" = read from code, not run):
+
+| Area | Tested | Not tested |
+|---|---|---|
+| OS and machine | macOS on Apple Silicon (a `darwin-arm64` binary appears in the probe logs); python3 from Homebrew, git from `/usr/bin` on that machine; one machine, one account | Linux (the sandbox `denyWrite` globs work on macOS only, `scripts/install_hooks.py:90`), Windows, Intel Mac, a Mac without Homebrew |
+| Claude Code | 2.1.311 (full ticket dry runs, full probe pass); 2.1.325 (full probe pass, 179 runs, no FAIL; no full ticket run) | anything newer than 2.1.325 |
+| Project stack | one Node monorepo: pnpm, Turbo, Next.js (16.x) | npm, yarn, bun; non-Node stacks (`profiles/` holds only `node.md`) |
+| Tracker and MR | ticket given as pasted text or a file; GitLab through `glab` 1.124.0, the adapter checked against a local mock server (`adapters/gitlab-glab.md`) | GitHub (no adapter; `adapters/` holds `gitlab-glab.md` and `manual.md`); a real GitLab MR created by the skill (no record found: unverified) |
+
+Init's risk globs are still specific to the tested project. A generic init is planned for v0.3 (`docs/plan.md`).
+
+## Quick start
+
+1. Install (once per machine). Clone to exactly `~/.claude/skills/deliver-ticket`, then run the installer. It shows the settings diff and writes only after your `y`.
+
+   ```sh
+   git clone <this repo's URL> ~/.claude/skills/deliver-ticket
+   ~/.claude/skills/deliver-ticket/scripts/install.sh
+   ```
+
+2. Start Claude Code in your project's **main checkout**, in default mode, and set the project up (once per project). Init asks its questions and shows each settings diff before it writes.
+
+   ```sh
+   claude
+   ```
+   ```
+   /deliver-ticket init
+   ```
+
+3. Run one ticket (paste the text, or give an ID or a file).
+
+   ```
+   /deliver-ticket <ticket-id|file>
+   ```
+
+4. At each gate read what Claude shows and answer. At the end, Claude records lessons and closes the ticket after your yes (`ticket-state.sh`). To abandon a ticket:
+
+   ```
+   /deliver-ticket <ID> cancel
+   ```
+
+Details: "Install on a new machine" below.
+
+## How a ticket flows
+
+```mermaid
+flowchart TD
+  S0["0 Pre-flight + 1 Intake"]
+  G1{{"Gate: ticket + tier"}}
+  S1b["1b Workspace: worktree"]
+  S2["2 Plan + plan check"]
+  G2{{"Gate: plan (approve-plan.sh)"}}
+  S3["3 Build, 4 Verify, 5 Review, 6 Security"]
+  G3{{"Gate: final review"}}
+  S7["7 Commit + MR text"]
+  G4{{"Gate: commit set (git-commit.sh)"}}
+  G5{{"Gate: push / MR (stop point)"}}
+  S8["8 Record"]
+  S0 --> G1 --> S1b --> S2 --> G2 --> S3 --> G3 --> S7 --> G4 --> G5 --> S8
+  classDef gate fill:#fde68a,stroke:#b45309,color:#000
+  classDef work fill:#dbeafe,stroke:#1d4ed8,color:#000
+  class G1,G2,G3,G4,G5 gate
+  class S0,S1b,S2,S3,S7,S8 work
+```
+
+Yellow hexagons are your decisions. Blue boxes are Claude's work. Tier B is drawn; tier C asks at every stage (table below). The table is the text version.
+
+| # | Stage | File | Gate with you |
+|---|---|---|---|
+| 0 | Pre-flight (no changes) | `stages/0-environment.md` | auto unless a check fails |
+| 1 | Intake: normalise, Definition of Ready, classify, questions | `stages/1-intake.md` | every tier |
+| 1b | Workspace (worktree) | `stages/1b-workspace.md` | auto |
+| 2 | Plan + plan check | `stages/2-plan.md` | B, C |
+| 3 | Build | `stages/3-build.md` | C |
+| 4 | Verify | `stages/4-verify.md` | by tier |
+| 5 | Review | `stages/5-review.md` | B, C |
+| 6 | Security | `stages/6-security.md` | C (B: findings at the final review) |
+| 7 | Commit + MR text | `stages/7-commit-mr.md` | by tier |
+| 8 | Record | `stages/8-record.md` | auto |
+| - | Rework (MR comments) | `stages/rework.md` | by tier |
+| - | Cancel | `stages/cancel.md` | you |
+
+**Tiers** (`SKILL.md` section 4, `stages/1-intake.md`):
+
+| Tier | What it means | Gates with you |
+|---|---|---|
+| A | Lowest risk. The skill runs it as B and the log says `classified A, run as B (v0.1)`. | as B |
+| B | Normal ticket. | ticket + tier, plan, final review, the commit set at stage 7 (one yes covers all planned commits) |
+| C | Risky ticket. | every stage; asks before every commit |
+
+- Claude proposes the tier from the text and `classify.py`. Only you can lower it, with a reason. It can only rise afterwards.
+- **Stop points**, lowest to highest: `local` -> `before-push` -> `draft-mr` -> `ready-mr`. The default per tier is in the project config.
+- **Soft mode:** if you decline the hooks at init, or the hook self-test fails, the skill runs without hooks and permission rules. Stop point is capped at `local`, and it asks before every commit (`init.md` step 4, `stages/0-environment.md` check 5).
+
+## Safety model
+
+Three layers, none of them trusts the others:
+
+```mermaid
+flowchart LR
+  Y(["You: terminal, prompts"])
+  C["Claude: reads, edits, runs checks"]
+  H["Hooks: block wrong commands"]
+  SB["Bash sandbox: limits network and writes"]
+  P{{"Permission prompt = your yes"}}
+  GS["Gate scripts: git-commit.sh, git-push.sh, approve-plan.sh, guard-apply.sh, ticket-state.sh"]
+  R[("Repo, worktrees, state files")]
+  C -->|"every tool call"| H
+  H -->|"blocked: message"| C
+  H -->|"allowed"| SB
+  SB --> R
+  C -->|"gate script call"| P
+  Y --> P
+  P -->|"yes"| GS
+  GS -->|"outside the sandbox, fixed environment"| R
+  classDef gate fill:#fde68a,stroke:#b45309,color:#000
+  class P gate
+```
+
+- **Hooks** (`hooks/`) run before each Bash, Edit and Write call. They block wrong commands and say why.
+- **Sandbox**: the project's Bash commands run with limited network and write paths. `install-hooks.sh project-sandbox-apply` turns it on per project.
+- **Gate scripts** run outside the sandbox, but only after the permission prompt on their exact path. That prompt is your yes.
+
+Gates you answer:
+
+| Gate | Where | What you approve |
+|---|---|---|
+| Ticket + tier | stage 1 | the normalised ticket and the tier |
+| Plan | stage 2 | the plan, identified by its hash (`plan-hash.sh`, then the prompt on `approve-plan.sh`) |
+| Final review | stage 5 / 6 | review and security findings |
+| Commit | stage 7 | each commit, through the prompt on `git-commit.sh` |
+| Push / MR | stage 7, by stop point | the prompt on `git-push.sh`, `glab mr create` or `gh pr create` |
+| Close | stage 8 | the prompt on `ticket-state.sh` |
+| Project config | init | the prompt on `guard-apply.sh` |
+
+Prompts you will see, and what they mean:
+
+| Prompt | Meaning |
+|---|---|
+| `git-commit.sh`, `git-push.sh`, `approve-plan.sh`, `guard-apply.sh`, `ticket-state.sh` | A gate. Your yes is the approval. |
+| `glab mr create`, `gh pr create` | A gate. Creates an MR / PR at the stop point. |
+| `glab` / `gh` write forms (`api`, `mr update`, `pr edit`, ...) | An enumerated ask list at user level. Anything outward needs your yes. |
+| `pnpm add` / `pnpm install` | Adds or changes dependencies. Plain spelling only (not the alias `pnpm i`, not via `npx` / `corepack`). |
+| A network host you did not allow | The sandbox allows only the hosts you named at project setup. |
+| Any other prompt | An extra prompt, not a gate. Note stage and command; `docs/sandbox-dry-run.md` counts these. |
+
+What Claude cannot do (by hook, unless noted):
+
+| Claude cannot | How |
+|---|---|
+| Change `~/.claude/settings*`, hooks or the skill dir | The hook blocks writes to `~/.claude/` by Bash and by Edit / Write, except `projects/*/memory` (`hooks/dtcore.py:1021-1026`). The `install-hooks.sh` writing subcommands run only in your own terminal. |
+| Write the approval, the guard config, the session records or the delivery log | protected state; only the skill's own scripts write it |
+| Write in the ticket's worktree before you approved the plan | the plan lock |
+| Commit outside the gate | A plain `git commit` is blocked by the hook only in a ticket worktree (`hooks/dtcore.py:1674-1677`). Elsewhere in a repo with delivery state, `git commit` must be spelled the way its ask rule matches, so the prompt shows (`dtcore.py:1240`). With the project sandbox on, the sandbox denies the git ref store, so no Claude session in that repo commits outside the gate. Without the project sandbox only the prompt applies. |
+| Push outside `git-push.sh` | Any `git push` is blocked in every Bash call in a repo with delivery state, bound session or not (`dtcore.py:1232`). In a repo without delivery state the hooks do nothing. `git-push.sh` pushes `HEAD` to the named branch of an allowed remote; the push hook also needs a verify record for the pushed tree. `check_push` (`dtcore.py:1117`) refuses force, delete, mirror, `--no-verify` and remotes outside the allowed list. |
+| Push without a verify record for the pushed tree | the push hook reads `evidence/<ID>/verify.json` |
+| Widen the sandbox per call | `allowed_domains` and `dangerouslyDisableSandbox` are blocked |
+| Merge | `glab mr merge`, `gh pr merge` denied |
+| Read `.env*` files | `Read(**/.env*)` denied; the hooks also block shell reads |
+
+Detail and the exact limits of each protection: `docs/safety.md`.
+
+### Permission mode
+
+Launch in default mode. Do not use auto mode or plan mode.
 
 ```
 claude
 CLAUDE_CODE_DISABLE_AUTO_MEMORY=1 claude     # eval runs
 ```
 
-Do not pass `--permission-mode auto` and do not set `defaultMode: "auto"` in your user settings for these sessions.
+- **Code Mode not supported (experimental).** If `CLAUDE_CODE_EXPERIMENTAL_CODE_MODE` is set to anything but empty or `0`, stage 0 stops. `install-hooks.sh apply` also registers a hook that denies Code Mode's `REPL` tool, in every session on this machine. Unset the variable, or set it to `0`.
+- Ticket sessions run in default mode; **auto mode is not supported.** The probe `bash_allowed_domains_param` (Claude Code 2.1.311) showed a Bash call with the per-call `allowed_domains` parameter reaching a host outside the allowlist without a prompt. The hook blocks that parameter and `dangerouslyDisableSandbox`, nothing else; auto mode may approve other things. Do not pass `--permission-mode auto` or set `defaultMode: "auto"`. A skill cannot set the mode.
+- The skill does not use plan mode: plan mode writes its plan under `~/.claude/plans/`, which the guard blocks (dry runs 2 and 3); its exit dialog switches the session to default mode; its "approved" is never your approval. Stage 2 writes the plan into the ticket file and stops at the gate.
 
-The skill does not use plan mode (`EnterPlanMode` / `ExitPlanMode`): plan mode writes its plan under `~/.claude/plans/`, which the guard blocks (dry runs 2 and 3); its exit dialog switches the session to default mode; its "approved" came back although the user had seen no plan (dry run 3), so it is never the user's approval. Stage 2 writes the plan into the ticket file and stops at the gate.
+## Known limits
 
-## Install on a new machine
-Requirements: Claude Code (tested on **2.1.311**; stage 0 warns below it), `git`, `python3`, `bash`; `glab` is optional (only for stop points that create a GitLab MR).
+- **`next/font/google` builds fail in the sandbox.** The sandbox blocks the macOS trust service that Next.js's font download needs for its TLS check (probed on 2.1.325), so `pnpm build` fails on the download. Stage 4 reports "known sandbox limit", never "build ok". It asks you to review the diff, then run the build yourself in your own terminal and paste the output. That output is recorded as user-run evidence (`stages/4-verify.md`, "Known sandbox limit"). A user-run paste never updates the push record, so you push yourself. Not offered: weakening the sandbox for the whole project.
+- **Code Mode is not supported.** No rule or hook was probed under it.
+- **`lock-trace.sh` is a trace, not proof.** The transcripts it reads are writable. It lists what the plan lock does not stop; an interpreter or a script file can still write a locked worktree.
+- **Commits go only through the gate.** With the project sandbox on, no Claude session in that repo commits outside the gate, not even in the main checkout.
+- **Claude's commits and pushes skip your repo's own git hooks.** Put what `pre-push` checks into `verify.on_push`.
+- **A ticket whose worktree was made before this version**, or by Claude Code itself because the project `WorktreeCreate` hook is not registered, cannot commit through the gate.
+- **Project-specific globs.** Init's risk globs fit the tested project only.
+- **Unverified:** copying a project's state dir to another machine (the key comes from the checkout's absolute path); commit signing and an https push behind a proxy under the fixed environment of the gate scripts (`GPG_TTY`, `GNUPGHOME`, `HTTPS_PROXY` are not passed); a sandboxed plain push over SSH; whether `Read(**/.env*)` also stops the built-in Grep / Glob tools (`docs/phase5-checklist.md`); everything on versions after 2.1.325.
+
+The full list of limits per protection is in `docs/safety.md`. Open decisions and the v0.3 backlog are in `docs/plan.md`.
+
+## Reference
+
+### Install on a new machine
+Requirements: Claude Code (tested on **2.1.311** and probed on **2.1.325**; stage 0 warns below 2.1.311), `git`, `python3`, `bash`; `glab` is optional (only for stop points that create a GitLab MR).
 
 1. Clone to **exactly** `~/.claude/skills/deliver-ticket` (the hooks and `SKILL.md` use that path): `git clone <this repo's URL> ~/.claude/skills/deliver-ticket` (the clone path matters, not where it comes from).
 2. Run `~/.claude/skills/deliver-ticket/scripts/install.sh`. It checks the tools and the clone path, prints the `~/.claude/settings.json` diff, asks y/n, and only on `y` runs `install-hooks.sh apply --confirmed` (a backup is made) and `install-hooks.sh status`. By hand it is the same three steps: `scripts/install-hooks.sh diff`, then `apply --confirmed`, then `status`.
@@ -26,9 +233,14 @@ Requirements: Claude Code (tested on **2.1.311**; stage 0 warns below it), `git`
 
 Update: `git pull` in the clone, then `scripts/install-hooks.sh status`; it says if the registered hooks or rules differ from this version (then `diff`, your yes, `apply --confirmed`).
 
+After the fast-forward, run `install-hooks.sh apply` from the live skill path (`~/.claude/skills/deliver-ticket/scripts/`), not from another clone: the Read rule it adds names the installer's own location (inference from `scripts/install_hooks.py:40, 109`, not run).
+
 **Unverified:** whether copying a project's state dir (`<state root>/<project-key>/`) to another machine works. The key is derived from the main checkout's absolute path and `guard.json` holds absolute paths, so it should only work when the checkout sits at the same path (inference, not tested); otherwise run `/deliver-ticket init` again.
 
-## Emergency: a hook blocks every session
+### Uninstall a project
+Run `install-hooks.sh project-sandbox-off` before `project-uninstall` (both with `--repo <main checkout> --confirmed`). The other order leaves an empty `"allow": []` in `<repo>/.claude/settings.local.json` (harmless); `tests/run-installer.sh` pins both orders. The user-level `uninstall` is in the emergency section below.
+
+### Emergency: a hook blocks every session
 
 The hooks are registered in `~/.claude/settings.json` (user level). If a hook bug blocks all work, run these **from a normal terminal** (not from inside Claude Code):
 
@@ -54,23 +266,15 @@ cp ~/.claude/settings.json.bak-deliver-ticket-<timestamp> ~/.claude/settings.jso
 #    /.claude/skills/deliver-ticket/hooks/ from ~/.claude/settings.json (and from <repo>/.claude/settings.local.json) by hand
 ```
 
-The hooks do nothing in a repo without delivery state (`<state root>/<project-key>/guard.json`), except that a Write / Edit or shell write whose text names the state root's directory name is still checked against the protected state (`sessions/`, `closed/`, `delivery.log`); known limits: globs, paths built without the root's name, symlinks made earlier, interpreters. A delete / move verb (`rm`, `rmdir`, `unlink`, `shred`, `mv`) also starts that check, so deleting a parent of the state root is caught there too.
+The hooks do nothing in a repo without delivery state, except for the protected-state check described in `docs/safety.md`.
 
-**Protected state (every session, every repo and cwd):** `<state root>/sessions/`, `<project>/closed/`, `<project>/delivery.log`, `<project>/approvals/` (the plan-approval markers of the lock, written only by a gate script from C7; sandbox `denyWrite` `<root>/*/approvals` too) and `<project>/guard.json`. `guard.json` is written only by `scripts/guard-apply.sh` (candidate `<project>/guard.candidate.json`, `guard-write.sh diff`, then `guard-apply.sh <candidate> --repo R`; its own permission ask rule, user level, is my yes - no `--confirmed` flag); the hooks also block removing or moving the state root, any parent of it, a project state dir or `sessions/` (with a reason that says so), and hard-linking protected files (`ln`, `link`, `cp -l`). Stage 0 runs `guard-write.sh verify`. Known limits of this protection: a skill script is exempt from the hooks, the yes is the permission prompt on `guard-apply.sh` (needs the ask rule from `install-hooks.sh apply`; without it nothing asks); interpreters (`python3 -c`), `tar -x -C <state dir>` and other directory-level copies, `find -delete`, `rsync --link-dest` and `xargs rm` are not stopped; ****Re-check the sandbox design after a Claude Code update:** `scripts/probe-sandbox.sh <new scratch dir>` (about 40 short Haiku runs; `--list`, `--only id,id`, `--modes`; needs an outside-`/tmp` dir, default `~/.cache/dt-probes/probe-sandbox/<scratch name>`) runs the property list (auto-allow, deny and ask rules, `denyWrite` and renames outside `/tmp`, excluded scripts and the `cd` / `&&` forms, the gate scripts' prompts with the sandbox on and off, `settings.local.json` by Bash, network, localhost server and client, `git branch -m`, `gh` / `glab` forms, the installer block); exit 0 all PASS, 1 a FAIL, 3 CHANGED (different from the last probe), 4 INCONCLUSIVE. `docs/sandbox-dry-run.md` is the TUI checklist that counts the prompts that are not gates on `main` vs `v0.2`. **Settings are changed by the user, not by Claude:** `install-hooks.sh apply|uninstall|project-apply|project-uninstall|project-sandbox-apply|project-sandbox-off` (the writing subcommands; `status`, `diff`, `selftest`, `project-status`, `project-diff`, `project-sandbox-status|diff` stay allowed) are blocked by the hook in every spelling and repo - with the sandbox off nothing else would stop an auto-mode run. The user runs them in their own terminal tab after reading the matching diff (not `!`: whether it passes through hooks is unverified, probe V4). Known limit: `python3 -c` that imports the installer. **Gate scripts (`guard-apply.sh`, `ticket-state.sh`) run only as `<skill dir>/scripts/<name>.sh <args>` (G1):** the permission ask rule on that full path is the user's yes, so `bash <script>`, `python3 <script>`, a relative path, a wrapper, an env assignment, `bash -c` and the backing modules (`guard_apply.py`, `ticket_ctl.py ticket-state`) are blocked by the hook; a case variant of the script or of a path component (`GUARD-APPLY.sh`, `.CLAUDE`, `DELIVER-TICKET`) reaches the same file on a case-insensitive filesystem but not the literal ask rule, so only the exact spelling is allowed, in every repo (a call that names these scripts also starts the no-state check). The stage texts must therefore call them by that absolute path (1d step 4). **Program names are compared lower-case (C3):** on a case-insensitive filesystem `GIT push` and `RM -rf` run git and rm, so every rule folds the name; a gated command must still be written in lower case. **Gated commands are spelled one way (S1):** the ask rules match the command text as a prefix, and with the sandbox on a command they miss would run auto-approved, so the hook blocks `git push` unless it is literally `git push <remote> <branch>` (no `-C` / `-c` / `--git-dir`, no path, no `env` / `command` / `xargs` / env assignment in front, not inside `bash -c` / `eval` / `$( )`), and the same for `gh pr create`, `git commit` (C11: `git -C <wt> commit` had moved a branch with no prompt), `pnpm add` / `pnpm install` (C11: no option such as `-C` / `--dir` / `--filter` / `-w` before the subcommand, not the alias `pnpm i`, not via `npx` / `corepack` / `npm exec` / `npm x`, nor inside an `npm exec -c` / `--call` string; `pnpm -C <dir> add` had run with no prompt) and the `gh` / `glab` write list below (an option between the subcommand words, such as `gh pr --repo o/r edit 1`, is blocked; `-R` / `--repo` first is covered by its own ask rule). Init does not suggest a git host for `allowedDomains` unless the user asks: with an HTTPS remote and its host allowed, a push that the ask rule missed could otherwise run sandboxed. The `glab` / `gh` write commands are an enumerated ask list at USER level (`install-hooks.sh apply`: a project without the sandbox has no project block, and auto mode would let the classifier run them), and the sandbox leaves only those forms plus four narrow reads (`pr view|list`, `mr view|list`) out of the sandbox (`excludedCommands`); any other `gh` / `glab` form stays sandboxed, where the Go TLS check fails (probe V8) - it fails closed, or in a project without the sandbox follows the normal permission flow. Because an ask rule always beats an allow rule (docs), so a broad `gh *` ask with narrow allows cannot work. Probed with a fake `gh` / `glab` (Claude Code 2.1.311, 2026-11-11): covered (prompt) are the plain form, `-R` / `--repo` first, an env prefix (`FOO=1`, `GH_REPO=...`), an absolute path, `/usr/bin/env`, a double space, `cd x && ...`, `echo a; ...`, `api`, `auth`; **not covered: an option between the subcommand words (`gh pr --repo o/r edit 1`)**, any `gh` / `glab` alias or extension that wraps a write, and a script that calls them; `-R` / `--repo` also makes reads prompt. `command gh ...` is stripped by Claude Code as a wrapper (docs) but the model rewrote it in the probe, so it is untested. **Known limits until milestone 1c (plan.md, "Milestone 1c plan"):** (#1, fixed in C4) the push hook no longer runs `verify.on_push`: stage 4 runs `scripts/verify-record.sh` (sandboxed, clean worktree only) which writes `evidence/<ID>/verify.json` (HEAD tree, exit code and sha256 of each command); the hook reads it and blocks when it is missing, failed, or for another tree or command, and fails closed when no ticket resolves from the cwd, when any pushed source ref has another tree than the record, and when the sources cannot be determined (`--tags`, wildcards, deletes, `push.default=matching`, a configured `remote.<r>.push`). The record is tamper-evident, not tamper-proof: `evidence/` is sandbox-writable, so Claude could write a forged one. Stage 8 `lock-trace.sh` lists every call naming `evidence/<ID>/verify.json` that is not one plain `verify-record.sh <ID>` call (a Read tool call is shown, not counted; a Bash `cat` counts, it can carry a redirect), and an existing `verify.json` whose mtime is later than the end of the last `verify-record.sh <ID>` call in the scanned transcripts (or with no such call): "verify.json not explained by verify-record.sh". A trace, not proof: `touch -t` forges an mtime, and the transcripts are writable. UX change: the tests no longer run at the push prompt; what you see is the stage 4 record. (F1, fixed in C5) the excluded `git push` / `git branch -m` ran the repo's own hooks (`pre-push`, `reference-transaction`; probed 2026-11-16: they fired from a `core.hooksPath` inside the work tree and from `<git-common-dir>/hooks`, and with the sandbox on they wrote outside `allowWrite`) unsandboxed. Now neither is excluded and the hook blocks Claude's plain `git push` / `git branch -m`; push and rename are `scripts/git-push.sh <remote> <branch>` (permission prompt = your yes) and `scripts/git-rename.sh <old> <new>` (excluded, no prompt), which validate their own arguments (no options, allowed remote name only, plain branch name, scrubbed `GIT_*` environment, refusal when a risky git config key such as `core.sshCommand` or a `remote.*.receivepack` comes from a file inside the repo or a worktree) and run git with `core.hooksPath=/dev/null`. Trade-off: the team's own `pre-push` and `reference-transaction` hooks do not run on Claude's pushes or renames; put what `pre-push` checks into `verify.on_push`. (C5b) The scripts trust `~/.gitconfig` and `~/.config/git/**` (`$XDG_CONFIG_HOME` no longer counts: C11e3 drops it from their environment; the hooks still protect `$XDG_CONFIG_HOME/git/**`), so the hooks block Write / Edit and shell writes to them and `git config --global|--system|--file <those>` writes (reads stay allowed), and `install-hooks.sh apply` adds them to the user-level sandbox `denyWrite`; a risky key from any other file under your home (an `[include]` of `~/.gitconfig-work`, say) is refused by the scripts. Unverified: a sandboxed plain push over SSH (it should fail; only `file://` outside `allowWrite` was probed). **Configuration the hooks trust (C9a/C9b, every session, every repo and cwd):** Write / Edit / NotebookEdit / MultiEdit, redirects and the shell write forms the hooks parse are blocked on (1) `~/.claude/settings*` (settings, installer manifest and backups), (2) the skill dir `~/.claude/skills/deliver-ticket/**`, (3) `<repo>/.claude/settings.json`, `settings.local.json` and `<repo>/.claude/worktrees/*/.claude/settings*.json` of a repo WITH delivery state (another project's settings stay editable), (4) `~/.gitconfig`, `~/.config/git/**`, `~/.ssh/**`, `~/.netrc`, `~/.config/gh/**`, `~/.config/glab-cli/**` and `git config --global|--system|--file <those>` writes; also removing / moving a parent of them, a glob that could match them, and a directory-level copy into `~/.claude`, `<repo>/.claude` or `<worktree>/.claude`. **Building the skill:** the skill dir (2) is writable only from a session STARTED in the skill repo (`cd ~/.claude/skills/deliver-ticket && claude`): the `SessionStart` hook `session-record.sh` writes `<state root>/starts/<session id>` = the start directory once (first record wins; protected state); a later `cd` does not count (the hook payload `cwd` follows `cd`, probe 2026-11-16). No record, a symlinked record or `starts/` = not the skill repo. (1), (3), (4) have no exemption. Sandbox: user-level `denyWrite` adds `~/.ssh/**` and `~/.claude/settings*`; `project-sandbox-apply` adds `denyWrite` for (3) (glob: macOS only, V7c). Known limits: in a directory without delivery state the check starts only when the text names `.claude`, `.ssh`, `.netrc`, `config` or the skill dir's own path (realpath; it holds no `.claude` when `~/.claude` is a symlink) - a target spelled without them, e.g. built by a variable, passes there; interpreters; `cp -R x/.claude <repo>/` (destination is the repo root; the project sandbox `denyWrite` covers it where the sandbox is on). In a repo with delivery state the older `~/.claude` rule (everything but auto-memory blocked) is unchanged, so the skill dir is not writable from there even for a session started in the skill repo.
-
-**Plan lock (milestone 1c, C6-C10):** a write under `<repo>/.claude/worktrees/<ID>` of an open ticket is blocked until `approvals/<ID>.plan` holds the hash of the ticket's current `## Plan` section. Only `approve-plan.sh` writes it (gate script: its permission prompt is your yes, after `plan-hash.sh` showed you the plan's hash); editing the plan re-locks it. Every open ticket is locked, including one opened before the lock: it goes through the stage 2 gate once. Stage 8 runs `scripts/lock-trace.sh` (read-only, sandboxed) and reports to you what the lock does not stop. **Known limits:** the lock stops Claude's ordinary tools and git, not a deliberate bypass - the project sandbox's `allowWrite` holds all of `<repo>/.claude/worktrees`, so an interpreter (`python3 -c`, `node -e`, `python3 - <<EOF`), a script file, `make`, `npm run`, `find | xargs` or a nested `claude` can write a locked worktree. `lock-trace.sh` lists such calls made before the approval, any call naming `approvals/`, a stale or missing marker, an approval whose hash shown / `--sha` / `delivery.log` line disagree or that had no user turn after the hash was shown, missing transcripts, and sessions that ran outside their start directory. Per commit (C11e2) it lists a `git-commit.sh` call whose previous call is not exactly `git diff --cached --stat=10000 --no-renames` from the same directory (or that ran in a subagent), a stat whose file names or count differ from the file list `git-commit.sh` logged (a stat output cut short counts as a mismatch), a logged `MISMATCH`, a commit whose tree or files in git differ from its log line, a commit call with no log line and a log line with no call. **Limits of the commit check:** the TUI may collapse a long output, so "shown in chat" is not proof you saw it (unverified); the transcripts are writable (a trace, not proof); a `git` wrapper earlier in PATH could fake the stat output (inference, untested); a change of the index during the commit is found only after the commit exists. It is a trace, not proof: the transcripts live in `~/.claude/projects`, which is writable (auto-memory), and a command built from a variable escapes its patterns.
-
-**Commits under the project sandbox (C11):** `project-sandbox-apply` denies writes to the git ref store (`<git common dir>/refs/**`, `packed-refs`, `logs/refs/**`; the common dir from `git rev-parse --git-common-dir`). It also denies `<git common dir>/config`, `config.worktree`, `worktrees/*/config.worktree` and `info/attributes`: a filter / diff / merge driver planted there would run in the unsandboxed git of the gate scripts, `base-worktree.sh` and your own commits in the main checkout (on Claude Code 2.1.325 the config files were already protected by Claude Code itself, `info/attributes` was writable; `hooks/` is protected by Claude Code, `info/exclude`, `objects/` and `worktrees/*/HEAD` stay writable). The git scripts also refuse `filter.*.clean|smudge|process`, `diff.*.textconv` and `merge.*.driver` set in a file inside the repo; `~/.gitconfig` entries such as git-lfs's are trusted. A sandboxed command cannot move a branch any more - not `git commit`, merge, rebase, cherry-pick, reset, `update-ref`, `fetch . x:<branch>`, `checkout -B` (probe `refs_*`; a plain file write into `.git/refs` was stopped by the hook before the deny was reached). **So with the project sandbox on, no Claude session in that repo commits outside the gate**, not even in the main checkout: commits go only through `scripts/git-commit.sh` (gate: its permission prompt is your yes), run from a ticket worktree. The gate refuses unless the plan is approved and HEAD is the ticket's branch as recorded in `delivery.log` (written by the `WorktreeCreate` hook and by `git-rename.sh`, which only renames the recorded branch; the ticket file's `branch:` line is not trusted); it runs git with the repo's hooks off, so the team's pre-commit / commit-msg hooks do not run on Claude's commits; it logs the commit, its tree and its file list, read back from the commit (stage 7 shows `git diff --cached --stat=10000 --no-renames` right before the prompt, which shows only the command; stage 8 `lock-trace.sh` compares the two, C11e2). When the commit's tree or parent differs from what was staged (the index or the branch changed during the commit), the log line says `MISMATCH`, the gate exits 3 and stage 7 stops for you. Also blocked from the sandbox: `git stash`, `git branch -d` (cleanup commands are yours to run), `git fetch` into local branches. **Known limits:** a ticket whose worktree was made before this version, or by Claude Code itself because the project `WorktreeCreate` hook is not registered, has no branch record, so it cannot commit through the gate; `.git/worktrees/<ID>/HEAD` stays writable, so detached-HEAD commit objects can be made (no branch moves). A repo whose git dir is not `<repo>/.git` (`--separate-git-dir`, a gitfile) is refused by `project-apply`, `project-sandbox-apply` and the git scripts.
-
-**Environment of the excluded scripts (C11e3):** the gate and bookkeeping scripts run unsandboxed, so each `.sh` wrapper starts with `#!/bin/bash -p` (no `BASH_ENV`, no exported functions), sources `scripts/fixed-env.sh` and runs python3 (or, for `pending-ticket.sh`, its body `pending_ticket_run.sh`) under `/usr/bin/env -i` with only `SSH_AUTH_SOCK` (ssh pushes), `LANG` / `LC_*` and `DELIVER_TICKET_HOME`; python3 and git come from a fixed list (`/opt/homebrew/bin`, `/usr/local/bin`, `/usr/bin`; `install-hooks.sh status` prints the choice), never from PATH, and HOME from the password database. Dropped on purpose: `DEVELOPER_DIR` (`/usr/bin/git` and `/usr/bin/python3` are xcrun shims that run `$DEVELOPER_DIR/usr/bin/xcrun`), `XDG_CONFIG_HOME`, `DYLD_*`, `GIT_*`, `TERM`. The hook also refuses a wrapper (`env`, `command`, `nohup` ...), an env assignment or nesting on a bookkeeping script, as on a gate. Probed on Claude Code 2.1.325: a command that changes PATH / BASH_ENV before an excluded script (`export PATH=...; <script>`, `&&`, `cd ... &&`, `PATH=x <script>`, `env PATH=x <script>`) runs sandboxed (probe `path_*`, `bash_env_*`), so this is defense in depth. Not verified: a real person's yes to such a compound (an allow rule stood in), versions after 2.1.325. Open: `DELIVER_TICKET_HOME` still selects the state root of these scripts; the hooks call `python3` by name.
-
-## Change settings
+### Change settings
 
 Re-run `/deliver-ticket init` in the project's main checkout and name the group(s) to change (re-run mode: it shows the current values, changes only the groups you name, regenerates `guard.json` and re-runs the hook checks). Editing `config.md` by hand also works; stage 0 then warns that `config.md` is newer than `guard.json`, and an init re-run regenerates it. Naming nothing = full refresh of `project.md`.
 
 Groups and the default init proposes when it finds nothing better: Org policy / Decision-makers / Tracker / MR adapter: none (you answer; Delivery log off until answered; adapter `manual` if the glab check fails) · Project type, Verify, Git: detected from the repo and confirmed · Definition of Done: the template's list · Workspace: worktree per ticket, max 3 parallel in tier B/C and 5 in total, ports base 3100 step 10 · Verify timeout 300 s · Stage-0 checks: the 9 in `stages/0-environment.md` · Autonomy: tier B stop `before-push`, tier C `local` · Language `en`/`en` · Time tracking off. Changing the stage-0 checks means editing `stages/0-environment.md` (see Extending).
 
-## Extending (add a file, don't edit the core)
+### Extending (add a file, don't edit the core)
 
 | To add | Add | Touch |
 |---|---|---|
@@ -85,14 +289,32 @@ Groups and the default init proposes when it finds nothing better: Org policy / 
 
 After **any** change: run `tests/run-guard-json.sh`, `tests/run-hooks.sh <new dir>`, `tests/run-worktree-create.sh <new dir>`, `tests/run-installer.sh <new dir>`, `tests/run-project-map.sh <new dir>`, `tests/run-compare.sh <new dir>`, `tests/run-base-worktree.sh <new dir>`, `tests/run-classify.sh <new dir>`, `tests/run-pending-ticket.sh <new dir>`, `tests/run-session-ctl.sh <new dir>`, `tests/run-transcript-reads.sh <new dir>`, `tests/run-branch-name.sh <new dir>`, `tests/run-docs-lint.sh` (all must end `fail=0` / `pass`), and re-run the classification evals (`evals/`) when stage 1, `classify.py` or the risk definitions changed. Then one line in `CHANGELOG.md`.
 
-## Global permission rules that `apply` adds (user level, all projects)
+### Global permission rules that `apply` adds (user level, all projects)
 
-- `ask`: `Bash(git push:*)` and `Bash(git branch -m:*)` (second layer: the hook blocks plain `git push` / `git branch -m` first), `Bash(<skill dir>/scripts/git-push.sh *)`, `Bash(<skill dir>/scripts/approve-plan.sh *)`, `Bash(glab mr create:*)`, `Bash(gh pr create:*)`.
-- `deny`: `Bash(glab mr merge:*)`, `Bash(gh pr merge:*)`, `Read(**/.env*)`.
+- `allow`: `Read` of the skill dir and of the whole state root, `Edit` of `<state root>/*/tickets/**` and `<state root>/*/evidence/**` (an `Edit` rule also covers the Write tool; `scripts/install_hooks.py:104-116`), the sandboxed scripts `verify-record.sh`, `plan-hash.sh`, `lock-trace.sh` and the bookkeeping scripts (no prompt).
+- `ask`: `Bash(git push:*)` and `Bash(git branch -m:*)` (second layer: the hook blocks plain `git push` / `git branch -m` first), the gate scripts by full path (`ticket-state.sh`, `guard-apply.sh`, `git-push.sh`, `approve-plan.sh`, `git-commit.sh`), `Bash(glab mr create:*)`, `Bash(gh pr create:*)`, and the enumerated `glab` / `gh` write forms.
+- `deny`: `Bash(glab mr merge:*)`, `Bash(gh pr merge:*)`, `Read(**/.env*)`, and `Edit` of the protected state and of `verify.json`.
 
 **Merging through `glab`/`gh` is denied in every project, on purpose** (decision 2026-11-05: merges are done in the GitLab UI). Anyone who needs `glab mr merge` from the CLI must remove that rule by hand or run `install-hooks.sh uninstall`. `Read(**/.env*)` covers the Read tool only; whether it also stops the built-in Grep/Glob tools is unverified (`docs/phase5-checklist.md`).
 
-## Tests (never touch real settings or state)
+(The exact lists are in `scripts/install_hooks.py` `ASK`, `DENY`, `file_allow()`; `install-hooks.sh diff` shows what would be written.)
+
+### Troubleshooting: block message -> fix
+
+| Message (start) | Meaning | Fix |
+|---|---|---|
+| `... approve the plan first` | Writing under an open ticket's worktree before plan approval | Stage 2: show the plan and its hash, say yes; Claude runs `approve-plan.sh` (your prompt). An edited plan needs a new yes. |
+| `Bash parameter allowed_domains blocked` / `dangerouslyDisableSandbox blocked` | A call tried to widen the sandbox | Claude runs the call without it. For a host, run `install-hooks.sh project-sandbox-diff` then `project-sandbox-apply --repo <repo> --domains <host>` in your terminal. |
+| `writes to ~/.claude/ (settings, hooks, skills) are only allowed through scripts/install-hooks.sh` | A write under `~/.claude` | Make the change with `install-hooks.sh` in your terminal. It also blocks `~/.claude/plans/` (open question in `docs/plan.md`). |
+| `no usable verify record for <ID> ...` | A push without a verify record | Run the stage 4 verify (`verify-record.sh`). |
+| `the pushed <ref> is not the tree of the verify record ...` | HEAD changed after the record | Run stage 4 again, then push. |
+| Stage 0: `Code Mode (experimental) is not supported ...` | `CLAUDE_CODE_EXPERIMENTAL_CODE_MODE` is set | Unset it (shell and the `env` block of `~/.claude/settings.json`), start a new session. |
+| Stage 0 check 10 FAIL (session not bound) | The bind hook did not fire, or another project's ticket holds the session | Read the message: close or pause the other ticket, or start a new session. |
+| `this session is still bound to ticket X in project Y` | One project per session while a ticket is open | Close or pause X, or start a new session. |
+| `git global option '--version' is not understood - blocked (fail-closed)` | A known over-block of a read-only call | No fix yet (`docs/plan.md`, "Later item"). |
+| `git-commit.sh` exit 3, `MISMATCH` | The commit is not what was staged | Stage 7 stops; look at `git show --stat --no-renames <sha>`. Claude makes no new commit on its own. |
+
+### Tests (never touch real settings or state)
 
 ```sh
 tests/run-guard-json.sh                        # guard.json validator
@@ -113,6 +335,8 @@ tests/run-base-worktree.sh <new scratch dir>   # shared detached _base worktree:
 tests/run-install.sh <new scratch dir>         # scripts/install.sh with a fake HOME: n / empty input write nothing, y applies + backup + status, wrong clone path refused
 tests/run-evals.sh <new scratch dir>           # phase-6 eval tooling (truth.json, runner, scorer) against a fake `claude`; starts no real session
 tests/run-approve-plan.sh <new scratch dir>    # approve-plan.sh (the only writer of approvals/<ID>.plan) and plan_lock.py: --sha vs the shown hash, refusals, rework / reopen rename, safe marker read
-tests/run-plan-lock.sh <new scratch dir>       # the plan lock (C8): writes under an open ticket's worktree blocked until the plan is approved, every parsed route, bound and unbound sessions
+tests/run-plan-lock.sh <new scratch dir>       # the plan lock: writes under an open ticket's worktree blocked until the plan is approved, every parsed route, bound and unbound sessions
 tests/run-lock-trace.sh <new scratch dir>      # stage 8 lock trace on fixture transcripts: missing sessions, unparsed calls before/after the marker, approvals/, the three plan hashes + user turn, start records, read-only
 ```
+
+After a Claude Code update re-check the sandbox design with `scripts/probe-sandbox.sh <new scratch dir>` (about 40 short Haiku runs with `--list`, `--only id,id`, `--modes`; exit 0 all PASS, 1 FAIL, 3 CHANGED, 4 INCONCLUSIVE). `docs/sandbox-dry-run.md` is the TUI checklist that counts the prompts that are not gates. The changelog is `CHANGELOG.md`.
