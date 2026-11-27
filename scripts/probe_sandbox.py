@@ -526,9 +526,9 @@ CASES = [
          setup=lambda c: make_f1(c, "a", ["reference-transaction"], "hookspath"), disk=[("exists", "{S}/f1-a/.git/refs/heads/work/f1b"), ("absent", "{OUT}/f1/a-reference-transaction")]),
     dict(id="f1_pre_push_hookspath", dt_home=True, cmd="{SK}/scripts/git-push.sh f1remote f1pp", cwd="{F1B}", expect="ok", mutate=m_scripts_allowed, sources=NOUSER,
          setup=lambda c: make_f1(c, "b", ["pre-push"], "hookspath"), disk=[("exists", "{S}/f1-b.git/refs/heads/f1pp"), ("absent", "{OUT}/f1/b-pre-push")]),
-    dict(id="f1_commondir_hooks_push", dt_home=True, cmd="{SK}/scripts/git-push.sh f1remote f1cd", cwd="{F1C}", expect="ok", mutate=m_scripts_allowed, sources=NOUSER,
+    dict(id="f1_commondir_hooks_push", dt_home=True, cmd="{SK}/scripts/git-push.sh f1remote f1common", cwd="{F1C}", expect="ok", mutate=m_scripts_allowed, sources=NOUSER,
          setup=lambda c: make_f1(c, "c", ["pre-push", "reference-transaction"], "commondir"),
-         disk=[("exists", "{S}/f1-c.git/refs/heads/f1cd"), ("absent", "{OUT}/f1/c-pre-push"), ("absent", "{OUT}/f1/c-reference-transaction")]),
+         disk=[("exists", "{S}/f1-c.git/refs/heads/f1common"), ("absent", "{OUT}/f1/c-pre-push"), ("absent", "{OUT}/f1/c-reference-transaction")]),
     # C5: the script arguments are validated before git runs (they run unsandboxed). `--receive-pack=<cmd>` is the documented way to run a program for a local remote.
     # A refusal is git_safe.die ("git-safe: ...", exit 2): verdict "refused". Exactly two arguments, else the count check answers before the plain-name check.
     dict(id="git_push_script_refuses_options", dt_home=True, cmd="{SK}/scripts/git-push.sh --receive-pack='touch {OUT}/rp-marker' f1rp", cwd="{F1B}", expect="refused", mutate=m_scripts_allowed,

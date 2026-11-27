@@ -109,6 +109,11 @@ echo "# C11h (f): env files - repo-wide sandbox read deny, env-keys.sh bookkeepi
 has README.md 'adds .sandbox.filesystem.denyRead. for .<repo>/.env\*. and .<repo>/\*\*/.env\*.'
 has stages/1b-workspace.md '<skill dir>/scripts/env-keys.sh <worktree>/<env file>'
 hasnt stages/1b-workspace.md 'env links exist (.ls -l.'
+echo "# C11h (g): counted baseline, probe-run count, husky noise, the C11h record"
+has docs/sandbox-dry-run.md '\*\*74 permission prompts\*\*'
+hasnt "README.md docs/safety.md docs/sandbox-dry-run.md" 'about 40 short Haiku runs'
+has docs/sandbox-dry-run.md 'could not lock config file'
+has docs/plan.md 'C11h - DRY-02 findings (2026-11-27'
 echo "# C11h: the push record - turbo cache dir set by verify-record.sh, no Edit deny rule on verify.json (hooks instead)"
 has stages/4-verify.md 'TURBO_CACHE_DIR=<worktree>/.turbo/cache'
 has README.md 'there is no .Edit. deny on the push record'

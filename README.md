@@ -340,4 +340,4 @@ tests/run-plan-lock.sh <new scratch dir>       # the plan lock: writes under an 
 tests/run-lock-trace.sh <new scratch dir>      # stage 8 lock trace on fixture transcripts: missing sessions, unparsed calls before/after the marker, approvals/, the three plan hashes + user turn, start records, read-only
 ```
 
-After a Claude Code update re-check the sandbox design with `scripts/probe-sandbox.sh <new scratch dir>` (about 40 short Haiku runs with `--list`, `--only id,id`, `--modes`; exit 0 all PASS, 1 FAIL, 3 CHANGED, 4 INCONCLUSIVE). `docs/sandbox-dry-run.md` is the TUI checklist that counts the prompts that are not gates. The changelog is `CHANGELOG.md`.
+After a Claude Code update re-check the sandbox design with `scripts/probe-sandbox.sh <new scratch dir>` (216 short Haiku runs at C11h, 205 cases, some in both modes; `--list | wc -l` prints the current number; with `--list`, `--only id,id`, `--modes`; exit 0 all PASS, 1 FAIL, 3 CHANGED, 4 INCONCLUSIVE). `docs/sandbox-dry-run.md` is the TUI checklist that counts the prompts that are not gates. The changelog is `CHANGELOG.md`.

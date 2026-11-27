@@ -17,14 +17,17 @@ Fill in before starting:
 
 ## A. Before anything (the user, own terminal tab; Claude only reads)
 1. `git -C <skill checkout> status` clean; note the branch.
-2. `scripts/probe-sandbox.sh <new scratch dir>` - the full pass (about 40 short Haiku runs). Expected: exit 0, or only rows you understand (`CHANGED` = this Claude Code
+2. `scripts/probe-sandbox.sh <new scratch dir>` - the full pass (216 short Haiku runs at C11h, 205 cases, some in both modes; `--list | wc -l` prints the current number). Expected: exit 0, or only rows you understand (`CHANGED` = this Claude Code
    behaves differently from the last probe: read the row before going on). `INCONCLUSIVE` rows: run them again with `--only`. A row that is not
    PASS names `raw/<case>-<mode>.json` in the scratch dir: the Bash calls, tool results and Haiku's reply of that run.
 3. Record the result block: version, `summary:` line.
 
 ## B. Reference baseline (no run for it)
-The live skill checkout is never switched (every session's hooks follow it). Reference baseline = DRY-01 (2026-11-18, CC 2.1.311, no sandbox): about 50 prompts that were not design gates
-(`~/.local/share/deliver-ticket/lessons.md` line 3: "about 50 non-gate permission prompts in one tier-B ticket"; the exact count is unverified: no counted list was found, `docs/plan.md` has no figure).
+The live skill checkout is never switched (every session's hooks follow it). Reference baseline = DRY-01 (2026-11-18, CC 2.1.311, no sandbox): **74 permission prompts**, counted in its transcript as `permissionDecision` entries with
+`source: user_temporary` (C11h, 2026-11-27; the "about 50" in `~/.local/share/deliver-ticket/lessons.md` line 3 was an estimate). By command, 5 of them are gates in
+today's sense (`approve-plan.sh`, `git commit`, `ticket-state.sh`, the project and the global `lessons.md` write) and 69 are not (28 Edit, 16 Read, 7 Write outside the
+working dir; 13 Bash too-complex; others). DRY-02 (2026-11-27, CC 2.1.325, v0.2 at 0397e25, sandbox on): 11 prompts, 3 gates (`~/.cache/dt-probes/c11g-findings.md`).
+How to count: every transcript line (main session and `subagents/*.jsonl`) whose `permissionDecision.source` is `user_temporary`.
 Evidence: `~/.local/share/deliver-ticket/dryrun-ck-138e3ecd/` (ticket `tickets/DRY-01.md`, `evidence/DRY-01/`), transcript `~/.claude/projects/-Users-huynhminh--cache-dt-probes-dryrun-ck/262071df-0883-41c2-8e75-416c1e9ce440.jsonl`.
 **Pass for this run: prompts == design gates, no EPERM.**
 Optional later: a real v0.1 baseline from a separate clone with its own `CLAUDE_CONFIG_DIR` (unverified: may need a fresh login).
@@ -46,6 +49,10 @@ Optional later: a real v0.1 baseline from a separate clone with its own `CLAUDE_
 **Design gates** (these are the prompts that should remain): the ticket + tier confirmation, the plan, every stage in tier C, the final review, the commit gate (`git-commit.sh`),
 a push (`git-push.sh`, stop point permitting), the plan approval (`approve-plan.sh`), `ticket-state.sh` close (one prompt per ticket), the stage-8 write of `lessons.md` (project and/or global; a gate since C11h: later runs read it), `guard-apply.sh`, `gh` / `glab` writes, a network host you did not allow. A tier-B run with stop point `local` and one lessons file written has **4 permission prompts that are gates**: `approve-plan.sh`, `git-commit.sh`, `ticket-state.sh`, the `lessons.md` write (DRY-02 had the first three plus 8 extra).
 Everything else is an **extra prompt**. A prompt that DRY-01 had and this run does not (or the reverse) goes in the notes.
+
+**Expected noise, not a failure:** `pnpm install` in a new worktree runs the repo's `prepare` script; husky's `git config core.hooksPath ...` then fails with
+"could not lock config file" (the project sandbox denies writing `<git common dir>/config`, C11). The install finishes; Claude's commits run with the repo's hooks off
+anyway (`git-commit.sh`). Count it under EPERM only if the install itself failed. (DRY-02, one occurrence.)
 
 Also write down: stages that failed or needed a retry, anything that said `operation not permitted` / EPERM, `requires approval` that you did not expect,
 and the wall time.
