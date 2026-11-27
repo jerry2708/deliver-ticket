@@ -23,4 +23,7 @@ def main():
 
 
 if __name__ == "__main__":
+    sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+    import fixed_env      # C11e3: fixed PATH / HOME, only the kept variables, before anything runs
+    fixed_env.apply()
     sys.exit(main())

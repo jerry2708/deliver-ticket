@@ -230,16 +230,35 @@ n0=$(hk); out=$(cd "$W" && GIT_DIR=/nonexistent GIT_SSH_COMMAND="touch $S/ssh-ra
 [ "$(git --git-dir="$S/mirror.git" rev-parse refs/heads/feat-T1)" = "$(git -C "$W" rev-parse HEAD)" ] && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL the push did not land"; }
 [ "$(hk)" = "$n0" ] && [ ! -e "$S/ssh-ran" ] && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL a repo hook (or GIT_SSH_COMMAND / an include) ran under git-push.sh"; }
 git -C "$W" push -q mirror HEAD:refs/heads/ctl >/dev/null 2>&1; [ "$(hk)" != "$n0" ] && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL control: a plain git push should fire the hook in this fixture"; }
+echo "## C11e3: git-push.sh passes SSH_AUTH_SOCK, LANG, LC_* to git and nothing else from the caller; HOME and PATH are fixed (no real push:"
+echo "##   core.sshCommand from .git/config, a trusted origin, is a fake ssh that records its environment and exits 1)"
+printf '#!/bin/sh\n/usr/bin/env > "%s/ssh-env"\nexit 1\n' "$S" > "$S/fake-ssh"; chmod +x "$S/fake-ssh"
+git -C "$R" config core.sshCommand "$S/fake-ssh"; git -C "$R" config remote.mirror.pushurl "ssh://probe.invalid/m.git"
+out=$(cd "$W" && SSH_AUTH_SOCK="$S/agent.sock" LANG=C.UTF-8 LC_CTYPE=UTF-8 DEVELOPER_DIR="$S/dd" FOO=bar HOME="$S/fakehome" XDG_CONFIG_HOME="$S/xdg" \
+  "$SK/scripts/git-push.sh" mirror feat-T1 2>&1); rc=$?; [ "$rc" != 0 ] && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL the fake ssh should fail the push ($out)"; }
+git -C "$R" config --unset core.sshCommand; git -C "$R" config --unset remote.mirror.pushurl
+pwhome=$(python3 -I -c 'import os, pwd; print(pwd.getpwuid(os.getuid()).pw_dir)')
+fixed=$(python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import fixed_env; print(fixed_env.fixed_path())' "$SK/scripts")
+gitp=$(python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import fixed_env; print(fixed_env.first(fixed_env.GIT_CANDIDATES))' "$SK/scripts")
+for l in "SSH_AUTH_SOCK=$S/agent.sock" "LANG=C.UTF-8" "LC_CTYPE=UTF-8" "HOME=$pwhome" "PATH=$("$gitp" --exec-path):$fixed"; do     # git puts its exec path first
+  grep -qxF "$l" "$S/ssh-env" 2>/dev/null && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL ssh under git-push.sh does not see $l"; }; done
+for v in DEVELOPER_DIR FOO XDG_CONFIG_HOME; do
+  grep -q "^$v=" "$S/ssh-env" 2>/dev/null && { fail=$((fail+1)); echo "FAIL $v reached ssh under git-push.sh"; } || pass=$((pass+1)); done
 echo "## C5b: under HOME only ~/.gitconfig and ~/.config/git/** are trusted origins (the hooks protect those); another file pulled in by an include is refused"
+# C11e3: git-push.sh sets HOME from the password database, so a HOME override no longer reaches it; the trusted-origin logic is tested in-process
+# (git_push.main with HOME set; the wrapper's env is tested above), then once through the wrapper: the fake HOME is not read at all
+gpi() { (cd "$W" && HOME="$S/fakehome" python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import git_push; sys.exit(git_push.main(sys.argv[2:]))' "$SK/scripts" mirror feat-T1) 2>&1; }
 mkdir -p "$S/fakehome/.config/git"
 printf '[core]\n\tsshCommand = ssh -o BatchMode=yes\n' > "$S/fakehome/.gitconfig"
-out=$(cd "$W" && HOME="$S/fakehome" "$SK/scripts/git-push.sh" mirror feat-T1 2>&1); req "$?" 0 "core.sshCommand in \$HOME/.gitconfig is trusted ($out)"
+out=$(gpi); req "$?" 0 "core.sshCommand in \$HOME/.gitconfig is trusted ($out)"
 printf '[core]\n\tsshCommand = ssh -o BatchMode=yes\n[filter "lfs"]\n\tsmudge = git-lfs smudge -- %%f\n\tprocess = git-lfs filter-process\n\trequired = true\n' > "$S/fakehome/.gitconfig"
-out=$(cd "$W" && HOME="$S/fakehome" "$SK/scripts/git-push.sh" mirror feat-T1 2>&1); req "$?" 0 "C11: a filter driver in \$HOME/.gitconfig (git-lfs) is trusted ($out)"
+out=$(gpi); req "$?" 0 "C11: a filter driver in \$HOME/.gitconfig (git-lfs) is trusted ($out)"
 printf '[include]\n\tpath = %s/fakehome/other.cfg\n[core]\n\tsshCommand = ssh -o BatchMode=yes\n' "$S" > "$S/fakehome/.gitconfig"
 printf '[credential]\n\thelper = !touch %s/cred-ran\n' "$S" > "$S/fakehome/other.cfg"
-out=$(cd "$W" && HOME="$S/fakehome" "$SK/scripts/git-push.sh" mirror feat-T1 2>&1); req "$?" 2 "credential.helper from an included \$HOME file the hooks do not protect is refused"
+out=$(gpi); req "$?" 2 "credential.helper from an included \$HOME file the hooks do not protect is refused"
 [ ! -e "$S/cred-ran" ] && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL the credential helper ran"; }
+out=$(cd "$W" && HOME="$S/fakehome" "$SK/scripts/git-push.sh" mirror feat-T1 2>&1); req "$?" 0 "C11e3: through the wrapper the fake HOME is not read ($out)"
+[ ! -e "$S/cred-ran" ] && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL the credential helper ran through the wrapper"; }
 echo "## git-rename.sh"
 gr 2 -f feat-T1 x
 gr 2 feat-T1
@@ -913,6 +932,32 @@ import dtcore, install_hooks as ih
 assert dtcore.GATE_SCRIPTS == set(ih.GATES), (dtcore.GATE_SCRIPTS, ih.GATES)
 assert set(dtcore.GATE_MODULES) == {"guard_apply.py", "ticket_ctl.py", "git_push.py", "approve_plan.py", "git_commit.py"}
 PY
+echo "# C11e3 (F): a bookkeeping script (excluded, allow rule) takes no wrapper, env assignment or nesting either; plain and \`bash <script>\` (sandboxed) pass"
+for c in "env PATH=$S/x:/usr/bin $SKS/session-map.sh show T1 --session s1 --repo $R" "command $SKS/session-map.sh show T1 --session s1 --repo $R" \
+  "PATH=$S/x $SKS/git-rename.sh a b" "FOO=1 $SKS/base-worktree.sh release T1 --repo $R" "nohup $SKS/project-map-stale.sh check p.md --guard g.json" \
+  "bash -c \"$SKS/pending-ticket.sh list --repo $R\"" "echo \$($SKS/session-map.sh show T1 --session s1 --repo $R)" "/usr/bin/env $SKS/git-rename.sh a b"; do gx 2 Bash "$c"; done
+for c in "$SKS/session-map.sh show T1 --session s1 --repo $R" "$SKS/pending-ticket.sh list --repo $R" "bash $SKS/session-map.sh show T1 --session s1 --repo $R" \
+  "export PATH=$S/x:/usr/bin; $SKS/session-map.sh show T1 --session s1 --repo $R"; do gx 0 Bash "$c"; done
+python3 - "$SK/hooks" "$SK/scripts" <<'PY' && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL C11e3 unit: BOOKKEEPING lists, fixed candidates, wrapper first lines"; }
+import os, re, sys
+sys.path.insert(0, sys.argv[1]); sys.path.insert(0, sys.argv[2]); os.environ["DT_SETTINGS"] = "/nonexistent"
+import dtcore, install_hooks as ih, fixed_env
+assert dtcore.BOOKKEEPING_SCRIPTS == set(ih.BOOKKEEPING), (dtcore.BOOKKEEPING_SCRIPTS, ih.BOOKKEEPING)
+sh = open(os.path.join(sys.argv[2], "fixed-env.sh")).read()
+assert tuple(re.search(r"for _p in ([^;]+);", sh).group(1).split()) == fixed_env.PY_CANDIDATES, "fixed-env.sh python3 list != fixed_env.PY_CANDIDATES"
+keep = re.search(r"case \$_v in ([^)]+)\)", sh).group(1).split("|")
+assert set(keep) == set(fixed_env.KEEP) | {"LC_*"}, keep
+for n in ih.GATES + ih.BOOKKEEPING:          # every excluded script: bash -p, the prologue, then only `exec /usr/bin/env -i "${DT_ENV[@]}" ...`
+    lines = [l for l in open(os.path.join(sys.argv[2], n)).read().splitlines() if l and (not l.startswith("#") or l.startswith("#!"))]
+    assert lines[0] == "#!/bin/bash -p", (n, lines[0])
+    assert lines[1].startswith('. "${0%/*}/fixed-env.sh" || exit 2 '), (n, lines[1])       # a failed source must stop, not exec an empty DT_PY
+    assert lines[2].startswith('exec /usr/bin/env -i "${DT_ENV[@]}" ') and len(lines) == 3, (n, lines[2:])
+body = open(os.path.join(sys.argv[2], "pending_ticket_run.sh")).read()
+srcs = re.findall(r'^\s*\. .*$', body, re.M)
+assert srcs and all(l.rstrip().endswith("|| exit 2") for l in srcs), srcs
+PY
+# a wrapper whose fixed-env.sh cannot be sourced exits 2 and runs nothing (a copy alone in the scratch dir; no python3 starts)
+mkdir -p "$S/lone"; cp "$SKS/git-commit.sh" "$S/lone/"; out=$("$S/lone/git-commit.sh" --session s1 -m x 2>&1); req "$?" 2 "C11e3: wrapper without fixed-env.sh exits 2 ($out)"
 echo "# C6 audit: no excluded script (bookkeeping or gate) and no module behind one names approvals/ - only the C7 writer (ticket_ctl.py approve-plan, approve-plan.sh) will"
 python3 - "$SK/scripts" <<'PY' && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL C6 audit: a script names approvals/"; }
 import glob, os, sys

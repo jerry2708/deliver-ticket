@@ -42,6 +42,8 @@ HOOKS = os.path.join(SKILL, "hooks")
 SETTINGS = os.path.realpath(os.environ.get("DT_SETTINGS") or os.path.expanduser("~/.claude/settings.json"))
 sys.path.insert(0, HOOKS)
 import dtcore  # noqa: E402  (constants only at import time; PROTECTED_STATE is the one list of the protected state)
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+import fixed_env  # noqa: E402  (C11e3: status prints the python3 / git the excluded scripts use)
 
 BOOKKEEPING = ["session-map.sh", "pending-ticket.sh", "project-map-stale.sh", "git-rename.sh", "base-worktree.sh"]   # sandbox: excluded + allow rule: no prompt
 SANDBOXED = ["verify-record.sh", "plan-hash.sh", "lock-trace.sh"]                                   # NOT excluded: runs inside the sandbox; allow rule only (no prompt)
@@ -317,6 +319,7 @@ def problems(cur):
 
 
 def cmd_status():
+    print("excluded scripts use: " + fixed_env.describe())
     p = problems(load())
     if not p:
         print("ok: all %d hooks and %d permission rules registered, sandbox.allowUnsandboxedCommands false and %d denyWrite entries, in %s"

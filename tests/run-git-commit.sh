@@ -100,15 +100,39 @@ req "$(gc "$W" --session s1 -m 'refactor: rename a')" 0 "commit with a rename an
 has "$ST/delivery.log" 'files=\["a.txt", "a2.txt", "p\\u007cq.txt"\]$' "rename = delete + add; | as \\u007c"
 req "$(python3 -I -c 'import json, re, sys; l = [x for x in open(sys.argv[1]) if "| commit |" in x][-1]; print(json.loads(re.search(r"files=(\[.*\])$", l).group(1))[2])' "$ST/delivery.log")" "p|q.txt" "the JSON gives the exact name back"
 req "$(tail -1 "$ST/delivery.log" | grep -o 'tree=[0-9a-f]*' | cut -d= -f2)" "$(git -C "$W" rev-parse 'HEAD^{tree}')" "tree = the commit's tree"
-echo "# C11e2: the index changes during the commit (a git wrapper adds a file right before the real commit) -> committed, MISMATCH logged, exit 3"
-RG=$(command -v git); mkdir -p "$S/bin"
-printf '#!/bin/bash\nfor a; do [ "$a" = commit ] && "%s" -C "%s" add extra.txt; done\nexec "%s" "$@"\n' "$RG" "$W" "$RG" > "$S/bin/git"; chmod +x "$S/bin/git"
+echo "# C11e2: the index changes during the commit (git add right before the real commit) -> committed, MISMATCH logged, exit 3"
+# C11e3: the gate's PATH is fixed (scripts/fixed_env.py), so a `git` wrapper on PATH no longer reaches it. git_commit.main runs in-process here, with
+# git_safe.run_git wrapped to stage extra.txt first: this exercises the tree / parent check, not the wrapper (the next block tests the wrapper).
 echo f > "$W/f.txt"; git -C "$W" add f.txt; echo extra > "$W/extra.txt"; staged=$(git -C "$W" write-tree); before=$(head_of feat/t1-thing)
-req "$(cd "$W" && PATH="$S/bin:$PATH" "$GC" --session s1 -m 'feat: f' >"$S/out.txt" 2>&1; echo $?)" 3 "index changed during the commit: exit 3"
+req "$(cd "$W" && python3 -I -c 'import subprocess, sys; sys.path.insert(0, sys.argv[1]); import git_safe, git_commit
+real = git_safe.run_git
+def run_git(wt, *a, **k):
+    if a and a[0] == "commit":
+        subprocess.run(["git", "-C", wt, "add", "extra.txt"], check=True)
+    return real(wt, *a, **k)
+git_safe.run_git = run_git
+sys.exit(git_commit.main(sys.argv[2:]))' "$SK/scripts" --session s1 -m 'feat: f' >"$S/out.txt" 2>&1; echo $?)" 3 "index changed during the commit: exit 3"
 has "$S/out.txt" "is not what was staged" "mismatch message"
 has "$S/out.txt" "STOP: show the user" "mismatch message says stop"
 has "$ST/delivery.log" "MISMATCH staged_tree=$staged head_before=$before files=\\[\"extra.txt\", \"f.txt\"\\]" "MISMATCH line with the commit's files"
 req "$(git -C "$W" log -1 --format=%s)" "feat: f" "the commit exists"
+
+echo "# C11e3: the gate's environment is fixed - BASH_ENV, an exported function, PATH, DEVELOPER_DIR, HOME, XDG_CONFIG_HOME, DYLD_* from the caller reach nothing"
+E=$S/evil; mkdir -p "$E/bin" "$E/dd/usr/bin" "$E/home" "$E/xdg/git"
+for n in python3 git dirname env id xcrun; do printf '#!/bin/sh\ntouch "%s/ran-%s"\nexit 9\n' "$E" "$n" > "$E/bin/$n"; chmod +x "$E/bin/$n"; done
+cp "$E/bin/xcrun" "$E/dd/usr/bin/xcrun"
+printf 'touch "%s/ran-bash_env"\n' "$E" > "$E/e.sh"
+printf '[core]\n\tfsmonitor = touch %s/ran-fsmonitor-home\n' "$E" > "$E/home/.gitconfig"
+printf '[core]\n\tfsmonitor = touch %s/ran-fsmonitor-xdg\n' "$E" > "$E/xdg/git/config"
+echo g > "$W/g.txt"; git -C "$W" add g.txt
+req "$(cd "$W" && env BASH_ENV="$E/e.sh" "BASH_FUNC_exec%%=() { touch $E/ran-func; }" PATH="$E/bin:$PATH" DEVELOPER_DIR="$E/dd" HOME="$E/home" \
+  XDG_CONFIG_HOME="$E/xdg" DYLD_INSERT_LIBRARIES="$E/none.dylib" "$GC" --session s1 -m 'feat: g' >"$S/out.txt" 2>&1; echo $?)" 0 "commit under a hostile environment"
+req "$(git -C "$W" log -1 --format=%s)" "feat: g" "the hostile-environment commit landed"
+req "$(cd "$E" && ls ran-* 2>/dev/null | tr '\n' ' ')" "" "nothing from the caller's environment ran"
+# control: the fake HOME config does run under a plain git commit (so the check above is not empty)
+echo h > "$S/ctl.txt"; git init -q "$S/ctl" && cp "$S/ctl.txt" "$S/ctl/" && git -C "$S/ctl" add ctl.txt
+env -u GIT_CONFIG_GLOBAL HOME="$E/home" git -C "$S/ctl" -c user.email=t@t -c user.name=t commit -q -m ctl >/dev/null 2>&1
+req "$(cd "$E" && ls ran-* 2>/dev/null | tr '\n' ' ')" "ran-fsmonitor-home " "control: core.fsmonitor in \$HOME/.gitconfig runs under plain git"
 
 echo "# --separate-git-dir: the scripts refuse with a clear message"
 SR=$S/seprepo; git init -q -b main --separate-git-dir "$S/sep.git" "$SR" && git -C "$SR" config user.email t@t && git -C "$SR" config user.name t

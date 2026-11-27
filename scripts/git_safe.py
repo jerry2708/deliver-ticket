@@ -112,8 +112,7 @@ def check_config_origins(wt, repo, common):
         die("cannot read git config (%s)" % r.stderr.strip()[:200])
     repo, common = os.path.realpath(repo), os.path.realpath(common)
     home = os.path.realpath(os.path.expanduser("~"))
-    xdg = os.environ.get("XDG_CONFIG_HOME") or os.path.join(home, ".config")      # scrub_env keeps XDG_*
-    trusted = [home + "/.gitconfig", home + "/.config/git", os.path.join(os.path.realpath(xdg), "git")]
+    trusted = [home + "/.gitconfig", home + "/.config/git"]      # C11e3: fixed_env drops XDG_CONFIG_HOME, so git reads ~/.config/git; HOME is the passwd home
     for line in r.stdout.splitlines():
         origin, _, rest = line.partition("\t")
         key = rest.split(" ")[0]

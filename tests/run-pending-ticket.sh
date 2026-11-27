@@ -21,4 +21,14 @@ $P take WL-09 --repo "$R" | grep -q 'AC1: it works' && pass=$((pass+1)) || { fai
 eq "$($P list --repo "$R")" "" "list after take"
 $P take WL-09 --repo "$R" >/dev/null 2>&1; eq "$?" 1 "take twice -> 1"
 printf x | $P save '../x' --repo "$R" >/dev/null 2>&1; eq "$?" 2 "unsafe id refused"
+# C11e3: pending-ticket.sh is excluded from the sandbox; its body runs under `env -i` with PATH fixed and HOME from the password database
+E=$S/evil; mkdir -p "$E/bin" "$E/home"
+for n in basename shasum cut dirname date cat mkdir sed ls env id; do printf '#!/bin/sh\ntouch "%s/ran-%s"\nexit 9\n' "$E" "$n" > "$E/bin/$n"; chmod +x "$E/bin/$n"; done
+printf 'touch "%s/ran-bash_env"\n' "$E" > "$E/e.sh"
+out=$(printf 'WL-10 x\n' | env BASH_ENV="$E/e.sh" "BASH_FUNC_exec%%=() { touch $E/ran-func; }" PATH="$E/bin:$PATH" $P save WL-10 --repo "$R" 2>&1); eq "$?" 0 "save under a hostile environment ($out)"
+eq "$out" "$S/state/$key/pending/WL-10.md" "same path under a hostile environment"
+eq "$(cd "$E" && ls ran-* 2>/dev/null | tr '\n' ' ')" "" "nothing from the caller's environment ran"
+# without DELIVER_TICKET_HOME the default root is under HOME: fixed-env.sh (sourced alone, nothing else runs) passes the passwd home, not $HOME
+pw=$(python3 -I -c 'import os, pwd; print(pwd.getpwuid(os.getuid()).pw_dir)')
+eq "$(env -u DELIVER_TICKET_HOME HOME="$E/home" /bin/bash -p -c '. "$1/fixed-env.sh"; printf "%s\n" "${DT_ENV[@]}"' _ "$SK/scripts" | grep '^HOME=')" "HOME=$pw" "fixed-env.sh: HOME from the password database"
 echo "pass=$pass fail=$fail"; [ $fail = 0 ]

@@ -1273,6 +1273,11 @@ def check_canonical(c):
 # `python3 <script>`, a wrapper, or the backing module (guard_apply.py, ticket_ctl.py ticket-state) would run without that prompt. A gate action is
 # allowed only as `<skill dir>/scripts/<name>.sh ...`: argv[0] literally that absolute path, no interpreter, wrapper, assignment or nesting.
 GATE_SCRIPTS = {"ticket-state.sh", "guard-apply.sh", "git-push.sh", "approve-plan.sh", "git-commit.sh"}
+# C11e3: the bookkeeping scripts (install_hooks.BOOKKEEPING, a unit test keeps the two equal) are excluded from the sandbox too, with an allow rule (no
+# prompt). Claude Code 2.1.325 ran `PATH=x <script>`, `env PATH=x <script>` and compound forms sandboxed (probe path_*), and the wrappers fix their own
+# environment (scripts/fixed_env.py); the hook still refuses a wrapper, an env assignment or nesting on them, as for the gates. `bash <script>` stays
+# allowed: it is not excluded, so it runs sandboxed (probe excluded_script_bash_prefix).
+BOOKKEEPING_SCRIPTS = {"session-map.sh", "pending-ticket.sh", "project-map-stale.sh", "git-rename.sh", "base-worktree.sh"}
 GATE_MODULES = {"guard_apply.py": None, "ticket_ctl.py": "ticket-state", "git_push.py": None, "approve_plan.py": None, "git_commit.py": None}      # module -> the argument that makes it a gate action (None: always)
 
 
@@ -1305,6 +1310,9 @@ def check_gate(c):
         if interp or a[0] != want or c.prefix or c.assigns or c.nested:
             block("%s is a gate action and is spelled so its permission ask rule would not match it (bash / python3 in front, a relative or other "
                   "path, a wrapper, an env assignment, or inside bash -c / eval / $( )): run it exactly as `%s <args>`" % (name, want))
+    elif name in BOOKKEEPING_SCRIPTS and (c.prefix or c.assigns or c.nested):
+        block("%s runs outside the sandbox (bookkeeping): no wrapper (env / command / nohup ...), no env assignment in front and not inside "
+              "bash -c / eval / $( ) - run it as `%s <args>`" % (name, os.path.join(SKILL_SCRIPTS, name)))
 
 
 # The installer writes ~/.claude/settings.json and <repo>/.claude/settings.local.json. is_skill_script exempts it from the hook, so with the sandbox off
