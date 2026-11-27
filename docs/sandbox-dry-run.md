@@ -27,6 +27,17 @@ The live skill checkout is never switched (every session's hooks follow it). Ref
 `source: user_temporary` (C11h, 2026-11-27; the "about 50" in `~/.local/share/deliver-ticket/lessons.md` line 3 was an estimate). By command, 5 of them are gates in
 today's sense (`approve-plan.sh`, `git commit`, `ticket-state.sh`, the project and the global `lessons.md` write) and 69 are not (28 Edit, 16 Read, 7 Write outside the
 working dir; 13 Bash too-complex; others). DRY-02 (2026-11-27, CC 2.1.325, v0.2 at 0397e25, sandbox on): 11 prompts, 3 gates (`~/.cache/dt-probes/c11g-findings.md`).
+DRY-03 (2026-11-27, CC 2.1.325, live skill 44604a8 = C11h, sandbox re-applied, same ticket text): **PASS** - 4 prompts, all gates (`~/.cache/dt-probes/c11g-dry03-result.md`; counts re-checked from the transcripts in C11i, `docs/plan.md` "C11g result"):
+
+| | DRY-01 | DRY-02 | DRY-03 |
+|---|---|---|---|
+| prompts (`user_temporary`) | 74 (69 not gates) | 11 (8 not gates) | **4, all gates** |
+| auto-allowed (`config`) | - | 147 | 147 (139 main + 8 reviewer) |
+| EPERM | several | turbo, `.verify.json.tmp`, `.env`, husky | **only husky** (expected noise) |
+| `verify-record.sh` | - | failed | **lint 0, test 0, `verify.json` recorded** |
+| lock-trace listed | - | 1 | **0** |
+
+DRY-03 follow-ups fixed in C11i: stage 4 now always offers the user-run build (it was skipped), the evidence dir exists from worktree setup, the `_base` env-link message names the sandbox.
 How to count: every transcript line (main session and `subagents/*.jsonl`) whose `permissionDecision.source` is `user_temporary`.
 Evidence: `~/.local/share/deliver-ticket/dryrun-ck-138e3ecd/` (ticket `tickets/DRY-01.md`, `evidence/DRY-01/`), transcript `~/.claude/projects/-Users-huynhminh--cache-dt-probes-dryrun-ck/262071df-0883-41c2-8e75-416c1e9ce440.jsonl`.
 **Pass for this run: prompts == design gates, no EPERM.**
