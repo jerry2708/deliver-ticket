@@ -1,7 +1,6 @@
-# Sandbox dry run: count the prompts that are not gates, v0.1 (`main`) vs v0.2 (sandbox)
+# Sandbox dry run: count the prompts that are not gates
 
-Goal of milestone 1 (permission + stage lock): in default mode the user only answers the design gates. This run measures it: **the same ticket twice**,
-once on `main` (v0.1, no sandbox), once on `v0.2` with the Bash sandbox, same project, same mode, same answers. It runs **interactively** in a Terminal tab
+Goal of milestone 1 (permission + stage lock): in default mode the user only answers the design gates. This run measures it: **one tier-B ticket** on `v0.2` with the Bash sandbox, in a separate project clone, in default mode. It runs **interactively** in a Terminal tab
 (not in the skill-repo session, not `claude -p`: the gates need the user's answers across turns, and the TUI prompts are what is counted).
 
 Fill in before starting:
@@ -23,40 +22,44 @@ Fill in before starting:
    PASS names `raw/<case>-<mode>.json` in the scratch dir: the Bash calls, tool results and Haiku's reply of that run.
 3. Record the result block: version, `summary:` line.
 
-## B. Run 1 - v0.1 on `main`, no sandbox (the baseline)
-1. In every project that has the sandbox on: `<skill dir>/scripts/install-hooks.sh project-sandbox-off --repo <main checkout> --confirmed` (safe switch, `docs/plan.md`).
-2. `git checkout main` in the skill checkout; `<skill dir>/scripts/install-hooks.sh status`; if it differs, read `diff`, then `apply --confirmed` (your yes).
-3. New session in the project clone: `claude` (default mode). Run the ticket: `/deliver-ticket <ID> <text>`; answer every gate as you would; stop point `local`.
-4. Count with the sheet below while it runs. Do not fix or skip a prompt "to move on": answer it, write it down.
+## B. Reference baseline (no run for it)
+The live skill checkout is never switched (every session's hooks follow it). Reference baseline = DRY-01 (2026-11-18, CC 2.1.311, no sandbox): about 50 prompts that were not design gates
+(`~/.local/share/deliver-ticket/lessons.md` line 3: "about 50 non-gate permission prompts in one tier-B ticket"; the exact count is unverified: no counted list was found, `docs/plan.md` has no figure).
+Evidence: `~/.local/share/deliver-ticket/dryrun-ck-138e3ecd/` (ticket `tickets/DRY-01.md`, `evidence/DRY-01/`), transcript `~/.claude/projects/-Users-huynhminh--cache-dt-probes-dryrun-ck/262071df-0883-41c2-8e75-416c1e9ce440.jsonl`.
+**Pass for this run: prompts == design gates, no EPERM.**
+Optional later: a real v0.1 baseline from a separate clone with its own `CLAUDE_CONFIG_DIR` (unverified: may need a fresh login).
 
-## C. Run 2 - v0.2 with the sandbox
-1. `git checkout v0.2`; `<skill dir>/scripts/install-hooks.sh status` (it lists the missing user-level entries: sandbox keys, gate ask rules, gh / glab ask rules);
+## C. The run (v0.2 with the sandbox)
+1. `git -C <skill checkout> branch --show-current` says `v0.2`; the checkout is not switched for this run. `<skill dir>/scripts/install-hooks.sh status` (it lists the missing user-level entries: sandbox keys, gate ask rules, gh / glab ask rules);
    read `diff`, then `apply --confirmed` in your own tab.
 2. In the project clone: `<skill dir>/scripts/install-hooks.sh project-sandbox-diff --repo <main checkout> --domains <hosts> [--local-binding]`; read the whole diff
    (it names the git-ignore line if needed); then `project-sandbox-apply ... --confirmed [--add-exclude]`; `project-sandbox-status` must say `on`.
-3. A **new** session (hooks and sandbox settings are read at start). Run the same ticket with the same answers.
-4. Count with the same sheet.
+3. A **new** session in the project clone (hooks and sandbox settings are read at start): `claude` (default mode). Run the ticket: `/deliver-ticket <ID> <text>`; answer every gate as you would; stop point `local`.
+4. Count with the sheet below while it runs. Do not fix or skip a prompt "to move on": answer it, write it down.
 
-## The counting sheet (one line per prompt that appeared; copy the table for each run)
+## The counting sheet (one line per prompt that appeared)
 
 | # | Stage | Command or tool (as shown in the prompt) | Design gate? | If not a gate: why did it prompt? |
 |---|---|---|---|---|
 | 1 | | | yes / no | not allowlisted / env prefix `FOO=` / `$VAR` or `$?` in the command / `cd x &&` / network host not allowed / excluded script without allow rule / unknown |
 
-**Design gates** (these are the prompts that should remain): the ticket + tier confirmation, the plan, every stage in tier C, the final review, the commit gate,
-a push (stop point permitting), `ticket-state.sh` close (one prompt per ticket), `guard-apply.sh`, `gh` / `glab` writes, a network host you did not allow.
-Everything else is an **extra prompt**. A prompt in v0.1 that has no counterpart in v0.2 (or the reverse) goes in the notes.
+**Design gates** (these are the prompts that should remain): the ticket + tier confirmation, the plan, every stage in tier C, the final review, the commit gate (`git-commit.sh`),
+a push (`git-push.sh`, stop point permitting), the plan approval (`approve-plan.sh`), `ticket-state.sh` close (one prompt per ticket), `guard-apply.sh`, `gh` / `glab` writes, a network host you did not allow.
+Everything else is an **extra prompt**. A prompt that DRY-01 had and this run does not (or the reverse) goes in the notes.
 
-Also write down, per run: stages that failed or needed a retry, anything that said `operation not permitted` / EPERM, `requires approval` that you did not expect,
+Also write down: stages that failed or needed a retry, anything that said `operation not permitted` / EPERM, `requires approval` that you did not expect,
 and the wall time.
 
-## D. Specific checks in run 2 (tick or note)
+## D. Specific checks (tick or note)
 - [ ] Stage 0: `session-map.sh show` and `guard-write.sh verify` ran without a prompt; `verify` exit 3 (v0.1 `guard.json`) is a warning, not a stop.
-- [ ] Stage 1b: `git branch -m <provisional> <final>` worked (a plain call from the worktree directory, no `-C`); the worktree was created; env links and the install ran.
+- [ ] Stage 1b: the worktree was created; env links and the install ran. The rename ran as `<skill dir>/scripts/git-rename.sh <provisional> <final>` from the worktree directory (`stages/1b-workspace.md` 2c; excluded script, no prompt expected; a plain `git branch -m` is blocked by the hook). Exit 3 / 4 (name exists) stops and asks you.
+- [ ] Stage 2: the plan shows one line `plan hash <12 hex>` below it; after your yes, `approve-plan.sh <ID> --sha <that hash> ...` gives exactly one prompt (your approval). Before it, a write under the worktree is blocked ("approve the plan first"); after it, writes work. Edit the plan text afterwards: the next write is blocked again until a new approval.
 - [ ] Stage 3-4: lint / test / build and the saved `evidence/<ID>/...` output ran without a prompt; the base-worktree comparison (`base-worktree.sh`) worked.
+- [ ] Stage 4: the check commands run through the sandbox and, for `guard.json verify.on_push`, `verify-record.sh <ID>` ran as its own plain call (no prompt expected: sandboxed) and wrote `evidence/<ID>/verify.json`. A failing build that shows the next/font trustd signature is reported as "known sandbox limit" with the base comparison, never "build ok" (`stages/4-verify.md`); the user-run build needs your diff review first.
 - [ ] If verify has a dev server: a sandboxed **client** (browser test, `curl`) reached a server started in a separate call (`--local-binding`); if not, note which tool and the exact message.
 - [ ] The package install used only the allowed registry host; a host you did not allow gave one prompt or a `403`, not a silent success.
-- [ ] Stage 7: exactly one prompt for the commit gate; a push attempt (if you try one at the end, to a scratch remote) gives exactly one prompt and the hook shows nothing odd.
+- [ ] Stage 7: each commit shows `git diff --cached --stat=10000 --no-renames` in chat as its own call, then exactly one prompt for `git-commit.sh` (your yes). A plain `git commit` is blocked. Exit 3 (`MISMATCH`) stops and shows `git show --stat --no-renames <sha>`. A push attempt (if you try one at the end, to a scratch remote) goes through `git-push.sh <remote> <branch>`, gives exactly one prompt, and the hook shows nothing odd.
+- [ ] Stage 8: `lock-trace.sh <ID> ...` ran and its output was shown unchanged; note every listed line (exit 1) and every info line, with the call it names. Expected for a clean ticket: `lock trace: nothing listed`, or only lines you can explain. No prompt expected (read-only, sandboxed; not yet measured in a TUI run).
 - [ ] Stage 8: the `ticket-state.sh done` prompt appeared once; `session-map.sh pause` did not prompt.
 - [ ] `cat` of a `.env*` file and an upper-case variant stayed blocked (the hooks), also with the sandbox on.
 - [ ] `/deliver-ticket` in a second project while this ticket is open: the context line "still bound to ticket ..." appeared and nothing was bound.
@@ -65,11 +68,10 @@ and the wall time.
 ```
 claude --version:
 mode:
-run 1 (v0.1, no sandbox):  gates N, extra prompts M, EPERM/failures K, minutes T
-run 2 (v0.2, sandbox):     gates N, extra prompts M, EPERM/failures K, minutes T
-extra prompts in run 2 (stage | command | why):
+run (v0.2, sandbox):       gates N, extra prompts M, EPERM/failures K, minutes T
+extra prompts (stage | command | why):
 probe-sandbox summary line:
 section D: ticked / notes:
 ```
-**Success:** run 2 has only design gates (extra prompts 0, or each one explained and on a list to fix), no stage fails with EPERM, and no gate that exists in
-run 1 is missing in run 2. Anything else becomes a finding with the exact prompt text, and the fix goes into the plan before the next real ticket.
+**Success:** the run has only design gates (extra prompts 0, or each one explained and on a list to fix), no stage fails with EPERM, and no design gate is missing.
+Anything else becomes a finding with the exact prompt text, and the fix goes into the plan before the next real ticket.
