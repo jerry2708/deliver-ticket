@@ -340,8 +340,9 @@ assert sb["filesystem"]["denyWrite"] == [repo + "/.claude/settings.json", repo +
                                          common + "/refs/**", common + "/packed-refs", common + "/logs/refs/**",
                                          common + "/config", common + "/config.worktree", common + "/worktrees/*/config.worktree", common + "/info/attributes"], sb["filesystem"]
 assert not any(p.startswith((common + "/info/exclude", common + "/info/**", common + "/hooks", common + "/objects")) for p in sb["filesystem"]["denyWrite"])   # setup-exclude.sh, git add need them
+assert sb["filesystem"]["denyRead"] == [repo + "/.env*", repo + "/**/.env*"], sb["filesystem"]      # C11h: no sandboxed read of any .env* in the repo
 ex = sb["excludedCommands"]
-for n in ("session-map.sh", "pending-ticket.sh", "project-map-stale.sh", "git-rename.sh", "base-worktree.sh", "ticket-state.sh", "guard-apply.sh", "git-push.sh", "approve-plan.sh", "git-commit.sh"):
+for n in ("session-map.sh", "pending-ticket.sh", "project-map-stale.sh", "git-rename.sh", "base-worktree.sh", "env-keys.sh", "ticket-state.sh", "guard-apply.sh", "git-push.sh", "approve-plan.sh", "git-commit.sh"):
     assert "%s/scripts/%s *" % (sk, n) in ex, n
 assert "Bash(%s/scripts/git-commit.sh *)" % sk in pm["ask"] and "Bash(%s/scripts/git-commit.sh *)" % sk not in pm["allow"]      # C11: the commit gate asks
 # C5: plain git push / git branch -m are NOT excluded (their hooks would run worktree code unsandboxed); only the scripts are

@@ -105,6 +105,10 @@ echo "# C11h (e): reviewer tool rules (one plain command per call, no cd &&, no 
 has stages/5-review.md 'never .cd <dir> && \.\.\..'
 has stages/5-review.md 'no inline code (.node -e.'
 has templates/reviewer-verify.md 'no inline code (.node -e., .python3 -c.)'
+echo "# C11h (f): env files - repo-wide sandbox read deny, env-keys.sh bookkeeping"
+has README.md 'adds .sandbox.filesystem.denyRead. for .<repo>/.env\*. and .<repo>/\*\*/.env\*.'
+has stages/1b-workspace.md '<skill dir>/scripts/env-keys.sh <worktree>/<env file>'
+hasnt stages/1b-workspace.md 'env links exist (.ls -l.'
 echo "# C11h: the push record - turbo cache dir set by verify-record.sh, no Edit deny rule on verify.json (hooks instead)"
 has stages/4-verify.md 'TURBO_CACHE_DIR=<worktree>/.turbo/cache'
 has README.md 'there is no .Edit. deny on the push record'

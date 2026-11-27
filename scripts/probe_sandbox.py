@@ -450,6 +450,11 @@ def m_ask_commit(c, d):
     d["permissions"]["ask"].append("Bash(git commit:*)")
 
 
+def m_no_denyread(c, d):
+    """C11h control: the project sandbox without its .env* denyRead (as before C11h)."""
+    d["sandbox"]["filesystem"].pop("denyRead", None)
+
+
 def m_deny_rm(c, d):
     d["permissions"].setdefault("deny", []).append("Bash(rm -rf:*)")
 
@@ -582,6 +587,16 @@ CASES = [
     dict(id="hook_mode_auto_bound", cmd="git status", cwd="{WT}/T5", setup=make_c11b, sources=NOUSER, hooks=True, dt_home=True, modes=["auto"], expect="hook",
          contains="permission mode 'auto' is not supported"),
     dict(id="hook_mode_default_bound_ok", cmd="git status", cwd="{WT}/T5", setup=make_c11b, sources=NOUSER, hooks=True, dt_home=True, expect="ok"),
+    # C11h (f): no sandboxed read of a .env* file anywhere in the repo. Session cwd = a ticket worktree (T5); the user-level Read(**/.env*) deny is in the fixture and
+    # anchors at that cwd, so without the project denyRead the main checkout's env file was readable (control, info: c11h-probe-1 R2; DRY-02's _base build).
+    dict(id="env_read_repo_denyread", cmd="bash {S}/envread.sh", cwd="{WT}/T5", setup=make_c11b, sources=NOUSER, rules=dict(deny=["Read(**/.env*)"]), expect="eperm",
+         seed=[("{PROJ}/apps/.env.probe", "PROBE_KEY=probe-value\n"), ("{S}/envread.sh", 'cat "$(dirname "$0")/proj/apps/.env.probe" > /dev/null && echo read-ok\n')]),
+    dict(id="env_read_repo_no_denyread_control", cmd="bash {S}/envread.sh", cwd="{WT}/T5", setup=make_c11b, sources=NOUSER, rules=dict(deny=["Read(**/.env*)"]),
+         mutate=m_no_denyread, expect="ok", contains="read-ok", info=True,
+         seed=[("{PROJ}/apps/.env.probe", "PROBE_KEY=probe-value\n"), ("{S}/envread.sh", 'cat "$(dirname "$0")/proj/apps/.env.probe" > /dev/null && echo read-ok\n')]),
+    # env-keys.sh is bookkeeping now (excluded, allow rule): it reads the key names of the ticket worktree's env link (into the main checkout) with no prompt.
+    dict(id="env_keys_bookkeeping", cmd="{SK}/scripts/env-keys.sh {WT}/T5/.env.local", cwd="{WT}/T5", setup=make_c11b, sources=NOUSER, hooks=True, dt_home=True,
+         rules=dict(deny=["Read(**/.env*)"]), expect="ok", contains="PROBE_ENV_KEY", seed=[("{WT}/T5/.env.local", "PROBE_ENV_KEY=probe-value-77\n")]),
     # C11h (c): the command shapes the stage texts now prescribe run with no prompt (sandbox auto-allow) and pass the hooks, in a bound ticket session (cwd T5).
     # DRY-02 prompted on `p=$(...)` (too complex), `{ ...; } > file` (brace group) and `sed -i` (sed-dangerous); 2.1.325 also on `echo "exit=$?" >> <file>` (scratch
     # probe 2026-11-27; `echo exit=$? >> <file>` unquoted did not: the rule is unknown), so the exit code goes to stdout.

@@ -45,7 +45,7 @@ import dtcore  # noqa: E402  (constants only at import time; PROTECTED_STATE is 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import fixed_env  # noqa: E402  (C11e3: status prints the python3 / git the excluded scripts use)
 
-BOOKKEEPING = ["session-map.sh", "pending-ticket.sh", "project-map-stale.sh", "git-rename.sh", "base-worktree.sh"]   # sandbox: excluded + allow rule: no prompt
+BOOKKEEPING = ["session-map.sh", "pending-ticket.sh", "project-map-stale.sh", "git-rename.sh", "base-worktree.sh", "env-keys.sh"]   # sandbox: excluded + allow rule: no prompt
 SANDBOXED = ["verify-record.sh", "plan-hash.sh", "lock-trace.sh", "secret-scan.sh"]                                   # NOT excluded: runs inside the sandbox; allow rule only (no prompt)
 GATES = ["ticket-state.sh", "guard-apply.sh", "git-push.sh", "approve-plan.sh", "git-commit.sh"]                                     # excluded + ask rule on the full path: the prompt is the user's yes
 # The gate scripts' ask rules are USER level too: with the sandbox off (or in a project that never enabled it) nothing else would ask, and auto mode
@@ -714,6 +714,10 @@ def sandbox_plan(repo, state, domains, local_binding, common=None):
             (("sandbox", "filesystem", "denyWrite"), [os.path.join(repo, ".claude", "settings.json"), os.path.join(repo, ".claude", "settings.local.json"),
                                                      os.path.join(repo, ".claude", "worktrees", "*", ".claude", "settings*.json")] +
                                                     ([os.path.join(common, x) for x in REF_STORE + GIT_READ] if common else [])),
+            # C11h: no sandboxed command reads a .env* file anywhere in the repo (main checkout, every ticket worktree, _base). The user-level Read(**/.env*) deny
+            # is also a sandbox deny, but anchored at the session's cwd (probe R2, c11h-probe-1): from a ticket worktree the main checkout's and _base's env files were
+            # readable (DRY-02: the _base build loaded .env.local, the ticket build could not). Globs work for denyRead on macOS (probe R4). Key names: env-keys.sh.
+            (("sandbox", "filesystem", "denyRead"), [os.path.join(repo, ".env*"), os.path.join(repo, "**", ".env*")]),
             (("sandbox", "network", "allowedDomains"), list(domains)),
             (("permissions", "allow"), ["Bash(%s *)" % p for p in book + boxed] + ["Bash(%s)" % c for c in CLI_ALLOW]),
             (("permissions", "ask"), ["Bash(%s *)" % p for p in gate] + ["Bash(%s)" % c for c in CLI_ASK])]

@@ -1310,7 +1310,7 @@ GATE_SCRIPTS = {"ticket-state.sh", "guard-apply.sh", "git-push.sh", "approve-pla
 # prompt). Claude Code 2.1.325 ran `PATH=x <script>`, `env PATH=x <script>` and compound forms sandboxed (probe path_*), and the wrappers fix their own
 # environment (scripts/fixed_env.py); the hook still refuses a wrapper, an env assignment or nesting on them, as for the gates. `bash <script>` stays
 # allowed: it is not excluded, so it runs sandboxed (probe excluded_script_bash_prefix).
-BOOKKEEPING_SCRIPTS = {"session-map.sh", "pending-ticket.sh", "project-map-stale.sh", "git-rename.sh", "base-worktree.sh"}
+BOOKKEEPING_SCRIPTS = {"session-map.sh", "pending-ticket.sh", "project-map-stale.sh", "git-rename.sh", "base-worktree.sh", "env-keys.sh"}
 GATE_MODULES = {"guard_apply.py": None, "ticket_ctl.py": "ticket-state", "git_push.py": None, "approve_plan.py": None, "git_commit.py": None}      # module -> the argument that makes it a gate action (None: always)
 
 

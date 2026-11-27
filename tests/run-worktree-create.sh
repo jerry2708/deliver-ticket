@@ -93,8 +93,9 @@ mkproj $S/rp4 '{type}/{ticket}-{slug}'
 hook $S/rp4 RETRO-7 2>$S/err4 >/dev/null; rc=$?; [ $rc != 0 ] && grep -q 'placeholder the hook cannot fill' $S/err4; ok $? "unknown placeholder {ticket}: refused with a clear message (rc $rc)"
 [ ! -e $S/rp4/.claude/worktrees/RETRO-7 ]; ok $? "unknown placeholder: no worktree left behind"
 echo "# env-keys.sh: names only"
-printf 'A=secretvalue1\nexport B = "two words"\n# C=commented\n  D_1=x\nbad line\nE=\n' > $S/.env.test
-out=$("$SK/scripts/env-keys.sh" $S/.env.test | tr '\n' ' '); [ "$out" = "A B D_1 E " ]; ok $? "env-keys: names [$out]"
-"$SK/scripts/env-keys.sh" $S/.env.test | grep -q -e secretvalue -e 'two words'; [ $? != 0 ]; ok $? "env-keys: no values in output"
-"$SK/scripts/env-keys.sh" $S/proj/apps 2>/dev/null; [ $? != 0 ]; ok $? "env-keys: refuses non-.env name"
+# C11h: the file must lie in the main checkout of the current directory's repo (strict cases: tests/run-env-keys.sh)
+printf 'A=secretvalue1\nexport B = "two words"\n# C=commented\n  D_1=x\nbad line\nE=\n' > $R/.env.test
+out=$(cd $R && "$SK/scripts/env-keys.sh" $R/.env.test | tr '\n' ' '); [ "$out" = "A B D_1 E " ]; ok $? "env-keys: names [$out]"
+(cd $R && "$SK/scripts/env-keys.sh" $R/.env.test) | grep -q -e secretvalue -e 'two words'; [ $? != 0 ]; ok $? "env-keys: no values in output"
+(cd $R && "$SK/scripts/env-keys.sh" $R/apps 2>/dev/null); [ $? != 0 ]; ok $? "env-keys: refuses non-.env name"
 echo "pass=$pass fail=$fail"; [ $fail = 0 ]
