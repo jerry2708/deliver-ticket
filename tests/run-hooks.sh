@@ -839,6 +839,10 @@ gx() { local exp=$1 tool=$2 arg=$3 kf=file_path cwd
   fi; NSSID=nsu; }
 echo "## edit tools onto guard.json (also another project's, and upper / mixed case where the filesystem folds it)"
 for tool in Write Edit NotebookEdit MultiEdit; do gx 2 $tool "$G"; gx 2 $tool "$GO"; gx $SCI $tool "$GU"; gx $SCI $tool "$GM"; done
+echo "## C11h (c): the stage-text command shapes pass the hooks in every context (project key, evidence redirect, base run by --dir)"
+for c in 'echo "${DELIVER_TICKET_HOME:-$HOME/.local/share/deliver-ticket}"' "git rev-parse --path-format=absolute --git-common-dir" "printf '%s' '$R' | shasum -a 1" \
+  "pnpm --filter agent test > $DT/$key/evidence/T1/stage3-test.txt 2>&1; echo \"exit \$?\"" \
+  "pnpm --dir $R/.claude/worktrees/_base build --cache-dir=$R/.claude/worktrees/_base/.turbo/cache > $DT/$key/evidence/T1/base-build.txt 2>&1; echo \"exit \$?\""; do gx 0 Bash "$c"; done
 echo "## C11h: the push record evidence/<ID>/verify.json and its temp file - file tools blocked in every context (no Edit deny rule any more: it became a sandbox denyWrite)"
 VJ=$DT/$key/evidence/T1/verify.json; VT=$DT/$key/evidence/T1/.verify.json.tmp
 for tool in Write Edit NotebookEdit MultiEdit; do gx 2 $tool "$VJ"; gx 2 $tool "$VT"; gx 2 $tool "$DT/other-12345678/evidence/X9/verify.json"; gx $SCI $tool "$DT/$key/evidence/T1/VERIFY.JSON"; done

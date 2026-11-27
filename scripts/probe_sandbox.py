@@ -578,6 +578,17 @@ CASES = [
     dict(id="hook_mode_auto_bound", cmd="git status", cwd="{WT}/T5", setup=make_c11b, sources=NOUSER, hooks=True, dt_home=True, modes=["auto"], expect="hook",
          contains="permission mode 'auto' is not supported"),
     dict(id="hook_mode_default_bound_ok", cmd="git status", cwd="{WT}/T5", setup=make_c11b, sources=NOUSER, hooks=True, dt_home=True, expect="ok"),
+    # C11h (c): the command shapes the stage texts now prescribe run with no prompt (sandbox auto-allow) and pass the hooks, in a bound ticket session (cwd T5).
+    # DRY-02 prompted on `p=$(...)` (too complex), `{ ...; } > file` (brace group) and `sed -i` (sed-dangerous); 2.1.325 also on `echo "exit=$?" >> <file>` (scratch
+    # probe 2026-11-27; `echo exit=$? >> <file>` unquoted did not: the rule is unknown), so the exit code goes to stdout.
+    dict(id="stage_key_state_root", cmd='echo "${{DELIVER_TICKET_HOME:-$HOME/.local/share/deliver-ticket}}"', cwd="{WT}/T5", setup=make_c11b, sources=NOUSER, hooks=True,
+         dt_home=True, expect="ok"),
+    dict(id="stage_key_common_dir", cmd="git rev-parse --path-format=absolute --git-common-dir", cwd="{WT}/T5", setup=make_c11b, sources=NOUSER, hooks=True, dt_home=True,
+         expect="ok", contains="/.git"),
+    dict(id="stage_key_sha", cmd="printf '%s' '{PROJ}' | shasum -a 1", cwd="{WT}/T5", setup=make_c11b, sources=NOUSER, hooks=True, dt_home=True, expect="ok",
+         contains="  -"),
+    dict(id="stage_evidence_redirect", cmd='echo probe-output > {KD}/evidence/P3/stage3-x.txt 2>&1; echo "exit $?"', cwd="{WT}/T5", contains="exit 0",
+         setup=make_c11b, seed=[("{KD}/evidence/P3/.keep", "")], sources=NOUSER, hooks=True, dt_home=True, expect="ok", disk=[("exists", "{KD}/evidence/P3/stage3-x.txt")]),
 ] + [dict(k, modes=["default"], sources=NOUSER) for k in [
     # C11a: file-tool permission rules on the state root (Read / Write / Edit tool calls, not Bash; `cmd` is the file path). Questions: does the ~/ and the // spelling
     # match; does an Edit allow cover a Write of a new file; does an Edit deny stop a Write; is Write(...) a rule of its own. No hooks: the verdict is the rules.

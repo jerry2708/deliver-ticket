@@ -85,6 +85,17 @@ has stages/0-environment.md 'Permission mode.* (no command: a skill cannot read 
 has SKILL.md 'Default mode only:.* in auto, acceptEdits, plan, dontAsk or bypassPermissions mode'
 has README.md 'every other mode is blocked'
 has docs/plan.md 'Eval runner in auto mode (open, C11h'
+echo "# C11h (c): plain calls for the project key, evidence by one redirect call, base runs by directory option (no cd), state files by the Read tool"
+hasnt SKILL.md 'printf .%s. "\$p"'
+has SKILL.md "(3) .printf '%s' '<the path from (2) without /.git, written out>' | shasum -a 1."
+has stages/3-build.md '<command> > <state>/evidence/<ID>/stage3-<check>.txt 2>&1; echo "exit \$?"'
+hasnt "stages" '; echo "exit=\$?" >>'
+hasnt stages/3-build.md 'exit code on the first line'
+has stages/4-verify.md 'pnpm --dir <repo_root>/.claude/worktrees/_base <script> --cache-dir=<repo_root>/.claude/worktrees/_base/.turbo/cache'
+hasnt stages/4-verify.md 'cd. into it in its own call'
+has SKILL.md 'Claude Code resets a .cd. out of it'
+has SKILL.md 'Read state files (.guard.json., ticket files'
+has stages/1b-workspace.md 'with the Read tool (not .python3 -c.'
 echo "# C11h: the push record - turbo cache dir set by verify-record.sh, no Edit deny rule on verify.json (hooks instead)"
 has stages/4-verify.md 'TURBO_CACHE_DIR=<worktree>/.turbo/cache'
 has README.md 'there is no .Edit. deny on the push record'
