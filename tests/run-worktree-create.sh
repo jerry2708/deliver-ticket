@@ -53,6 +53,11 @@ grep -q 'env file missing/.env not visible - not linked (inside the sandbox: hid
 git -C $R worktree add -q --detach $R/.claude/worktrees/_base main 2>/dev/null
 "$SK/scripts/setup-worktree.sh" $R $R/.claude/worktrees/_base _base >/dev/null 2>$S/errb; rc=$?
 [ $rc = 0 ] && [ ! -e $DELIVER_TICKET_HOME/$key/evidence/_base ] && [ ! -e $DELIVER_TICKET_HOME/$key/ports/_base ]; ok $? "_base setup: rc 0 ($rc), no evidence/_base, no port block"
+# C11i: an unsafe id (stage 1b 2b calls the script directly) is refused before anything is written: nothing outside evidence/ and ports/, nothing at all
+before=$(cd $DELIVER_TICKET_HOME && find . | sort)
+"$SK/scripts/setup-worktree.sh" $R $wt ../x >/dev/null 2>$S/errx; rc=$?
+[ $rc = 1 ] && grep -q "unsafe or empty ticket id '../x'" $S/errx && [ ! -e $DELIVER_TICKET_HOME/$key/x ] && [ "$(cd $DELIVER_TICKET_HOME && find . | sort)" = "$before" ]; ok $? "unsafe id ../x: exit 1 ($rc), nothing created in the state root"
+for bad in '' '.x' 'a/b'; do "$SK/scripts/setup-worktree.sh" $R $wt "$bad" >/dev/null 2>&1; [ $? = 1 ]; ok $? "unsafe id '$bad': exit 1"; done
 # failure => undo only what this run created
 sed -i.bak 's#echo INSTALL-RAN > installed.txt#exit 7#' $DELIVER_TICKET_HOME/$key/guard.json
 hook $R WL-03 >/dev/null 2>$S/err3; [ $? != 0 ]; ok $? "fail: install error => rc != 0 ($(head -c 120 $S/err3 | tr '\n' ' '))"

@@ -4,6 +4,8 @@
 # Prints the port block (VAR=port lines) on stdout and records it in <state>/ports/<ID>. Creates <state>/evidence/<ID>/ (not for _base).
 set -eu
 root=$1; wt=$2; id=$3
+# same check as hooks/worktree-create.sh: the id becomes a path segment ($state/evidence/$id, $state/ports/$id); `_base` passes (`_` is allowed)
+case "$id" in ""|*[!A-Za-z0-9._-]*|.*) echo "setup-worktree: unsafe or empty ticket id '$id'" >&2; exit 1;; esac
 here=$(cd "$(dirname "$0")" && pwd)
 DT_HOME=${DELIVER_TICKET_HOME:-$HOME/.local/share/deliver-ticket}
 p=$(git -C "$root" rev-parse --path-format=absolute --git-common-dir); p=${p%/.git}
