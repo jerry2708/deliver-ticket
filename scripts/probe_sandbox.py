@@ -568,6 +568,11 @@ CASES = [
     # dangerouslyDisableSandbox: a write outside allowWrite (the outside dir); the marker exists only if the call ran unsandboxed past the hook
     dict(id="bash_disable_sandbox_param", cmd="echo x > {OUT}/dds-marker", params={"dangerouslyDisableSandbox": True}, modes=BOTH, sources=NOUSER, dt_home=True, hooks=True,
          expect="hook", contains="no per-call sandbox escape", disk=[("absent", "{OUT}/dds-marker")]),
+    # C11h: a session bound to a ticket (here by its cwd in T5, a registered ticket with an approved plan) runs only in default mode: hooks/mode-guard.sh
+    # (PreToolUse "*", this checkout's hooks via hooks=True) blocks auto mode; the default-mode run of the same call is the control.
+    dict(id="hook_mode_auto_bound", cmd="git status", cwd="{WT}/T5", setup=make_c11b, sources=NOUSER, hooks=True, dt_home=True, modes=["auto"], expect="hook",
+         contains="permission mode 'auto' is not supported"),
+    dict(id="hook_mode_default_bound_ok", cmd="git status", cwd="{WT}/T5", setup=make_c11b, sources=NOUSER, hooks=True, dt_home=True, expect="ok"),
 ] + [dict(k, modes=["default"], sources=NOUSER) for k in [
     # C11a: file-tool permission rules on the state root (Read / Write / Edit tool calls, not Bash; `cmd` is the file path). Questions: does the ~/ and the // spelling
     # match; does an Edit allow cover a Write of a new file; does an Edit deny stop a Write; is Write(...) a rule of its own. No hooks: the verdict is the rules.

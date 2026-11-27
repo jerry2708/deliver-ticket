@@ -3,7 +3,8 @@
 only when the repo has delivery state (guard.json exists). Payload JSON on stdin.
 
 Modes: guard (PreToolUse Bash), verify (PreToolUse Bash, git push), wguard (PreToolUse
-Edit/Write/NotebookEdit + PostToolUse EnterWorktree), session (SessionStart compact).
+Edit/Write/NotebookEdit + PostToolUse EnterWorktree), pmode (PreToolUse every tool: permission
+mode of a bound session), session (SessionStart compact), bind (UserPromptSubmit).
 Exit 0 = allow, 2 = block (message on stderr). Fail-closed: anything it cannot parse blocks.
 Standard library only. Known limit: it reads the shell command text; code run by an
 interpreter (python script.py, make, npm run) can do anything and is not analysed.
@@ -38,6 +39,25 @@ def block(msg):
 CODE_MODE_VAR = "CLAUDE_CODE_EXPERIMENTAL_CODE_MODE"
 CODE_MODE_MSG = ("Code Mode (experimental) is not supported by deliver-ticket - quit, unset %s (shell and the env block of ~/.claude/settings.json) "
                  "or set it to 0, then start a new session" % CODE_MODE_VAR)
+
+
+# C11h: deliver-ticket runs in default mode only. Probe 2026-11-27 (Claude Code 2.1.325, `claude -p`, ~/.cache/dt-probes/c11h-probe-1): PreToolUse and UserPromptSubmit
+# payloads carry `permission_mode` ("default" / "auto" / "acceptEdits"; the hooks docs also list "plan", "dontAsk", "bypassPermissions"), SessionStart does not; a
+# subagent's tool calls carry the parent session's mode and session_id. hooks/mode-guard.sh (PreToolUse, every tool) blocks a bound session in any other mode,
+# and mode_guard / mode_nostate block the skill's scripts in any session. A missing field blocks too (fail-closed): the hook input may have changed.
+PERMISSION_MODE_OK = "default"
+
+
+def permission_mode_reason(payload):
+    m = payload.get("permission_mode")
+    if m == PERMISSION_MODE_OK:
+        return None
+    if m is None:
+        return ("the hook payload has no permission_mode field - blocked (fail-closed): this Claude Code version may have changed the hook input; "
+                "re-run the sandbox probes (scripts/probe-sandbox.sh, docs/plan.md upgrade re-check) before using deliver-ticket with it")
+    return ("permission mode %r is not supported by deliver-ticket (default mode only: auto, acceptEdits, plan, dontAsk and bypassPermissions approve or refuse "
+            "calls that the skill expects you to be asked about) - switch back to default mode (Shift+Tab until no mode is shown, or restart with plain "
+            "`claude`), then repeat the call" % (m,))
 
 
 def code_mode_on():
@@ -1881,6 +1901,10 @@ def mode_guard(payload, g):
         block("cannot parse the command (%s) - blocked, rewrite it more simply" % e)
     if code_mode_on() and any(is_skill_script(c) for c in cmds if c.argv):
         block(CODE_MODE_MSG)
+    if any(is_skill_script(c) for c in cmds if c.argv):
+        why = permission_mode_reason(payload)
+        if why:
+            block(why)
     if g is None:
         # guard.json exists but is unusable: only the skill's own scripts may run
         if all(is_skill_script(c) for c in cmds if c.argv):
@@ -1994,6 +2018,22 @@ def verify_record_problem(g, run_cwd, keys, rest=()):
     return None
 
 
+def mode_pmode(payload, g):
+    """hooks/mode-guard.sh, PreToolUse matcher "*" (every tool): a session bound to an open ticket runs only in default mode (C11h). A session with no open
+    ticket is left alone here (its skill-script calls are checked in mode_guard)."""
+    if payload.get("hook_event_name", "PreToolUse") != "PreToolUse":
+        return
+    why = permission_mode_reason(payload)
+    if not why:
+        return
+    if g is None:
+        block("%s (guard.json is unreadable, so whether this session is bound to a ticket cannot be checked)" % why)
+    cwd = payload.get("cwd") if isinstance(payload.get("cwd"), str) else None
+    b = session_bound(payload, g, cwd)
+    if b:
+        block("this session is bound to ticket %s: %s" % (b[0], why))
+
+
 def mode_wguard(payload, g):
     event = payload.get("hook_event_name")
     tool = payload.get("tool_name")
@@ -2071,6 +2111,10 @@ def mode_nostate(payload):
             block("cannot parse the command (%s) and it names the state root - blocked, rewrite it more simply" % e)
         if code_mode_on() and any(is_skill_script(c) for c in cmds if c.argv):
             block(CODE_MODE_MSG)
+        if any(is_skill_script(c) for c in cmds if c.argv):
+            why = permission_mode_reason(payload)
+            if why:
+                block(why)
         for c in cmds:
             a = c.argv
             prog = pname(a[0]) if a else ""
@@ -2277,6 +2321,12 @@ def mode_bind(payload, g):
         m = re.search(r"<command-args>\s*(\S+)", prompt)      # a slash command that reaches the hook already expanded
     if not m:
         return
+    pm = payload.get("permission_mode")
+    if isinstance(pm, str) and pm != PERMISSION_MODE_OK:
+        # C11h: plain stdout of a UserPromptSubmit hook reaches Claude's context; stage 0 check 1c stops on this line. The bind below still happens, so
+        # hooks/mode-guard.sh blocks every tool call of the bound session until the mode is default again.
+        print("deliver-ticket: permission mode %r is not supported (default mode only) - stage 0 check 1c fails; every tool call of a session bound to a "
+              "ticket is blocked until you switch back to default mode (Shift+Tab)." % pm)
     tok = m.group(1).strip("\"'")
     if tok == "init":
         return
@@ -2319,7 +2369,7 @@ def main():
         if mode == "codemode":          # hooks/code-mode.sh, PreToolUse matcher REPL: always denied
             block(CODE_MODE_MSG)
         g = load_guard()
-        {"guard": mode_guard, "verify": mode_verify, "wguard": mode_wguard,
+        {"guard": mode_guard, "verify": mode_verify, "wguard": mode_wguard, "pmode": mode_pmode,
          "session": mode_session, "bind": mode_bind}[mode](payload, g)
     except Block as e:
         print("deliver-ticket: %s" % e, file=sys.stderr)

@@ -22,7 +22,7 @@ pass=0; fail=0
 eq() { [ "$1" = "$2" ] && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL $3: got [$1] want [$2]"; }; }
 rc() { "$@" >/dev/null 2>&1; echo $?; }
 bind() { jq -nc --arg cwd "$R" --arg sid "$1" --arg p "$2" '{session_id:$sid,cwd:$cwd,hook_event_name:"UserPromptSubmit",prompt:$p}' | "$SK/hooks/bind-session.sh"; }
-write_ok() { jq -nc --arg cwd "$R" --arg f "$R/x.txt" --arg sid "$1" '{session_id:$sid,cwd:$cwd,hook_event_name:"PreToolUse",tool_name:"Write",tool_input:{file_path:$f}}' | "$SK/hooks/worktree-guard.sh" >/dev/null 2>&1; echo $?; }
+write_ok() { jq -nc --arg cwd "$R" --arg f "$R/x.txt" --arg sid "$1" '{session_id:$sid,cwd:$cwd,hook_event_name:"PreToolUse",permission_mode:"default",tool_name:"Write",tool_input:{file_path:$f}}' | "$SK/hooks/worktree-guard.sh" >/dev/null 2>&1; echo $?; }
 tf() { printf 'stage: %s\nnext: x\nstate: active   <!-- active | waiting | done -->\nworktree: none\n' "$2" > "$ST/tickets/$1.md"; }
 
 echo "# pause at an intake stop (DoR): allowed while no worktree is recorded, logged, re-bound by the next prompt"
@@ -102,7 +102,7 @@ tf O1 3; printf 'project=%s\nticket=O1\n' "$key" > $MAP/x1; before=$(cat $MAP/x1
 out=$($SM bind T9 --reason probe --session x1 --repo $R2 2>&1); eq "$?" 1 "bind to project B refused while O1 in project A is open"
 echo "$out" | grep -q "O1" && echo "$out" | grep -q "$key" && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL refusal names the old ticket and project: $out"; }
 eq "$(cat $MAP/x1)" "$before" "refused bind leaves the map unchanged"
-eq "$(jq -nc --arg cwd "$R" --arg f "$R/x.txt" '{session_id:"x1",cwd:$cwd,hook_event_name:"PreToolUse",tool_name:"Write",tool_input:{file_path:$f}}' | "$SK/hooks/worktree-guard.sh" >/dev/null 2>&1; echo $?)" 2 "A's main checkout stays read-only after the refused bind"
+eq "$(jq -nc --arg cwd "$R" --arg f "$R/x.txt" '{session_id:"x1",cwd:$cwd,hook_event_name:"PreToolUse",permission_mode:"default",tool_name:"Write",tool_input:{file_path:$f}}' | "$SK/hooks/worktree-guard.sh" >/dev/null 2>&1; echo $?)" 2 "A's main checkout stays read-only after the refused bind"
 out=$(bind2 x1 '/deliver-ticket T9 hello'); eq "$(cat $MAP/x1)" "$before" "the hook leaves the map unchanged too"
 case "$out" in *"still bound to ticket O1 in project $key"*) pass=$((pass+1));; *) fail=$((fail+1)); echo "FAIL hook context line: [$out]";; esac
 out=$(bind2 x1 'hello, no command'); eq "$out" "" "an ordinary prompt prints nothing"
@@ -127,7 +127,7 @@ ew() { jq -nc --arg cwd "$R2" --arg sid "$1" --arg w "$R2/.claude/worktrees/B1" 
 printf 'project=%s\nticket=O5\n' "$key" > $MAP/y1; before=$(cat $MAP/y1)
 out=$(ew y1); eq "$(cat $MAP/y1)" "$before" "EnterWorktree of B's worktree leaves the map alone while O5 in A is open"
 case "$out" in *"still bound to ticket O5 in project $key"*) pass=$((pass+1));; *) fail=$((fail+1)); echo "FAIL record_worktree stderr line: [$out]";; esac
-eq "$(jq -nc --arg cwd "$R" --arg f "$R/x.txt" '{session_id:"y1",cwd:$cwd,hook_event_name:"PreToolUse",tool_name:"Write",tool_input:{file_path:$f}}' | "$SK/hooks/worktree-guard.sh" >/dev/null 2>&1; echo $?)" 2 "A's main checkout stays read-only"
+eq "$(jq -nc --arg cwd "$R" --arg f "$R/x.txt" '{session_id:"y1",cwd:$cwd,hook_event_name:"PreToolUse",permission_mode:"default",tool_name:"Write",tool_input:{file_path:$f}}' | "$SK/hooks/worktree-guard.sh" >/dev/null 2>&1; echo $?)" 2 "A's main checkout stays read-only"
 printf 'project=%s\nticket=O1\n' "$key" > $MAP/y2
 out=$(ew y2); grep -qx "project=$key2" $MAP/y2 && grep -qx "worktree=$R2/.claude/worktrees/B1" $MAP/y2 && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL map rewritten when the old ticket is closed: $(tr '\n' ' ' < $MAP/y2)"; }
 printf 'project=%s\nticket=O3\n' "$key2" > $MAP/y3; out=$(ew y3); grep -qx "worktree=$R2/.claude/worktrees/B1" $MAP/y3 && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL same project: worktree line added"; }

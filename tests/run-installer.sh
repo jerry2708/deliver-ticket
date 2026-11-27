@@ -37,6 +37,12 @@ d = json.load(open(sys.argv[1]))
 assert any(m.get("matcher") == "REPL" and any(h["command"] == sys.argv[2] + "/hooks/code-mode.sh" and h.get("onFailure") == "block" for h in m["hooks"])
            for m in d["hooks"]["PreToolUse"]), d["hooks"]["PreToolUse"]
 PY
+python3 -I - "$D/legacy.json" "$SK" <<'PY' && echo "ok C11h: PreToolUse * -> mode-guard.sh (onFailure block)" || { fail=1; echo "FAIL no PreToolUse * mode-guard hook"; }
+import json, sys
+d = json.load(open(sys.argv[1]))
+assert any(m.get("matcher") == "*" and any(h["command"] == sys.argv[2] + "/hooks/mode-guard.sh" and h.get("onFailure") == "block" for h in m["hooks"])
+           for m in d["hooks"]["PreToolUse"]), d["hooks"]["PreToolUse"]
+PY
 # --- a second apply must not forget what the first one added (the old manifest was truncated before it was read): uninstall leaves nothing behind
 cp "$D/orig.json" "$D/again.json"
 DT_SETTINGS="$D/again.json" "$SK/scripts/install-hooks.sh" apply --confirmed >/dev/null 2>&1

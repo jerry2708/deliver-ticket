@@ -33,12 +33,12 @@ bind s11 T11
 ticket T12; bindnw sP T12                                              # pause test: the ticket file exists, the session has not entered a worktree
 bindnw sR T13; ticket T14                                              # rebind test: T13 has NO ticket file, its worktree exists on disk, the map has no worktree= line
 pass=0; fail=0
-payload() { jq -nc --arg cwd "$1" --arg tool "$2" --arg cmd "$3" --arg sid "${4:-s1}" '{session_id:$sid,cwd:$cwd,hook_event_name:"PreToolUse",tool_name:$tool,tool_input:{command:$cmd}}'; }
+payload() { jq -nc --arg cwd "$1" --arg tool "$2" --arg cmd "$3" --arg sid "${4:-s1}" '{session_id:$sid,cwd:$cwd,hook_event_name:"PreToolUse",permission_mode:"default",tool_name:$tool,tool_input:{command:$cmd}}'; }
 # b <exp> <sid> <cwd> <command>   (guard.sh)       w <exp> <sid> <tool> <path>   (worktree-guard.sh)
 b() { local out rc; out=$(payload "$3" Bash "$4" "$2" | "$SK/hooks/guard.sh" 2>&1); rc=$?
   [ "$rc" = "$1" ] && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL rc=$rc want=$1 sid=$2 cwd=${3##*/} [$4]"; echo "   $out" | head -2 | cut -c1-240; }; }
 w() { local out rc k=file_path; [ "$3" = NotebookEdit ] && k=notebook_path
-  out=$(jq -nc --arg cwd "$R" --arg sid "$2" --arg tool "$3" --arg f "$4" --arg k "$k" '{session_id:$sid,cwd:$cwd,hook_event_name:"PreToolUse",tool_name:$tool,tool_input:{($k):$f}}' | "$SK/hooks/worktree-guard.sh" 2>&1); rc=$?
+  out=$(jq -nc --arg cwd "$R" --arg sid "$2" --arg tool "$3" --arg f "$4" --arg k "$k" '{session_id:$sid,cwd:$cwd,hook_event_name:"PreToolUse",permission_mode:"default",tool_name:$tool,tool_input:{($k):$f}}' | "$SK/hooks/worktree-guard.sh" 2>&1); rc=$?
   [ "$rc" = "$1" ] && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL wguard rc=$rc want=$1 sid=$2 $3 $4"; echo "   $out" | head -2 | cut -c1-240; }; }
 W1=$(W T1); W2=$(W T2)
 

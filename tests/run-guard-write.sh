@@ -92,7 +92,7 @@ echo "# the hooks let the script through (a bound session, an unbound one, a dir
 mkdir -p "$ST/tickets"; printf 'stage: 3\nnext: x\nstate: active\nworktree: none\n' > "$ST/tickets/T1.md"
 printf 'project=%s\nticket=T1\n' "$key" > "$DELIVER_TICKET_HOME/sessions/b1"
 mk "$C" '.allowlist_extra=["/tmp/zz-two"]'
-hk() { jq -nc --arg cwd "$2" --arg sid "$1" --arg c "$3" '{session_id:$sid,cwd:$cwd,hook_event_name:"PreToolUse",tool_name:"Bash",tool_input:{command:$c}}' | "$SK/hooks/guard.sh" >/dev/null 2>&1; echo $?; }
+hk() { jq -nc --arg cwd "$2" --arg sid "$1" --arg c "$3" '{session_id:$sid,cwd:$cwd,hook_event_name:"PreToolUse",permission_mode:"default",tool_name:"Bash",tool_input:{command:$c}}' | "$SK/hooks/guard.sh" >/dev/null 2>&1; echo $?; }
 for ctx in "b1 $R" "u1 $R" "u2 $S"; do set -- $ctx
   eq "$(hk $1 $2 "$GW diff $C --repo $R")" 0 "hook allows guard-write.sh diff ($1)"
   eq "$(hk $1 $2 "$GA $C --repo $R")" 0 "hook allows guard-apply.sh ($1)"

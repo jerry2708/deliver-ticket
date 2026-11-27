@@ -32,7 +32,7 @@ printf 'project=%s\nticket=T1\nworktree=%s\n' "$key" "$R/.claude/worktrees/T1" >
 "$SK/scripts/approve-plan.sh" T1 --sha "$("$SK/scripts/plan-hash.sh" T1 --repo "$R" | awk '{print $3}')" --repo "$R" --session s1 >/dev/null || { echo "fixture: approve-plan.sh failed" >&2; exit 2; }
 pass=0; fail=0
 payload() { jq -nc --arg cwd "$1" --arg tool "$2" --arg cmd "$3" --arg sid "${4:-s1}" --arg ev "${5:-PreToolUse}" \
-  '{session_id:$sid,cwd:$cwd,hook_event_name:$ev,tool_name:$tool,tool_input:{command:$cmd}}'; }
+  '{session_id:$sid,cwd:$cwd,hook_event_name:$ev,permission_mode:($ENV.PMODE // "default"),tool_name:$tool,tool_input:{command:$cmd}}'; }
 # t <expect-rc> <hook> <cwd> <command>
 t() { local exp=$1 hook=$2 cwd=$3 cmd=$4 out rc
   out=$(payload "$cwd" Bash "$cmd" | "$SK/hooks/$hook" 2>&1); rc=$?
@@ -278,7 +278,7 @@ git -C "$R" config --unset core.hooksPath
 git -C "$R" remote set-url mirror https://example.invalid/m.git
 setv lint true; setpush lint test; setv test "sleep 30"
 echo "# worktree-guard (Edit/Write/NotebookEdit)"
-wp() { jq -nc --arg cwd "$W" --arg tool "$1" --argjson ti "$2" --arg ev "${3:-PreToolUse}" '{session_id:"s1",cwd:$cwd,hook_event_name:$ev,tool_name:$tool,tool_input:$ti}' | "$SK/hooks/worktree-guard.sh" >/dev/null 2>&1; }
+wp() { jq -nc --arg cwd "$W" --arg tool "$1" --argjson ti "$2" --arg ev "${3:-PreToolUse}" '{session_id:"s1",cwd:$cwd,hook_event_name:$ev,permission_mode:($ENV.PMODE // "default"),tool_name:$tool,tool_input:$ti}' | "$SK/hooks/worktree-guard.sh" >/dev/null 2>&1; }
 w() { wp "$2" "$3"; local rc=$?; if [ $rc = $1 ]; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL wguard rc=$rc want=$1 $2 $3"; fi; }
 w 0 Write "{\"file_path\":\"$W/src/a.ts\"}"
 w 0 Write '{"file_path":"src/a.ts"}'
@@ -297,7 +297,7 @@ echo "# worktree-guard PostToolUse(EnterWorktree) records session -> worktree"
 jq -nc --arg cwd "$R" --arg w "$W" '{session_id:"sess-9",cwd:$cwd,hook_event_name:"PostToolUse",tool_name:"EnterWorktree",tool_input:{name:"T1"},tool_response:{worktreePath:$w}}' | "$SK/hooks/worktree-guard.sh"; echo "rc=$?"
 grep -q "worktree=$W" "$DELIVER_TICKET_HOME/sessions/sess-9" && { pass=$((pass+1)); echo "ok session map: $(tr '\n' ' ' < $DELIVER_TICKET_HOME/sessions/sess-9)"; } || { fail=$((fail+1)); echo "FAIL session map"; }
 # session now allows its worktree even from the main checkout cwd
-jq -nc --arg cwd "$R" --arg f "$W/z.txt" '{session_id:"sess-9",cwd:$cwd,hook_event_name:"PreToolUse",tool_name:"Write",tool_input:{file_path:$f}}' | "$SK/hooks/worktree-guard.sh" >/dev/null 2>&1; [ $? = 0 ] && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL mapped worktree not allowed"; }
+jq -nc --arg cwd "$R" --arg f "$W/z.txt" '{session_id:"sess-9",cwd:$cwd,hook_event_name:"PreToolUse",permission_mode:"default",tool_name:"Write",tool_input:{file_path:$f}}' | "$SK/hooks/worktree-guard.sh" >/dev/null 2>&1; [ $? = 0 ] && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL mapped worktree not allowed"; }
 echo "# recursive searches that could read .env* (block unless excluded)"
 mkdir -p "$W/se/with" "$W/se/clean"; printf 'K=1\n' > "$W/se/with/.env.example"; printf 'x\n' > "$W/se/with/a.txt"; printf 'x\n' > "$W/se/clean/a.txt"
 git -C "$W" add -f se/with/.env.example se/with/a.txt se/clean/a.txt
@@ -337,7 +337,7 @@ tsid() { local exp=$1 hook=$2 sid=$3 cwd=$4 cmd=$5 out rc
   out=$(payload "$cwd" Bash "$cmd" "$sid" | "$SK/hooks/$hook" 2>&1); rc=$?
   if [ "$rc" = "$exp" ]; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL rc=$rc want=$exp sid=$sid cwd=${cwd##*/} [$hook] $cmd"; echo "   $out" | head -2; fi; }
 wsid() { local exp=$1 sid=$2 cwd=$3 tool=$4 ti=$5 rc
-  jq -nc --arg cwd "$cwd" --arg tool "$tool" --argjson ti "$ti" --arg sid "$sid" '{session_id:$sid,cwd:$cwd,hook_event_name:"PreToolUse",tool_name:$tool,tool_input:$ti}' | "$SK/hooks/worktree-guard.sh" >/dev/null 2>&1; rc=$?
+  jq -nc --arg cwd "$cwd" --arg tool "$tool" --argjson ti "$ti" --arg sid "$sid" '{session_id:$sid,cwd:$cwd,hook_event_name:"PreToolUse",permission_mode:"default",tool_name:$tool,tool_input:$ti}' | "$SK/hooks/worktree-guard.sh" >/dev/null 2>&1; rc=$?
   if [ "$rc" = "$exp" ]; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL wguard rc=$rc want=$exp sid=$sid $tool $ti"; fi; }
 mkdir -p "$R/docs"
 echo "## unbound session u1 (no map): normal Claude Code behaviour in the main checkout"
@@ -366,9 +366,9 @@ wsid 2 sess-9 "$R" Write "{\"file_path\":\"$R/docs/x.md\"}"                     
 git -C "$R" worktree add -q .claude/worktrees/T5 -b feat-T5; W5=$R/.claude/worktrees/T5
 printf 'stage: 3\nstate: active\nworktree: %s\n' "$W5" > "$DT/$key/tickets/T5.md"
 wsid 2 nomap "$W5" Write "{\"file_path\":\"$R/docs/x.md\"}"                       # cwd inside a ticket worktree with an open ticket file
-msg=$(jq -nc --arg cwd "$W5" --arg f "$R/docs/x.md" '{session_id:"nomap",cwd:$cwd,hook_event_name:"PreToolUse",tool_name:"Write",tool_input:{file_path:$f}}' | "$SK/hooks/worktree-guard.sh" 2>&1)
+msg=$(jq -nc --arg cwd "$W5" --arg f "$R/docs/x.md" '{session_id:"nomap",cwd:$cwd,hook_event_name:"PreToolUse",permission_mode:"default",tool_name:"Write",tool_input:{file_path:$f}}' | "$SK/hooks/worktree-guard.sh" 2>&1)
 echo "$msg" | grep -q 'only because its cwd is inside that worktree - cd out of the worktree' && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL cwd-bound block message lacks the unbind hint: $msg"; }
-msg=$(jq -nc --arg cwd "$R" --arg f "$R/docs/x.md" '{session_id:"s1",cwd:$cwd,hook_event_name:"PreToolUse",tool_name:"Write",tool_input:{file_path:$f}}' | "$SK/hooks/worktree-guard.sh" 2>&1)
+msg=$(jq -nc --arg cwd "$R" --arg f "$R/docs/x.md" '{session_id:"s1",cwd:$cwd,hook_event_name:"PreToolUse",permission_mode:"default",tool_name:"Write",tool_input:{file_path:$f}}' | "$SK/hooks/worktree-guard.sh" 2>&1)
 echo "$msg" | grep -q 'cd out of the worktree' && { fail=$((fail+1)); echo "FAIL the cwd hint must appear only for cwd-bound sessions: $msg"; } || pass=$((pass+1))
 wsid 0 nomap "$W3" Write "{\"file_path\":\"$R/docs/x.md\"}"                       # cwd in a worktree that has no ticket file: not a ticket session
 echo "## closed ticket (marker written only by ticket-state.sh) and paused session"
@@ -447,7 +447,7 @@ tsid 2 verify-on-push.sh u1 "$W" 'git push mirror feat-T1'
 echo "## C11d: Bash tool parameters that widen the sandbox for one call are blocked in every session (open ticket s1, none u1); the same call without them runs"
 # bx <expect-rc> <sid> <cwd> <tool_input json> [text the block message must hold]
 bx() { local exp=$1 sid=$2 cwd=$3 ti=$4 want=${5:-} out rc
-  out=$(jq -nc --arg cwd "$cwd" --arg sid "$sid" --argjson ti "$ti" '{session_id:$sid,cwd:$cwd,hook_event_name:"PreToolUse",tool_name:"Bash",tool_input:$ti}' | "$SK/hooks/guard.sh" 2>&1); rc=$?
+  out=$(jq -nc --arg cwd "$cwd" --arg sid "$sid" --argjson ti "$ti" '{session_id:$sid,cwd:$cwd,hook_event_name:"PreToolUse",permission_mode:"default",tool_name:"Bash",tool_input:$ti}' | "$SK/hooks/guard.sh" 2>&1); rc=$?
   if [ "$rc" = "$exp" ] && { [ -z "$want" ] || printf '%s' "$out" | grep -qF -- "$want"; }; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL bx rc=$rc want=$exp sid=$sid $ti"; echo "   $out" | head -2; fi; }
 for sid in s1 u1; do
   for cwd in "$W" "$R"; do
@@ -545,9 +545,9 @@ for sid in s1 u1; do
   for c in 'git config --global --get user.name' 'git config --global user.name' 'git config --global --list' 'git config --global --show-origin --get-regexp core' 'git config --system --list' \
     'git config --get remote.mirror.url' 'git config user.name' 'git config --file .git/config --list' 'cat ~/.gitconfig' 'ls ~/.config/git' "echo x > $S/.gitconfig"; do tsid 0 guard.sh $sid "$W" "$c"; done
 done
-out=$(jq -nc --arg cwd "$W" --arg f "$HOME/.gitconfig" '{session_id:"s1",cwd:$cwd,hook_event_name:"PreToolUse",tool_name:"Write",tool_input:{file_path:$f,content:"x"}}' | "$SK/hooks/worktree-guard.sh" 2>&1); req "$?" 2 "Write on ~/.gitconfig ($out)"
-out=$(jq -nc --arg cwd "$W" --arg f "$HOME/.config/git/config" '{session_id:"u1",cwd:$cwd,hook_event_name:"PreToolUse",tool_name:"Edit",tool_input:{file_path:$f,old_string:"a",new_string:"b"}}' | "$SK/hooks/worktree-guard.sh" 2>&1); req "$?" 2 "Edit on ~/.config/git/config ($out)"
-out=$(XDG_CONFIG_HOME="$S/xdg" jq -nc --arg cwd "$W" --arg f "$S/xdg/git/config" '{session_id:"s1",cwd:$cwd,hook_event_name:"PreToolUse",tool_name:"Write",tool_input:{file_path:$f,content:"x"}}' | XDG_CONFIG_HOME="$S/xdg" "$SK/hooks/worktree-guard.sh" 2>&1); req "$?" 2 "Write on \$XDG_CONFIG_HOME/git/config ($out)"
+out=$(jq -nc --arg cwd "$W" --arg f "$HOME/.gitconfig" '{session_id:"s1",cwd:$cwd,hook_event_name:"PreToolUse",permission_mode:"default",tool_name:"Write",tool_input:{file_path:$f,content:"x"}}' | "$SK/hooks/worktree-guard.sh" 2>&1); req "$?" 2 "Write on ~/.gitconfig ($out)"
+out=$(jq -nc --arg cwd "$W" --arg f "$HOME/.config/git/config" '{session_id:"u1",cwd:$cwd,hook_event_name:"PreToolUse",permission_mode:"default",tool_name:"Edit",tool_input:{file_path:$f,old_string:"a",new_string:"b"}}' | "$SK/hooks/worktree-guard.sh" 2>&1); req "$?" 2 "Edit on ~/.config/git/config ($out)"
+out=$(XDG_CONFIG_HOME="$S/xdg" jq -nc --arg cwd "$W" --arg f "$S/xdg/git/config" '{session_id:"s1",cwd:$cwd,hook_event_name:"PreToolUse",permission_mode:"default",tool_name:"Write",tool_input:{file_path:$f,content:"x"}}' | XDG_CONFIG_HOME="$S/xdg" "$SK/hooks/worktree-guard.sh" 2>&1); req "$?" 2 "Write on \$XDG_CONFIG_HOME/git/config ($out)"
 echo "# C9a: ssh config, .netrc and the gh / glab configs join the protected group; <root>/starts/ is protected state"
 for sid in s1 u1; do
   for c in 'echo x >> ~/.ssh/config' 'echo x > ~/.ssh/config.local' 'tee ~/.ssh/config' 'cp /dev/null ~/.ssh/config' 'echo x >> ~/.netrc' 'echo x > ~/.config/gh/config.yml' 'echo x >> ~/.config/gh/hosts.yml' \
@@ -636,7 +636,7 @@ nsr() { local exp=$1 hook=$2 cwd=$3 tool=$4 arg=$5 pl rc kf=file_path; shift 5
   case "$tool" in
     Bash) pl=$(payload "$cwd" Bash "$arg" "$NSSID") ;;
     *) [ "$tool" = NotebookEdit ] && kf=notebook_path
-       pl=$(jq -nc --arg cwd "$cwd" --arg tool "$tool" --arg f "$arg" --arg k "$kf" --arg sid "$NSSID" '{session_id:$sid,cwd:$cwd,hook_event_name:"PreToolUse",tool_name:$tool,tool_input:{($k):$f}}') ;;
+       pl=$(jq -nc --arg cwd "$cwd" --arg tool "$tool" --arg f "$arg" --arg k "$kf" --arg sid "$NSSID" '{session_id:$sid,cwd:$cwd,hook_event_name:"PreToolUse",permission_mode:"default",tool_name:$tool,tool_input:{($k):$f}}') ;;
   esac
   printf '%s' "$pl" | env "$@" "$SK/hooks/$hook" >/dev/null 2>&1; rc=$?
   if [ "$rc" = "$exp" ]; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL nostate rc=$rc want=$exp sid=$NSSID cwd=${cwd##*/} $tool $arg $*"; fi; }
@@ -769,7 +769,7 @@ tsid 0 guard.sh u1 "$R" "echo x > $nostate/.claude/settings.json"
 echo "## C9b prefilter: transcript_path (always under ~/.claude/projects) alone does not start python; a .claude / config / .ssh / .netrc name does"
 NS2=$S/bin-stub2; mkdir -p "$NS2"; for t in git sed head cut shasum dirname basename cat touch; do ln -sf "$(command -v $t)" "$NS2/$t"; done
 printf '#!/bin/sh\ntouch "%s/stub2-called"\nexit 1\n' "$S" > "$NS2/python3"; chmod +x "$NS2/python3"
-tp() { jq -nc --arg cwd "$nostate" --arg cmd "$1" --arg tp "$HOME/.claude/projects/-x-deliver-ticket/s.jsonl" '{session_id:"nsu",transcript_path:$tp,cwd:$cwd,hook_event_name:"PreToolUse",tool_name:"Bash",tool_input:{command:$cmd}}' \
+tp() { jq -nc --arg cwd "$nostate" --arg cmd "$1" --arg tp "$HOME/.claude/projects/-x-deliver-ticket/s.jsonl" '{session_id:"nsu",transcript_path:$tp,cwd:$cwd,hook_event_name:"PreToolUse",permission_mode:"default",tool_name:"Bash",tool_input:{command:$cmd}}' \
   | env PATH="$NS2" DELIVER_TICKET_HOME=$S/zqroot "$SK/hooks/guard.sh" >/dev/null 2>&1; echo $?; }
 req "$(tp 'echo hi')" 0 "transcript_path only: allowed"
 [ ! -e "$S/stub2-called" ] && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL prefilter: transcript_path alone started python"; }
@@ -796,7 +796,7 @@ echo "## a case-variant cwd / mapped worktree inside a ticket worktree binds the
 if [ $SCI = 2 ]; then
   WV=${W/\/repo\//\/REPO\/}                                                    # same directory, other spelling of one component
   [ -d "$WV" ] || { fail=$((fail+1)); echo "FAIL C1 setup: $WV is not a directory"; }
-  msg=$(jq -nc --arg cwd "$WV" --arg f "$R/docs/x.md" '{session_id:"cv1",cwd:$cwd,hook_event_name:"PreToolUse",tool_name:"Write",tool_input:{file_path:$f}}' | "$SK/hooks/worktree-guard.sh" 2>&1); rc=$?
+  msg=$(jq -nc --arg cwd "$WV" --arg f "$R/docs/x.md" '{session_id:"cv1",cwd:$cwd,hook_event_name:"PreToolUse",permission_mode:"default",tool_name:"Write",tool_input:{file_path:$f}}' | "$SK/hooks/worktree-guard.sh" 2>&1); rc=$?
   { [ $rc = 2 ] && echo "$msg" | grep -q 'bound to ticket T1'; } && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL case-variant cwd must bind ticket T1: rc=$rc $msg"; }
   wsid 0 cv1 "$WV" Write "{\"file_path\":\"$W/src/a.ts\"}"                    # its own worktree stays writable
   printf 'project=%s\nworktree=%s\n' "$key" "$WV" > "$DT/sessions/cv2"          # EnterWorktree recorded the variant spelling
@@ -984,8 +984,46 @@ assert not set(ih.READ_ONLY_COMMANDS) & set(ih.WRITING_COMMANDS)
 assert set(ih.READ_ONLY_COMMANDS) | set(ih.WRITING_COMMANDS) == {"status", "diff", "selftest", "apply", "uninstall", "project-status", "project-diff", "project-apply",
     "project-uninstall", "project-sandbox-status", "project-sandbox-diff", "project-sandbox-apply", "project-sandbox-off"}
 PY
+echo "# C11h: permission mode (probe 2026-11-27: PreToolUse / UserPromptSubmit carry permission_mode; a subagent's calls carry the parent's)"
+# pmh <expect-rc> <hook> <sid> <cwd> <tool> <tool_input json> <mode | MISSING> [event]
+pmh() { local exp=$1 hook=$2 sid=$3 cwd=$4 tool=$5 ti=$6 mode=$7 ev=${8:-PreToolUse} out rc
+  out=$(jq -nc --arg cwd "$cwd" --arg sid "$sid" --arg tool "$tool" --argjson ti "$ti" --arg m "$mode" --arg ev "$ev" \
+    '{session_id:$sid,cwd:$cwd,hook_event_name:$ev,tool_name:$tool,tool_input:$ti} + (if $m == "MISSING" then {} else {permission_mode:$m} end)' | "$SK/hooks/$hook" 2>&1); rc=$?
+  if [ "$rc" = "$exp" ]; then pass=$((pass+1)); else fail=$((fail+1)); echo "FAIL pmode rc=$rc want=$exp sid=$sid cwd=${cwd##*/} [$hook] $tool mode=$mode $ev"; echo "   $out" | head -2; fi; }
+echo "## mode-guard.sh: every tool of a bound session (s1 by its map, u1 by a cwd in the ticket worktree) is blocked outside default mode; no ticket: left alone"
+for m in auto acceptEdits plan dontAsk bypassPermissions MISSING; do
+  for tool in Bash Read Grep Edit Agent SendMessage mcp__x__y; do pmh 2 mode-guard.sh s1 "$R" $tool '{"command":"git status","file_path":"/x"}' $m; done
+  pmh 2 mode-guard.sh u1 "$W" Read '{"file_path":"/x"}' $m
+  pmh 0 mode-guard.sh u1 "$R" Bash '{"command":"git status"}' $m
+  pmh 0 mode-guard.sh nsu "$nostate" Bash '{"command":"git status"}' $m
+done
+for tool in Bash Read Edit Agent; do pmh 0 mode-guard.sh s1 "$R" $tool '{"command":"git status","file_path":"/x"}' default; done
+pmh 0 mode-guard.sh s1 "$R" Bash '{"command":"git status"}' auto PostToolUse
+out=$(jq -nc --arg cwd "$R" '{session_id:"s1",cwd:$cwd,hook_event_name:"PreToolUse",permission_mode:"auto",tool_name:"Read",tool_input:{file_path:"/x"}}' | "$SK/hooks/mode-guard.sh" 2>&1)
+case "$out" in *"bound to ticket T1"*"permission mode 'auto' is not supported"*"Shift+Tab"*) pass=$((pass+1));; *) fail=$((fail+1)); echo "FAIL auto-mode message: $out";; esac
+out=$(jq -nc --arg cwd "$R" '{session_id:"s1",cwd:$cwd,hook_event_name:"PreToolUse",tool_name:"Read",tool_input:{file_path:"/x"}}' | "$SK/hooks/mode-guard.sh" 2>&1)
+case "$out" in *"no permission_mode field"*"fail-closed"*) pass=$((pass+1));; *) fail=$((fail+1)); echo "FAIL missing-field message: $out";; esac
+echo "## guard.sh: the skill's scripts are blocked outside default mode in every session (bound, unbound, no-state repo for a gate script)"
+for m in auto acceptEdits plan MISSING; do
+  pmh 2 guard.sh s1 "$W" Bash "{\"command\":\"$SKS/session-map.sh show T1 --session s1 --repo $R\"}" $m
+  pmh 2 guard.sh u1 "$R" Bash "{\"command\":\"$SKS/session-map.sh show T1 --session u1 --repo $R\"}" $m
+  pmh 2 guard.sh nsu "$nostate" Bash "{\"command\":\"$SKS/guard-apply.sh c.json --repo $R\"}" $m
+  pmh 0 guard.sh u1 "$R" Bash '{"command":"git status"}' $m
+done
+pmh 0 guard.sh u1 "$R" Bash "{\"command\":\"$SKS/session-map.sh show T1 --session u1 --repo $R\"}" default
+pmh 0 guard.sh nsu "$nostate" Bash "{\"command\":\"$SKS/guard-apply.sh c.json --repo $R\"}" default
+echo "## bind-session.sh: a /deliver-ticket prompt outside default mode gets a context line (stage 0 check 1c) and still binds"
+out=$(jq -nc --arg cwd "$R" '{session_id:"pmb",cwd:$cwd,hook_event_name:"UserPromptSubmit",permission_mode:"auto",prompt:"/deliver-ticket T1 go"}' | "$SK/hooks/bind-session.sh")
+case "$out" in *"permission mode 'auto' is not supported"*"check 1c"*) pass=$((pass+1));; *) fail=$((fail+1)); echo "FAIL bind context line: [$out]";; esac
+pmh 2 mode-guard.sh pmb "$R" Bash '{"command":"git status"}' auto
+out=$(jq -nc --arg cwd "$R" '{session_id:"pmd",cwd:$cwd,hook_event_name:"UserPromptSubmit",permission_mode:"default",prompt:"/deliver-ticket T1 go"}' | "$SK/hooks/bind-session.sh")
+req "$out" "" "bind in default mode prints nothing"
+pmh 0 mode-guard.sh pmd "$R" Bash '{"command":"git status"}' default
 echo "# corrupt guard.json with state => block (except skill scripts)"
 echo '{broken' > "$DELIVER_TICKET_HOME/$key/guard.json"
+echo "## guard.json unreadable: mode-guard.sh cannot tell bound from unbound, so outside default mode it blocks (fail-closed); default passes"
+pmh 2 mode-guard.sh u1 "$R" Bash '{"command":"git status"}' auto
+pmh 0 mode-guard.sh u1 "$R" Bash '{"command":"git status"}' default
 t 2 guard.sh "$W" 'ls'
 tsid 2 guard.sh u1 "$R" 'ls'                                  # an unbound session is fail-closed too
 t 0 guard.sh "$W" "python3 $SK/scripts/validate-guard.py $DELIVER_TICKET_HOME/$key/guard.json"

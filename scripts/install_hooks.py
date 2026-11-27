@@ -71,6 +71,7 @@ HOOK_SPECS = [
     ("PreToolUse", "Bash", "verify-on-push.sh", 1860, True),
     ("PreToolUse", "Edit|Write|NotebookEdit|MultiEdit", "worktree-guard.sh", 10, True),
     ("PreToolUse", "REPL", "code-mode.sh", 10, True),        # Code Mode's code tool: not supported, always denied (hooks/dtcore.py CODE_MODE_MSG)
+    ("PreToolUse", "*", "mode-guard.sh", 10, True),          # C11h: every tool; a session bound to a ticket runs only in default mode (hooks/dtcore.py mode_pmode)
     ("PostToolUse", "EnterWorktree", "worktree-guard.sh", 10, False),
     ("SessionStart", "compact", "session-start.sh", 10, False),
     ("SessionStart", "startup|resume|clear", "session-record.sh", 10, False),     # C9a: <root>/starts/<session_id> = the start directory, first record wins
@@ -923,10 +924,10 @@ def cmd_selftest(args=()):
         if not (os.path.isdir(d) and subprocess.run(["git", "-C", d, "rev-parse", "--git-dir"], capture_output=True).returncode == 0):
             os.makedirs(d, exist_ok=True)
             subprocess.run(["git", "init", "-q", d], check=True)
-    pre = json.dumps({"session_id": "st", "cwd": nostate, "hook_event_name": "PreToolUse", "tool_name": "Bash",
+    pre = json.dumps({"session_id": "st", "cwd": nostate, "hook_event_name": "PreToolUse", "permission_mode": "default", "tool_name": "Bash",
                       "tool_input": {"command": "git push -f origin main; cat .env"}})
     # (4a) repo without state: every hook passes, fast
-    for script in ("guard.sh", "verify-on-push.sh", "worktree-guard.sh", "session-start.sh"):
+    for script in ("guard.sh", "verify-on-push.sh", "worktree-guard.sh", "mode-guard.sh", "session-start.sh"):
         rc, out, err, dt = run_hook(script, pre, env, nostate)
         check(rc == 0 and not err and dt < 2, "%s in a repo without state: exit 0 in %.2fs" % (script, dt))
     # (4b) repo with state: malformed payload blocks, a forced push blocks, an ordinary command passes
@@ -940,8 +941,8 @@ def cmd_selftest(args=()):
                    "env_files": [], "install": None, "ports": {"vars": [], "base": 3100, "step": 10},
                    "allowlist_extra": []}, f)
 
-    def bash_payload(c):
-        return json.dumps({"session_id": "st", "cwd": repo, "hook_event_name": "PreToolUse", "tool_name": "Bash",
+    def bash_payload(c, mode="default"):
+        return json.dumps({"session_id": "st", "cwd": repo, "hook_event_name": "PreToolUse", "permission_mode": mode, "tool_name": "Bash",
                            "tool_input": {"command": c}})
     rc, _, _, _ = run_hook("guard.sh", "not json", env, repo)
     check(rc == 2, "guard.sh: malformed payload in a repo with state blocks")
@@ -961,6 +962,11 @@ def cmd_selftest(args=()):
     rc, out, _, _ = run_hook("session-start.sh", json.dumps({"session_id": "st", "cwd": repo, "source": "compact",
                                                               "hook_event_name": "SessionStart"}), env, repo)
     check(rc == 0 and "ST-1" in out and "stage 3" in out, "session-start.sh: re-orientation text for a known session")
+    # (6) C11h: a session bound to a ticket (st -> ST-1 above) runs only in default mode
+    rc, _, _, _ = run_hook("mode-guard.sh", bash_payload("git status", "auto"), env, repo)
+    check(rc == 2, "mode-guard.sh: a bound session in auto mode is blocked")
+    rc, _, _, _ = run_hook("mode-guard.sh", bash_payload("git status"), env, repo)
+    check(rc == 0, "mode-guard.sh: a bound session in default mode passes")
     print("selftest B: %s" % ("PASS" if not fails else "FAIL (%d)" % len(fails)))
     return 1 if fails else 0
 
