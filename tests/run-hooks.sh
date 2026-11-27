@@ -167,6 +167,14 @@ t 2 verify-on-push.sh "$W" 'git push mirror feat-T1'                      # lint
 [ ! -e "$S/hook-ran-this" ] && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL verify-on-push executed a verify command"; }
 req "$(vrec T1 --guard "$G")" 0 "verify-record runs the command (the stage 4 call, sandboxed in real use)"
 [ -e "$S/hook-ran-this" ] && pass=$((pass+1)) || { fail=$((fail+1)); echo "FAIL verify-record did not run the command"; }
+echo "## C11h: with a turbo.json in the worktree verify-record runs the commands with TURBO_CACHE_DIR=<worktree>/.turbo/cache (overrides an inherited value)"
+setv lint "printf %s \"\${TURBO_CACHE_DIR:-unset}\" > $S/tcd.txt"
+req "$(env -u TURBO_CACHE_DIR "$SK/scripts/verify-record.sh" T1 --guard "$G" >/dev/null 2>&1; echo $?)" 0 "record without turbo.json"
+req "$(cat "$S/tcd.txt")" "unset" "no turbo.json: TURBO_CACHE_DIR not set"
+echo '{}' > "$W/turbo.json"; git -C "$W" add turbo.json; git -C "$W" commit -q -m "turbo.json"
+req "$(TURBO_CACHE_DIR=$R/.turbo/cache "$SK/scripts/verify-record.sh" T1 --guard "$G" >/dev/null 2>&1; echo $?)" 0 "record with turbo.json"
+req "$(cat "$S/tcd.txt")" "$W/.turbo/cache" "turbo.json: TURBO_CACHE_DIR = the worktree's cache, not the inherited main-checkout value"
+t 0 verify-on-push.sh "$W" 'git push mirror feat-T1'                      # the command string (and its hash) is unchanged by the env
 setv lint true
 setpush
 t 0 verify-on-push.sh "$W" 'git push mirror feat-T1'                      # on_push [] : no record needed
@@ -831,6 +839,13 @@ gx() { local exp=$1 tool=$2 arg=$3 kf=file_path cwd
   fi; NSSID=nsu; }
 echo "## edit tools onto guard.json (also another project's, and upper / mixed case where the filesystem folds it)"
 for tool in Write Edit NotebookEdit MultiEdit; do gx 2 $tool "$G"; gx 2 $tool "$GO"; gx $SCI $tool "$GU"; gx $SCI $tool "$GM"; done
+echo "## C11h: the push record evidence/<ID>/verify.json and its temp file - file tools blocked in every context (no Edit deny rule any more: it became a sandbox denyWrite)"
+VJ=$DT/$key/evidence/T1/verify.json; VT=$DT/$key/evidence/T1/.verify.json.tmp
+for tool in Write Edit NotebookEdit MultiEdit; do gx 2 $tool "$VJ"; gx 2 $tool "$VT"; gx 2 $tool "$DT/other-12345678/evidence/X9/verify.json"; gx $SCI $tool "$DT/$key/evidence/T1/VERIFY.JSON"; done
+gx 0 Write "$DT/$key/evidence/T1/stage3-test.txt"                              # the rest of evidence/ stays writable
+gx 0 Write "$DT/$key/evidence/T1/verify.json.txt"
+out=$(jq -nc --arg cwd "$W" --arg f "$VJ" '{session_id:"s1",cwd:$cwd,hook_event_name:"PreToolUse",permission_mode:"default",tool_name:"Write",tool_input:{file_path:$f}}' | "$SK/hooks/worktree-guard.sh" 2>&1)
+case "$out" in *"is the push record - only "*"verify-record.sh writes it"*) pass=$((pass+1));; *) fail=$((fail+1)); echo "FAIL verify.json message: $out";; esac
 echo "## shell routes onto guard.json"
 for c in "echo x > $G" "echo x >> $G" ": > $G" "tee $G" "touch $G" "cp /dev/null $G" "mv /tmp/zz-b1 $G" "mv $G /tmp/zz-b1" "rm $G" "rm -f $G" "unlink $G" \
   "truncate -s0 $G" "shred -u $G" "sed -i '' s/a/b/ $G" "dd if=/dev/null of=$G" "ln -sf /tmp/zz-b1 $G" "install /dev/null $G" "curl -o $G http://x.invalid" \

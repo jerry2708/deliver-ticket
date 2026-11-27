@@ -85,6 +85,10 @@ has stages/0-environment.md 'Permission mode.* (no command: a skill cannot read 
 has SKILL.md 'Default mode only:.* in auto, acceptEdits, plan, dontAsk or bypassPermissions mode'
 has README.md 'every other mode is blocked'
 has docs/plan.md 'Eval runner in auto mode (open, C11h'
+echo "# C11h: the push record - turbo cache dir set by verify-record.sh, no Edit deny rule on verify.json (hooks instead)"
+has stages/4-verify.md 'TURBO_CACHE_DIR=<worktree>/.turbo/cache'
+has README.md 'there is no .Edit. deny on the push record'
+has docs/safety.md 'the hooks block the file tools (Write / Edit / MultiEdit / NotebookEdit) on .evidence/\*/verify.json.'
 hasnt "SKILL.md init.md stages" '`scripts/[a-z]'
 hasnt "SKILL.md init.md stages" 'python3 scripts/'
 has stages/3-build.md '`CLAUDE.md`, `CLAUDE.local.md`, `AGENTS.md`, `GEMINI.md`, `.cursorrules`, `.npmrc`'

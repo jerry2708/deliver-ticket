@@ -103,8 +103,16 @@ def sandbox_deny():
 
 # C11a: user-level file-tool rules (probe tool_* cases, Claude Code 2.1.311): an Edit(...) rule covers the Write tool too (a Write(...) allow does not), the
 # sandbox denyWrite does not reach the file tools, //<abs> is an absolute path. Read: the skill and the whole state root; Edit: tickets/ and evidence/ only,
-# minus the push record (verify-record.sh writes it through Bash, scripts/verify_record.py) and the protected state. `root` / `skill` are for the probe.
-VERIFY_RECORD = ("verify.json", ".verify.json.tmp")
+# minus the protected state. `root` / `skill` are for the probe.
+# C11h: the other direction holds too - Claude Code merges Edit allow / deny rules into the Bash sandbox (docs "Sandboxing"; probe B1, c11h-probe-1). So the
+# push record (VERIFY_RECORD, written by the sandboxed verify-record.sh) gets no Edit deny rule any more: that rule refused the script's own write (DRY-02). The
+# hooks block the file tools on it (hooks/dtcore.py verify_record_target). retired_perm(): rules an earlier apply added that apply now removes and status flags.
+VERIFY_RECORD = dtcore.VERIFY_RECORD_FILES
+
+
+def retired_perm(root=None):
+    r = "/" + (root or state_root())
+    return (("deny", ["Edit(%s/*/evidence/*/%s)" % (r, n) for n in VERIFY_RECORD]),)
 
 
 def file_allow(root=None, skill=SKILL):
@@ -114,7 +122,7 @@ def file_allow(root=None, skill=SKILL):
 
 def file_deny(root=None):
     r = "/" + (root or state_root())
-    return ["Edit(%s/%s%s)" % (r, p, "/**" if d else "") for p, d in dtcore.PROTECTED_STATE] + ["Edit(%s/*/evidence/*/%s)" % (r, n) for n in VERIFY_RECORD]
+    return ["Edit(%s/%s%s)" % (r, p, "/**" if d else "") for p, d in dtcore.PROTECTED_STATE]
 
 
 def perm_rules():
@@ -178,6 +186,11 @@ def desired(cur):
             lst[:] = [h for h in lst if not (ours(h) and os.path.basename(h["command"]) == script)]
             lst.append(want)
     perms = new.setdefault("permissions", {})
+    om = load_manifest() or {"perm_added": {}}
+    for key, rules in retired_perm():                # added by an earlier apply (manifest), no longer wanted (C11h): migrate away; a user's own copy stays
+        ours_r = [r for r in rules if r in om["perm_added"].get(key, [])]
+        if key in perms:
+            perms[key] = [r for r in perms[key] if r not in ours_r]
     for key, rules in perm_rules():
         lst = perms.setdefault(key, [])
         for r in rules:
@@ -210,6 +223,8 @@ def build_manifest(cur, old_manifest):
     m = old_manifest or {"perm_added": {"allow": [], "ask": [], "deny": []}, "perm_keys_created": [],
                          "permissions_created": False, "hooks_created": False, "events_created": []}
     m["perm_added"].setdefault("allow", [])          # a manifest from before C11a has no allow rules
+    for key, rules in retired_perm():                # apply removes them (desired), so uninstall has nothing of them to remove
+        m["perm_added"][key] = [r for r in m["perm_added"].get(key, []) if r not in rules]
     perms = cur.get("permissions")
     if old_manifest is None:
         m["permissions_created"] = perms is None
@@ -309,6 +324,11 @@ def problems(cur):
         for r in rules:
             if r not in perms.get(key, []):
                 out.append("missing permission %s: %s" % (key, r))
+    om = load_manifest() or {"perm_added": {}}
+    for key, rules in retired_perm():
+        for r in rules:
+            if r in perms.get(key, []) and r in om["perm_added"].get(key, []):
+                out.append("retired permission %s: %s (it also denies the sandboxed verify-record.sh its own write); run apply" % (key, r))
     sb = cur.get("sandbox") if isinstance(cur.get("sandbox"), dict) else {}
     if sb.get("allowUnsandboxedCommands") is not False:
         out.append("sandbox.allowUnsandboxedCommands must be false (is %r)" % (sb.get("allowUnsandboxedCommands", "unset"),))

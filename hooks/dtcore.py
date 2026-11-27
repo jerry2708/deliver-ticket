@@ -512,6 +512,19 @@ def protected_state(rp):
     return bool(re.match(re.escape(DT_HOME) + r"/[^/]+/(closed(/|$)|approvals(/|$)|delivery\.log$|guard\.json$)", rp, re.I if fs_ci(DT_HOME) else 0))
 
 
+# C11h: the push record evidence/<ID>/verify.json (and its temp file) is written only by scripts/verify-record.sh, which runs SANDBOXED. The C11a user-level Edit deny
+# rule on it also became a sandbox denyWrite (Claude Code merges Edit deny rules into the sandbox; probe B1 in ~/.cache/dt-probes/c11h-probe-1) and refused the
+# script's own write (DRY-02, PermissionError on .verify.json.tmp), so the file tools are blocked here instead (mode_wguard, mode_nostate). A sandboxed Bash write can
+# still forge it (evidence/ is in allowWrite): tamper-evident only; stage 8 lock-trace.sh lists calls naming verify.json. scripts/install_hooks.py uses this list.
+VERIFY_RECORD_FILES = ("verify.json", ".verify.json.tmp")
+VERIFY_RECORD_WHY = "%s is the push record - only %s writes it (stage 4, sandboxed); the file tools may not"
+
+
+def verify_record_target(rp):
+    names = "|".join(re.escape(n) for n in VERIFY_RECORD_FILES)
+    return bool(re.match(re.escape(DT_HOME) + r"/[^/]+/evidence/[^/]+/(%s)$" % names, rp, re.I if fs_ci(DT_HOME) else 0))
+
+
 DESTRUCTIVE = {"rm", "rmdir", "unlink", "shred", "mv"}
 _GLOB = re.compile(r"[*?\[]")
 STATE_WHY = ("%s the delivery state (%s) - that would disable every guard; state files change only through the skill's "
@@ -2050,6 +2063,8 @@ def mode_wguard(payload, g):
         block("%s without file_path / notebook_path - blocked (fail-closed)" % tool)
     if is_env_name(p):
         block("%s on a .env* file - not allowed; tell me which key to add and I do it" % tool)
+    if verify_record_target(real(os.path.join(cwd or "/", os.path.expanduser(p)))):
+        block("%s blocked: %s" % (tool, VERIFY_RECORD_WHY % (p, os.path.join(SKILL_SCRIPTS, "verify-record.sh"))))
     if g is None:
         rp = real(os.path.join(cwd or "/", p))
         if protected_state(rp):
@@ -2098,6 +2113,8 @@ def mode_nostate(payload):
         p = ti.get("file_path") or ti.get("notebook_path")
         if not isinstance(p, str) or not p:
             block("%s without file_path / notebook_path - blocked (fail-closed)" % tool)
+        if verify_record_target(real(os.path.join(cwd or "/", resolve_vars(os.path.expanduser(p))))):
+            block("%s blocked: %s" % (tool, VERIFY_RECORD_WHY % (p, os.path.join(SKILL_SCRIPTS, "verify-record.sh"))))
         nostate_path(p, cwd, payload)
     elif tool == "Bash":
         cmd = ti.get("command")

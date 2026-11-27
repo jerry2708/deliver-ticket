@@ -50,10 +50,16 @@ def main():
     tree = git(wt, "rev-parse", "HEAD^{tree}").stdout.strip()
     head = git(wt, "rev-parse", "HEAD").stdout.strip()
     timeout = a.timeout or int(v.get("timeout_sec") or 300)
+    env = dict(os.environ)
+    if os.path.isfile(os.path.join(wt, "turbo.json")):
+        # C11h: from a git worktree Turborepo shares the MAIN checkout's .turbo/cache ("using shared worktree cache"), which is outside the sandbox's allowWrite:
+        # EPERM, and the record failed in DRY-02. TURBO_CACHE_DIR set to this worktree turns the sharing off like --cache-dir (checked with turbo 2.9.17 in a scratch
+        # repo, 2026-11-27) without changing the configured command, so its hash in the record stays the same. Always set: an inherited value could name the main cache.
+        env["TURBO_CACHE_DIR"] = os.path.join(wt, ".turbo", "cache")
     results, failed = {}, False
     for k in keys:
         try:
-            p = subprocess.run(v[k], shell=True, cwd=wt, capture_output=True, text=True, timeout=timeout)
+            p = subprocess.run(v[k], shell=True, cwd=wt, env=env, capture_output=True, text=True, timeout=timeout)
             rc, out = p.returncode, (p.stdout or "") + (p.stderr or "")
         except subprocess.TimeoutExpired:
             rc, out = 124, "timed out after %ss" % timeout

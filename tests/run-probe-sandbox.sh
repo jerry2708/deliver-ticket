@@ -120,8 +120,8 @@ env FAKE_RUN_S="$S/r15" FAKE_RUN_OUT="$S/ro15" FAKE_DUMP_S="$S/d0" FAKE_DUMP_OUT
 eq "$?" 4 "param case without its control exits 4"
 has "$(grep '| bash_allowed_domains_param | auto |' "$S/out15.txt")" "control bash_allowed_domains_control is not run in this run" "param row without its control"
 echo "# C11a: file-tool cases count only their own tool's results (the fake's Read before an Edit answers 'not granted'; the clean run above passes anyway)"
-eq "$(run 17 FAKE_FLIP=tool_write_verify_json_denied)" 1 "a Write past the verify.json deny is a FAIL"
-has "$(grep '| tool_write_verify_json_denied | default |' "$S/out17.txt")" "got ok, want denied" "verify.json deny row"
+eq "$(run 17 FAKE_FLIP=tool_write_verify_json_hook)" 1 "a Write past the verify.json hook is a FAIL"
+has "$(grep '| tool_write_verify_json_hook | default |' "$S/out17.txt")" "got ok, want hook" "verify.json hook row"
 eq "$(run 18 FAKE_NOTREAD=tool_edit_evidence_allow)" 4 "an Edit refused for 'not read first' proves nothing"
 has "$(grep '| tool_edit_evidence_allow | default |' "$S/out18.txt")" "INCONCLUSIVE | Edit refused before the permission check" "not-read row"
 eq "$(run 19 FAKE_FLIP=tool_write_no_rule_control)" 1 "a Write without a rule that does not prompt FAILs the control"
@@ -129,7 +129,9 @@ has "$(grep '| tool_write_edit_allow_tilde | default |' "$S/out19.txt")" "contro
 has "$(cat "$S/r1/settings-tool_write_edit_allow_abs-default.json")" "Edit(/$S/ro1/state/\*/evidence/\*\*)" "// spelling of the state root"
 has "$(cat "$S/r1/settings-tool_write_edit_allow_tilde-default.json")" "Edit(~/OUTSIDE-NOT-UNDER-HOME/\*/evidence/\*\*)" "~/ spelling needs the outside dir under home"
 has "$(cat "$S/r1/settings-tool_edit_delivery_log_denied-default.json")" "Edit(/$S/ro1/state/\*/delivery.log)" "deny rules are the installer's (protected list)"
-has "$(cat "$S/r1/settings-tool_edit_delivery_log_denied-default.json")" "Edit(/$S/ro1/state/\*/evidence/\*/verify.json)" "deny rules are the installer's (push record)"
+eq "$(grep -c 'evidence/\*/verify.json' "$S/r1/settings-tool_edit_delivery_log_denied-default.json")" 0 "C11h: no Edit deny on the push record (it became a sandbox denyWrite)"
+has "$(cat "$S/r1/settings-verify_record_retired_deny_control-default.json")" "Edit(/$S/ro1/state/\*/evidence/\*/verify.json)" "the control case carries the retired push-record rule"
+has "$(cat "$S/r1/settings-verify_record_sandboxed-default.json")" "Edit(/$S/ro1/state/\*/delivery.log)" "verify_record_sandboxed carries the installer's user-level file rules"
 has "$(cat "$S/r1/raw/tool_edit_evidence_allow-default.json")" '"tool": "Edit"' "raw file names the tool"
 echo "# C11b: the worktree ask rules and the plan lock under the worktree Edit allow"
 eq "$(run 20 FAKE_FLIP=hook_wt_locked_write)" 1 "a Write in a locked worktree past the hook is a FAIL"
@@ -192,7 +194,7 @@ echo "# the case table covers what the design relies on"
 for id in auto_allow rename_key_dir excluded_script_after_cd excluded_chained_to_unlisted settings_local_by_bash localhost_client_with_binding localhost_listen_without_binding \
   git_rename_script_excluded git_push_script_refuses_options gate_script_asks gate_script_no_ask_rule_control gh_unlisted_sandboxed installer_apply_blocked allowwrite_glob_unsupported \
   bash_allowed_domains_param bash_allowed_domains_control bash_disable_sandbox_param tool_write_no_rule_control tool_write_edit_allow_tilde tool_write_edit_allow_abs \
-  tool_write_rule_of_its_own tool_edit_evidence_allow tool_write_verify_json_denied tool_edit_verify_json_denied tool_read_skill_tilde tool_edit_delivery_log_denied \
+  tool_write_rule_of_its_own tool_edit_evidence_allow tool_write_verify_json_hook tool_edit_verify_json_hook verify_record_retired_deny_control tool_read_skill_tilde tool_edit_delivery_log_denied \
   tool_read_skill_no_rule tool_read_skill_installer_rule tool_wt_edit_allowed tool_wt_claude_settings_asks tool_wt_git_pointer_asks tool_wt_base_asks \
   hook_wt_locked_write hook_wt_approved_write_ok hook_approvals_write hook_bash_sed_locked hook_bash_redirect_locked hook_mode_auto_bound hook_mode_default_bound_ok tool_wt_vscode_asks tool_wt_claude_md_root_asks \
   tool_wt_claude_md_nested_asks tool_wt_agents_md_nested_asks tool_wt_npmrc_nested_asks tool_wt_nested_plain_ok tool_wt_allow_only_mcp tool_wt_allow_only_claude_settings \

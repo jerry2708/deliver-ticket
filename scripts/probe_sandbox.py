@@ -462,6 +462,7 @@ SID = "--reason probe --session {id} --repo {PROJ}"
 # the user-level file-tool rules exactly as install-hooks.sh apply writes them (//<abs>), for the fixture state root and the live skill path
 TOOL_ALLOW = ih.file_allow("{ST}", "{HOME}/.claude/skills/deliver-ticket")
 TOOL_DENY = ih.file_deny("{ST}")
+TOOL_RETIRED = [r for _, rules in ih.retired_perm("{ST}") for r in rules]     # C11h: the push-record Edit deny rules of C11a (control case only)
 WT_RULES = dict(ih.project_rules("{PROJ}"))          # C11b: what project-apply writes, for the fixture repo
 CASES = [
     # group, id, command, cwd, modes, mutate/options, expectation {kind, contains, disk, info}
@@ -548,8 +549,12 @@ CASES = [
     dict(id="gitconfig_file_by_bash", cmd="touch {HOME}/.gitconfig", expect="eperm", sources=NOUSER, disk=[("same", "{HOME}/.gitconfig")]),       # `same` = content sha; touch changes only the mtime, so the verdict is the EPERM
     # C4: verify-record.sh is NOT excluded (runs sandboxed) and has an allow rule: no prompt. It writes evidence/<ID>/verify.json (evidence is in allowWrite), while a verify command
     # that tries to write guard.json (denyWrite) gets EPERM: the script then exits 1, records the failed rc, and guard.json is unchanged.
+    # C11h: with the installer's user-level file rules in the fixture (before C11h the case had none, so it missed that their Edit deny on verify.json became a
+    # sandbox denyWrite: DRY-02 failed with PermissionError on .verify.json.tmp). The control adds the retired rules back: no record (info).
     dict(id="verify_record_sandboxed", cmd="{SK}/scripts/verify-record.sh V1 --guard {KD}/guard.json", cwd="{PROJ}", expect="eperm", contains="verify lint: exit 1", sources=NOUSER,
-         setup=make_v1, disk=[("exists", "{KD}/evidence/V1/verify.json"), ("same", "{KD}/guard.json")]),
+         rules=dict(allow=TOOL_ALLOW, deny=TOOL_DENY), setup=make_v1, disk=[("exists", "{KD}/evidence/V1/verify.json"), ("same", "{KD}/guard.json")]),
+    dict(id="verify_record_retired_deny_control", cmd="{SK}/scripts/verify-record.sh V1 --guard {KD}/guard.json", cwd="{PROJ}", expect="eperm", contains="PermissionError",
+         sources=NOUSER, rules=dict(allow=TOOL_ALLOW, deny=TOOL_DENY + TOOL_RETIRED), setup=make_v1, info=True, disk=[("same", "{KD}/guard.json")]),
     dict(id="git_dash_C_stays_sandboxed", cmd="git -C {WT3} branch -m work/t3 feat-t3", cwd="{PROJ}", expect="eperm", contains="config|logs/refs|cannot lock ref", mutate=m_branch_allowed, sources=NOUSER),
     dict(id="gh_read_unsandboxed", cmd="gh pr view 1", expect="ok", contains="fake-gh: UNSANDBOXED"),
     dict(id="gh_write_asks", cmd="gh pr edit 1", modes=BOTH, expect="prompt"),
@@ -589,12 +594,13 @@ CASES = [
          disk=[("absent", "{KD}/evidence/P1/w.txt")]),
     dict(id="tool_edit_evidence_allow", tool="Edit", cmd="{KD}/evidence/P1/e.txt", seed=[("{KD}/evidence/P1/e.txt", "aaa\n")], rules=dict(allow=TOOL_ALLOW), expect="ok",
          disk=[("changed", "{KD}/evidence/P1/e.txt")]),
-    dict(id="tool_write_verify_json_denied", tool="Write", cmd="{KD}/evidence/P1/verify.json", rules=dict(allow=TOOL_ALLOW, deny=TOOL_DENY), expect="denied",
-         disk=[("absent", "{KD}/evidence/P1/verify.json")]),
-    dict(id="tool_write_verify_tmp_denied", tool="Write", cmd="{KD}/evidence/P1/.verify.json.tmp", rules=dict(allow=TOOL_ALLOW, deny=TOOL_DENY), expect="denied",
-         disk=[("absent", "{KD}/evidence/P1/.verify.json.tmp")]),
-    dict(id="tool_edit_verify_json_denied", tool="Edit", cmd="{KD}/evidence/P2/verify.json", seed=[("{KD}/evidence/P2/verify.json", '{"a": "aaa"}\n')],
-         rules=dict(allow=TOOL_ALLOW, deny=TOOL_DENY), expect="denied", disk=[("same", "{KD}/evidence/P2/verify.json")]),
+    # C11h: the push record has no Edit deny rule any more (it also became a sandbox denyWrite and refused verify-record.sh, DRY-02); the hooks block the file tools
+    dict(id="tool_write_verify_json_hook", tool="Write", cmd="{KD}/evidence/P1/verify.json", rules=dict(allow=TOOL_ALLOW, deny=TOOL_DENY), hooks=True, dt_home=True,
+         expect="hook", contains="is the push record", disk=[("absent", "{KD}/evidence/P1/verify.json")]),
+    dict(id="tool_write_verify_tmp_hook", tool="Write", cmd="{KD}/evidence/P1/.verify.json.tmp", rules=dict(allow=TOOL_ALLOW, deny=TOOL_DENY), hooks=True, dt_home=True,
+         expect="hook", contains="is the push record", disk=[("absent", "{KD}/evidence/P1/.verify.json.tmp")]),
+    dict(id="tool_edit_verify_json_hook", tool="Edit", cmd="{KD}/evidence/P2/verify.json", seed=[("{KD}/evidence/P2/verify.json", '{"a": "aaa"}\n')],
+         rules=dict(allow=TOOL_ALLOW, deny=TOOL_DENY), hooks=True, dt_home=True, expect="hook", contains="is the push record", disk=[("same", "{KD}/evidence/P2/verify.json")]),
     # approvals/ and guard.json are also in the sandbox denyWrite; that list does not reach the file tools (2.1.311: prompt), so the deny rules below are what stop them
     dict(id="tool_write_approvals_no_deny_rule", tool="Write", cmd="{KD}/approvals/P2.plan", rules=dict(allow=TOOL_ALLOW), expect="prompt", info=True,
          disk=[("absent", "{KD}/approvals/P2.plan")]),

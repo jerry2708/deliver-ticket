@@ -26,12 +26,14 @@ mkhome h_eof; b=$(sum "$H/.claude/settings.json"); out=$(HOME=$H bash "$SK/scrip
 
 echo "# y applies, backs up, runs status, prints the init reminder"
 mkhome h_y; out=$(printf 'y\n' | HOME=$H bash "$SK/scripts/install.sh" 2>&1); eq "$?" 0 "y: rc"
-NRULES=$(DT_SETTINGS=/nonexistent python3 -I -c "import sys; sys.path.insert(0, '$SK/scripts'); import install_hooks as i; print(len(i.ASK) + len(i.DENY))")
+# C11a added user-level file-tool allow / deny rules (perm_rules), C11h retired two of them: count from the installer, not by hand
+NRULES=$(DT_SETTINGS=/nonexistent python3 -I -c "import sys; sys.path.insert(0, '$SK/scripts'); import install_hooks as i; print(sum(len(r) for _, r in i.perm_rules()))")
+NDENY=$(DT_SETTINGS=/nonexistent python3 -I -c "import sys; sys.path.insert(0, '$SK/scripts'); import install_hooks as i; print(len(dict(i.perm_rules())['deny']))")
 NHOOKS=$(DT_SETTINGS=/nonexistent python3 -I -c "import sys; sys.path.insert(0, '$SK/scripts'); import install_hooks as i; print(len(i.HOOK_SPECS))")
 has "$out" "all $NHOOKS hooks and $NRULES permission rules registered" "y: status output"
 has "$out" "/deliver-ticket init" "y: init reminder"
 eq "$(ls -A "$H/.claude" | grep -c 'settings.json.bak')" 1 "y: one backup next to settings.json"
-eq "$(python3 -c "import json;d=json.load(open('$H/.claude/settings.json'));print(d['theme'], len(d['hooks']), len(d['permissions']['deny']))")" "dark 3 3" "y: existing keys kept, hook events and deny rules added"
+eq "$(python3 -c "import json;d=json.load(open('$H/.claude/settings.json'));print(d['theme'], len(d['hooks']), len(d['permissions']['deny']))")" "dark 3 $NDENY" "y: existing keys kept, hook events and deny rules added"
 has "$out" "ok   git" "tools checked"; has "$out" "ok   $SK" "clone path ok"
 
 echo "# wrong clone path: nothing is written"

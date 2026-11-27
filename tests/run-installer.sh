@@ -136,8 +136,10 @@ python3 -I - "$D/ft.json" "$DELIVER_TICKET_HOME" "$SK" <<'PY' && echo "ok file-t
 import json, os, sys
 p = json.load(open(sys.argv[1]))["permissions"]; r = "/" + os.path.realpath(sys.argv[2]); sk = "/" + os.path.realpath(sys.argv[3])
 assert p["allow"] == ["Bash(ls:*)", "Read(%s/**)" % sk, "Read(%s/**)" % r, "Edit(%s/*/tickets/**)" % r, "Edit(%s/*/evidence/**)" % r], p["allow"]
-for x in ("sessions/**", "starts/**", "*/closed/**", "*/approvals/**", "*/delivery.log", "*/guard.json", "*/evidence/*/verify.json", "*/evidence/*/.verify.json.tmp"):
+for x in ("sessions/**", "starts/**", "*/closed/**", "*/approvals/**", "*/delivery.log", "*/guard.json"):
     assert "Edit(%s/%s)" % (r, x) in p["deny"], (x, p["deny"])
+for x in ("*/evidence/*/verify.json", "*/evidence/*/.verify.json.tmp"):      # C11h: an Edit deny is also a sandbox denyWrite; the hooks block the file tools instead
+    assert "Edit(%s/%s)" % (r, x) not in p["deny"], (x, p["deny"])
 assert "Read(./secret)" in p["deny"] and not [x for k in p for x in p[k] if x.startswith("Write(")], p      # Edit rules cover Write (probe tool_write_rule_of_its_own)
 PY
 DT_SETTINGS="$D/ft.json" "$SK/scripts/install-hooks.sh" status >/dev/null 2>&1 && echo "ok status with file-tool rules" || { fail=1; echo "FAIL status with file-tool rules"; }
@@ -163,6 +165,27 @@ DT_SETTINGS="$D/old.json" "$SK/scripts/install-hooks.sh" apply --confirmed >/dev
   && echo "ok apply over a pre-C11a manifest" || { fail=1; echo "FAIL apply over a pre-C11a manifest"; }
 DT_SETTINGS="$D/old.json" "$SK/scripts/install-hooks.sh" uninstall --confirmed >/dev/null 2>&1
 cmp -s "$D/sb2-orig.json" "$D/old.json" && echo "ok byte-identical after uninstall (pre-C11a manifest)" || { fail=1; echo "FAIL not restored (pre-C11a manifest)"; }
+# C11h: an install from before C11h has the push-record Edit deny rules (they became sandbox denyWrite and refused verify-record.sh): status flags them,
+# apply removes them (only the ones the manifest says apply added), uninstall restores the original byte for byte; a user's own copy of such a rule stays
+cp "$D/sb2-orig.json" "$D/c11h.json"
+DT_SETTINGS="$D/c11h.json" "$SK/scripts/install-hooks.sh" apply --confirmed >/dev/null 2>&1
+python3 -I - "$D/c11h.json" "$D/c11h.json.deliver-ticket-manifest.json" "$DELIVER_TICKET_HOME" <<'PY2'
+import json, os, sys
+r = "/" + os.path.realpath(sys.argv[3]); old = ["Edit(%s/*/evidence/*/%s)" % (r, n) for n in ("verify.json", ".verify.json.tmp")]
+d = json.load(open(sys.argv[1])); d["permissions"]["deny"] += old; json.dump(d, open(sys.argv[1], "w"), indent=2)
+m = json.load(open(sys.argv[2])); m["perm_added"]["deny"] += old; json.dump(m, open(sys.argv[2], "w"), indent=2)
+PY2
+DT_SETTINGS="$D/c11h.json" "$SK/scripts/install-hooks.sh" status 2>&1 | grep -q 'retired permission deny: Edit(//.*/evidence/\*/verify.json)' && echo "ok status flags a pre-C11h push-record deny rule" || { fail=1; echo "FAIL status misses a pre-C11h deny rule"; }
+DT_SETTINGS="$D/c11h.json" "$SK/scripts/install-hooks.sh" apply --confirmed >/dev/null 2>&1 && DT_SETTINGS="$D/c11h.json" "$SK/scripts/install-hooks.sh" status >/dev/null 2>&1 \
+  && ! grep -q 'verify.json' "$D/c11h.json" && echo "ok apply removes the pre-C11h deny rules" || { fail=1; echo "FAIL apply over a pre-C11h install"; }
+DT_SETTINGS="$D/c11h.json" "$SK/scripts/install-hooks.sh" uninstall --confirmed >/dev/null 2>&1
+cmp -s "$D/sb2-orig.json" "$D/c11h.json" && echo "ok byte-identical after uninstall (pre-C11h manifest)" || { fail=1; echo "FAIL not restored (pre-C11h manifest)"; }
+python3 -I - "$D/own.json" "$DELIVER_TICKET_HOME" <<'PY2'
+import json, os, sys
+r = "/" + os.path.realpath(sys.argv[2])
+json.dump({"permissions": {"deny": ["Edit(%s/*/evidence/*/verify.json)" % r]}}, open(sys.argv[1], "w"), indent=2)
+PY2
+DT_SETTINGS="$D/own.json" "$SK/scripts/install-hooks.sh" apply --confirmed >/dev/null 2>&1; grep -q 'evidence/\*/verify.json' "$D/own.json" && echo "ok a user's own push-record deny rule is kept" || { fail=1; echo "FAIL apply removed a user's own rule"; }
 # one list of the protected state: every PROTECTED_STATE entry is protected by the hooks; sandbox denyWrite and the Edit deny rules come from it; the push record names
 python3 -I - "$SK" "$DELIVER_TICKET_HOME" <<'PY' && echo "ok PROTECTED_STATE = protected_state, the installer derives from it, VERIFY_RECORD = verify_record.py" || { fail=1; echo "FAIL protected-state list"; }
 import os, sys
@@ -176,7 +199,7 @@ for p, isdir in dt.PROTECTED_STATE:
     assert dt.protected_state(path) and (not isdir or dt.protected_state(path + "/x")), p
 assert not dt.protected_state(root + "/proj-0123abcd/evidence/T1/verify.json") and not dt.protected_state(root + "/proj-0123abcd/tickets/T1.md")
 assert ih.sandbox_deny()[:len(dt.PROTECTED_STATE)] == [root + "/" + p for p, _ in dt.PROTECTED_STATE]
-assert len(ih.file_deny()) == len(dt.PROTECTED_STATE) + len(ih.VERIFY_RECORD)
+assert len(ih.file_deny()) == len(dt.PROTECTED_STATE) and ih.VERIFY_RECORD == dt.VERIFY_RECORD_FILES
 src = open(sk + "/scripts/verify_record.py").read()
 assert all('"%s"' % n in src for n in ih.VERIFY_RECORD), ih.VERIFY_RECORD
 PY
