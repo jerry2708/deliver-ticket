@@ -107,7 +107,11 @@ has stages/5-review.md 'no inline code (.node -e.'
 has templates/reviewer-verify.md 'no inline code (.node -e., .python3 -c.)'
 echo "# C11h (f): env files - repo-wide sandbox read deny, env-keys.sh bookkeeping"
 has README.md 'adds .sandbox.filesystem.denyRead. for .<repo>/.env\*. and .<repo>/\*\*/.env\*.'
-has stages/1b-workspace.md '<skill dir>/scripts/env-keys.sh <worktree>/<env file>'
+has stages/1b-workspace.md '<skill dir>/scripts/env-keys.sh <worktree>/<env file> --repo <repo_root>'
+echo "# C11h h: every env-keys.sh call names --repo (the boundary comes from the delivery state)"
+hasnt "SKILL.md init.md stages templates" 'env-keys.sh <file>`'
+hasnt "SKILL.md init.md stages templates" 'env-keys.sh <file> -->'
+has init.md 'it refuses until step 2 has written it'
 hasnt stages/1b-workspace.md 'env links exist (.ls -l.'
 echo "# C11h (g): counted baseline, probe-run count, husky noise, the C11h record"
 has docs/sandbox-dry-run.md '\*\*74 permission prompts\*\*'

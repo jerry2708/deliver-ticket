@@ -5,7 +5,7 @@ Done = **every in-scope AC has evidence** + the **common DoD** from config (lint
 ## 0. Environment for the real run (only what this ticket needs; ask before starting anything long-running)
 - Ports: each port the run needs is free, or owned by **this** worktree (`lsof -i :<port>` plus the process's cwd). A server from another worktree or the main checkout on that port = wrong server; stop and tell me, don't kill it.
 - Start dev servers with this ticket's ports on the command line (`PORT=<n> <cmd>`; port block in the ticket file). Never edit `.env`.
-- Env **key names** the run needs are present: `<skill dir>/scripts/env-keys.sh <file>` (names only); missing -> ask me to add; never print values.
+- Env **key names** the run needs are present: `<skill dir>/scripts/env-keys.sh <file> --repo <repo_root>` (names only); missing -> ask me to add; never print values.
 - Model/provider config; signed-in browser state. A sign-in wall -> **I sign in**; you never type a password. Test identities: fake data only.
 
 ## 1. Automated (Claude)

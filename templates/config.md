@@ -33,7 +33,7 @@ Detected facts are marked `(detected, confirmed <date>)`; anything unconfirmed i
 - Verify timeout (seconds): 300
 - Dev ports / how overridden without editing `.env`: <ASK>   <!-- e.g. `PORT=3001 pnpm dev` -->
 - Env files (names only, never contents): <ASK>
-- Env key names the real run needs: <ASK>   <!-- from <skill dir>/scripts/env-keys.sh <file> -->
+- Env key names the real run needs: <ASK>   <!-- from <skill dir>/scripts/env-keys.sh <file> --repo <repo_root> -->
 - Stage-0 checks: <ASK>
 - Repo without tests: (a) add tests for changed logic / (b) real run + "no automated tests" in the MR - chosen: <ASK>
 - Two test identities (only if a per-user server API/store is mapped in Risk): <ASK>   <!-- mocked identities in tests preferred -->

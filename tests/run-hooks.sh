@@ -70,8 +70,8 @@ git -C "$W3" checkout -q --detach; t 2 guard.sh "$W3" 'git merge feat-T1'
 echo "# .env bypasses (must block)"
 for c in 'cat .env' 'cut -d= -f1 .env.example' 'grep . .env.local' 'source .env' '. .env' 'cp .env x' 'cat < .env' 'head -1 apps/web/.env.local' 'git show HEAD:.env' 'cat .e*' 'bash -c "cat .env"' 'echo $(cat .env)' 'awk 1 .env.sample' 'python3 -c "print(open(\".env\").read())"'; do t 2 guard.sh "$W" "$c"; done
 echo "# .env allowed: env-keys.sh, worktree-create.sh, unrelated names"
-t 0 guard.sh "$W" "$SK/scripts/env-keys.sh .env.example"
-t 0 guard.sh "$W" "bash $SK/scripts/env-keys.sh .env.local"
+t 0 guard.sh "$W" "$SK/scripts/env-keys.sh .env.example --repo $R"
+t 0 guard.sh "$W" "bash $SK/scripts/env-keys.sh .env.local --repo $R"
 t 0 guard.sh "$W" 'cat environment.md'
 t 0 guard.sh "$W" 'ls src/env'
 echo "# writes"

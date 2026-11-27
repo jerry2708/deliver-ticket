@@ -1,16 +1,24 @@
 #!/usr/bin/env python3
-"""env-keys.sh <env file> - the KEY NAMES of an env file, never a value. The only sanctioned way for the skill to learn what an env file holds.
+"""env-keys.sh <env file> --repo <main checkout> - the KEY NAMES of an env file, never a value. The only sanctioned way for the skill to learn what an env file holds.
 
 C11h: a BOOKKEEPING script (excluded from the sandbox, allow rule, no prompt; install_hooks.BOOKKEEPING). The project sandbox denies reading `<repo>/**/.env*`
 (and the user-level `Read(**/.env*)` rule is also a sandbox deny, anchored at the session's cwd), so a sandboxed run could not read the file; unsandboxed, this
-script is the boundary and validates strictly:
+script is the boundary and validates strictly.
+
+C11h h: the repository is taken from the delivery state, never from `.git` entries on disk (Claude can write a fake `.git` file into a worktree subdirectory -
+the sandbox allows writes there - and point it anywhere). `--repo` names the main checkout; its project key (`<basename>-<first 8 hex of sha1 of the path>`,
+hooks/lib.sh dt_key) selects `<state root>/<key>/guard.json` (protected state, written only through guard-apply.sh), whose `repo_root` must be that same
+directory. The state root is DELIVER_TICKET_HOME or ~/.local/share/deliver-ticket (the fixed environment of the excluded scripts keeps only that variable;
+probe C11e3: Claude cannot set it for an excluded command). No git command runs. Then:
   - the given path's basename and its realpath's basename both start with `.env` (case-insensitive: macOS folds case);
-  - the realpath is a regular file under the main checkout of the git repository of the current directory (ticket worktrees live in
-    <main>/.claude/worktrees/ and their env links point into the main checkout), not under its .git directory;
-  - the main checkout is found from the .git entries on disk (no git command: git would read repo config unsandboxed);
+  - the realpath is a regular file under repo_root, with no `.git` path component below repo_root (ticket worktrees live in <repo_root>/.claude/worktrees/
+    and their env links point into the main checkout);
   - it prints only names matching `[export ]NAME=`; a value never leaves this process. Max 1 MB.
+A project with no guard.json (init before step 2) is refused: the key names stay unknown until the project state exists.
 Exit 0 names printed (possibly none), 1 no such file, 2 refused / usage.
 """
+import hashlib
+import json
 import os
 import re
 import sys
@@ -32,51 +40,55 @@ def under(p, root):
     return p == root or p.startswith(root.rstrip(os.sep) + os.sep)
 
 
-def main_checkout(start):
-    """The main checkout (the directory holding the common .git dir) of the repository containing `start`, or None."""
-    d = start
-    while True:
-        g = os.path.join(d, ".git")
-        if os.path.isdir(g) and not os.path.islink(g):
-            return d
-        if os.path.isfile(g) and not os.path.islink(g):
-            try:
-                txt = open(g).read(4096).strip()
-            except OSError:
-                return None
-            if not txt.startswith("gitdir:"):
-                return None
-            gitdir = os.path.realpath(os.path.join(d, txt[len("gitdir:"):].strip()))
-            try:
-                common = open(os.path.join(gitdir, "commondir")).read(4096).strip()
-            except OSError:
-                return None
-            common = os.path.realpath(os.path.join(gitdir, common))
-            return os.path.dirname(common) if os.path.basename(common) == ".git" else None
-        parent = os.path.dirname(d)
-        if parent == d:
-            return None
-        d = parent
+def state_root():
+    return os.path.realpath(os.environ.get("DELIVER_TICKET_HOME") or os.path.expanduser("~/.local/share/deliver-ticket"))
+
+
+def project_key(repo):
+    return "%s-%s" % (os.path.basename(repo), hashlib.sha1(repo.encode()).hexdigest()[:8])
+
+
+def parse(argv):
+    """(file, repo) or None: exactly `<file> --repo <dir>` in either order, no other option."""
+    if len(argv) != 3:
+        return None
+    if argv[0] == "--repo":
+        repo, rest = argv[1], argv[2]
+    elif argv[1] == "--repo":
+        rest, repo = argv[0], argv[2]
+    else:
+        return None
+    if not rest or rest.startswith("-") or not repo or repo.startswith("-"):
+        return None
+    return rest, repo
 
 
 def main(argv):
-    if len(argv) != 1 or not argv[0] or argv[0].startswith("-"):
-        return refuse("usage: env-keys.sh <env file>")
-    given = argv[0]
+    pa = parse(argv)
+    if not pa:
+        return refuse("usage: env-keys.sh <env file> --repo <main checkout>")
+    given, repo_arg = pa
     if not is_env_base(given):
         return refuse("only .env* files (got %s)" % os.path.basename(given))
-    cwd = os.path.realpath(os.getcwd())
-    path = os.path.join(cwd, given)
+    repo = os.path.realpath(repo_arg)
+    gpath = os.path.join(state_root(), project_key(repo), "guard.json")
+    try:
+        with open(gpath) as f:
+            root = os.path.realpath(json.load(f)["repo_root"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return refuse("no usable delivery state for %s (%s) - project not initialised, or --repo is not its main checkout; key names stay unknown" % (repo_arg, gpath))
+    if root != repo:
+        return refuse("--repo %s is not the repo_root of its own guard.json (%s) - refused" % (repo, root))
+    path = os.path.join(os.path.realpath(os.getcwd()), given)
     if not os.path.lexists(path):
         return refuse("no such file: %s" % given, 1)
     rp = os.path.realpath(path)
     if not is_env_base(rp):
         return refuse("%s resolves to %s, which is not a .env* file - refused" % (given, rp))
-    main_dir = main_checkout(cwd)
-    if not main_dir:
-        return refuse("the current directory %s is not in a git repository with a main checkout - refused" % cwd)
-    if not under(rp, main_dir) or under(rp, os.path.join(main_dir, ".git")):
-        return refuse("%s resolves to %s, outside the main checkout %s - refused" % (given, rp, main_dir))
+    if not under(rp, root) or rp == root:
+        return refuse("%s resolves to %s, outside the repo %s - refused" % (given, rp, root))
+    if ".git" in [c.lower() for c in os.path.relpath(rp, root).split(os.sep)]:
+        return refuse("%s resolves to %s, inside a .git directory - refused" % (given, rp))
     if not os.path.isfile(rp):
         return refuse("%s is not a regular file" % given, 1)
     if os.path.getsize(rp) > MAX_BYTES:

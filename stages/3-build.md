@@ -16,7 +16,7 @@ Gate: tier A and B auto (no gate until the final review); **C: me after the stag
 - A requirement turns out ambiguous -> stop and ask; park the part.
 - **Commits follow `commit_gate` in `guard.json` (CLAUDE.md "never commit without asking" wins):** tier A/B = `batched`: **make no commit in this stage**; the changes stay in the worktree and are committed once, at the stage-7 commit gate. Tier C (and soft mode) = `each`: ask before every commit (show the message and the staged diff). Conventional Commits unless config says otherwise; never bypass hooks (`--no-verify` is blocked). A commit that a pre-commit hook changed: see `7-commit-mr.md`.
 - **Git under the sandbox:** no `git stash` (the ref store is not writable: it fails); a git command that fails with "Operation not permitted" / `cannot lock ref` -> **stop, show `git status --short`, do not retry in another spelling or with another command**, and tell me. Commits only through `git-commit.sh` (stage 7).
-- Env files: never read; key names only via `<skill dir>/scripts/env-keys.sh <file>`. A ticket that needs a new key in `.env.example` gets a **manual step for me** in the stage output (edits to `.env*` are blocked).
+- Env files: never read; key names only via `<skill dir>/scripts/env-keys.sh <file> --repo <repo_root>`. A ticket that needs a new key in `.env.example` gets a **manual step for me** in the stage output (edits to `.env*` are blocked).
 - Nothing leaves the machine in this stage (no push, no MR).
 
 ## Leave

@@ -24,7 +24,7 @@ stale: no
 ## Env files
 checked: <sha> · <date> · watch: <globs>
 stale: no
-- `<path>`: key names via `<skill dir>/scripts/env-keys.sh <file>` (names only)
+- `<path>`: key names via `<skill dir>/scripts/env-keys.sh <file> --repo <repo_root>` (names only)
 
 ## Risk-path findings
 checked: <sha> · <date> · watch: <globs>

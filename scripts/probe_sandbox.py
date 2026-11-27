@@ -595,7 +595,7 @@ CASES = [
          mutate=m_no_denyread, expect="ok", contains="read-ok", info=True,
          seed=[("{PROJ}/apps/.env.probe", "PROBE_KEY=probe-value\n"), ("{S}/envread.sh", 'cat "$(dirname "$0")/proj/apps/.env.probe" > /dev/null && echo read-ok\n')]),
     # env-keys.sh is bookkeeping now (excluded, allow rule): it reads the key names of the ticket worktree's env link (into the main checkout) with no prompt.
-    dict(id="env_keys_bookkeeping", cmd="{SK}/scripts/env-keys.sh {WT}/T5/.env.local", cwd="{WT}/T5", setup=make_c11b, sources=NOUSER, hooks=True, dt_home=True,
+    dict(id="env_keys_bookkeeping", cmd="{SK}/scripts/env-keys.sh {WT}/T5/.env.local --repo {PROJ}", cwd="{WT}/T5", setup=make_c11b, sources=NOUSER, hooks=True, dt_home=True,
          rules=dict(deny=["Read(**/.env*)"]), expect="ok", contains="PROBE_ENV_KEY", seed=[("{WT}/T5/.env.local", "PROBE_ENV_KEY=probe-value-77\n")]),
     # C11h (c): the command shapes the stage texts now prescribe run with no prompt (sandbox auto-allow) and pass the hooks, in a bound ticket session (cwd T5).
     # DRY-02 prompted on `p=$(...)` (too complex), `{ ...; } > file` (brace group) and `sed -i` (sed-dangerous); 2.1.325 also on `echo "exit=$?" >> <file>` (scratch
